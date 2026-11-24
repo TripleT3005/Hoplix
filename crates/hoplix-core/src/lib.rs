@@ -8,6 +8,7 @@ pub mod key_value;
 pub mod language;
 mod local;
 mod paths;
+mod rate;
 mod secrets;
 mod sftp;
 mod sites;
@@ -27,12 +28,13 @@ pub use file_system::{
 pub use ftp::FtpFileSystem;
 pub use local::LocalFileSystem;
 pub use paths::{TrustStore, config_dir};
+pub use rate::RateLimiter;
 pub use secrets::{
     DEFAULT_ITERATIONS, Keyring, Moved, SecretBackend, SecretStore, VAULT_FILE, Vault,
     change_master_password, create_vault, move_to_keyring, move_to_vault, secret_name, site_id_of,
     unlock_vault,
 };
-pub use sftp::{SftpFileSystem, fingerprint};
+pub use sftp::{SftpFileSystem, auto_reconnect, fingerprint, set_auto_reconnect};
 pub use sites::{SITES_FILE, Site, SiteAuth, SiteList, new_id, normalize_folder};
 pub use sync::{
     CompareOptions, CompareStatus, ComparedEntry, DEFAULT_TIME_TOLERANCE, Pattern, Side,
@@ -40,6 +42,7 @@ pub use sync::{
     build_plan, compare, compare_entries, execute_plan, plan, refine,
 };
 pub use transfer::{
-    Conflict, ConflictDecision, ConflictPolicy, DEFAULT_PARALLELISM, JobId, JobOptions,
-    JobSnapshot, JobStatus, MAX_RETRIES, TransferEvent, TransferQueue, TransferRequest,
+    Conflict, ConflictDecision, ConflictPolicy, DEFAULT_PARALLELISM, DEFAULT_RETRIES,
+    DEFAULT_RETRY_DELAY, JobId, JobOptions, JobSnapshot, JobStatus, Parallelism, RetryPolicy,
+    SpeedLimits, TransferDirection, TransferEvent, TransferQueue, TransferRequest,
 };

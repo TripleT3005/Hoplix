@@ -10,10 +10,10 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use hoplix_core::{
     Authentication, CompareOptions, CompareStatus, ComparedEntry, ConflictPolicy, ConnectionParams,
     DEFAULT_PARALLELISM, Error, ErrorKind, FileSystem, HostKeyTrust, JobId, JobSnapshot, JobStatus,
-    Keyring, LocalFileSystem, MAX_RETRIES, Pattern, SecretBackend, Site, SiteList, SortKey,
-    SortOrder, SyncAction, SyncDirection, SyncEndpoint, SyncMode, SyncOptions, SyncPlan,
-    TransferEvent, TransferQueue, TransferRequest, TrustStore, config_dir, remove_recursive,
-    secret_name, sort_entries, unlock_vault,
+    Keyring, LocalFileSystem, Pattern, RetryPolicy, SecretBackend, Site, SiteList, SortKey,
+    SortOrder, SpeedLimits, SyncAction, SyncDirection, SyncEndpoint, SyncMode, SyncOptions,
+    SyncPlan, TransferEvent, TransferQueue, TransferRequest, TrustStore, config_dir,
+    remove_recursive, secret_name, sort_entries, unlock_vault,
 };
 
 use arguments::{Command, Invocation, Options, USAGE};
@@ -250,7 +250,7 @@ async fn transfer(
         Err(error) if error.kind() == ErrorKind::NotFound => split(target),
         Err(error) => return Err(describe(error)),
     };
-    let queue = TransferQueue::new(1);
+    let queue = queue_for(1, options);
     queue.set_policy(if options.resume {
         ConflictPolicy::Resume
     } else if options.skip_existing {
@@ -305,7 +305,10 @@ async fn transfer(
             }
             JobStatus::Cancelled => break Err("the transfer was cancelled".to_string()),
             JobStatus::Retrying(attempt) => {
-                eprintln!("connection lost, retry {attempt} of {MAX_RETRIES}");
+                eprintln!(
+                    "connection lost, retry {attempt} of {}",
+                    queue.retry_policy().attempts
+                );
             }
             JobStatus::Running if interactive && last_line.elapsed() >= PROGRESS_INTERVAL => {
                 last_line = Instant::now();
@@ -434,11 +437,11 @@ async fn synchronise(
     if options.dry_run || plan.is_empty() {
         return Ok(());
     }
-    let queue = TransferQueue::new(DEFAULT_PARALLELISM);
+    let queue = queue_for(DEFAULT_PARALLELISM, options);
     let mut events = queue.subscribe();
     let driver = tokio::spawn(queue.clone().drive());
     let result = match hoplix_core::execute_plan(&plan, &left, &right, &queue).await {
-        Ok(jobs) => wait_for(&mut events, &jobs).await,
+        Ok(jobs) => wait_for(&mut events, &jobs, queue.retry_policy().attempts).await,
         Err(error) => Err(describe(error)),
     };
     driver.abort();
@@ -480,6 +483,7 @@ fn plan_summary(plan: &SyncPlan) -> String {
 async fn wait_for(
     events: &mut tokio::sync::mpsc::UnboundedReceiver<TransferEvent>,
     jobs: &[JobId],
+    retries: u32,
 ) -> Result<(), String> {
     let interactive = std::io::stderr().is_terminal();
     let mut finished: Vec<JobId> = Vec::new();
@@ -505,7 +509,7 @@ async fn wait_for(
                 failures.push(format!("{}: cancelled", job.source_path));
             }
             JobStatus::Retrying(attempt) => {
-                eprintln!("connection lost, retry {attempt} of {MAX_RETRIES}");
+                eprintln!("connection lost, retry {attempt} of {retries}");
             }
             _ => {}
         }
@@ -526,6 +530,22 @@ async fn wait_for(
             failures.join("\n")
         ))
     }
+}
+
+fn queue_for(parallelism: usize, options: &Options) -> TransferQueue {
+    let queue = TransferQueue::new(parallelism);
+    let defaults = RetryPolicy::default();
+    queue.set_retry_policy(RetryPolicy {
+        attempts: options.retries.unwrap_or(defaults.attempts),
+        delay: options.retry_delay.map_or(defaults.delay, |seconds| {
+            Duration::from_secs(u64::from(seconds))
+        }),
+    });
+    queue.set_speed_limits(SpeedLimits {
+        download: options.limit_download,
+        upload: options.limit_upload,
+    });
+    queue
 }
 
 fn split(target: &Opened) -> (String, Option<String>) {

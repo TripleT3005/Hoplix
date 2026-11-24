@@ -6,16 +6,17 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
+use crate::rate::RateLimiter;
 use crate::{Error, ErrorKind, FileSystem, Result};
 
 // Constants
 
 pub const DEFAULT_PARALLELISM: usize = 2;
-pub const MAX_RETRIES: u32 = 3;
+pub const DEFAULT_RETRIES: u32 = 3;
+pub const DEFAULT_RETRY_DELAY: Duration = Duration::from_secs(1);
 const BUFFER_SIZE: usize = 128 * 1024;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 const SPEED_WINDOW: Duration = Duration::from_secs(3);
-const RETRY_DELAY: Duration = Duration::from_secs(1);
 const MAX_DEPTH: usize = 64;
 
 // Types
@@ -29,6 +30,33 @@ pub struct TransferRequest {
     pub target: Arc<dyn FileSystem>,
     pub target_directory: String,
     pub target_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferDirection {
+    Local,
+    Download,
+    Upload,
+    ServerToServer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Parallelism {
+    pub total: usize,
+    pub downloads: Option<usize>,
+    pub uploads: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetryPolicy {
+    pub attempts: u32,
+    pub delay: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SpeedLimits {
+    pub download: Option<u64>,
+    pub upload: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -138,6 +166,7 @@ struct Job {
     snapshot: JobSnapshot,
     request: TransferRequest,
     options: JobOptions,
+    direction: TransferDirection,
     control: watch::Sender<Control>,
     plan: Option<Vec<Item>>,
     next_item: usize,
@@ -150,20 +179,29 @@ struct Job {
 struct State {
     jobs: Vec<Job>,
     next_id: JobId,
-    parallelism: usize,
+    parallelism: Parallelism,
     policy: ConflictPolicy,
-    retry_delay: Duration,
+    retry: RetryPolicy,
     events: Option<mpsc::UnboundedSender<TransferEvent>>,
 }
 
 struct Inner {
     state: Mutex<State>,
     wake: Notify,
+    download_limit: RateLimiter,
+    upload_limit: RateLimiter,
 }
 
 #[derive(Clone)]
 pub struct TransferQueue {
     inner: Arc<Inner>,
+}
+
+struct Stream<'a> {
+    source: &'a str,
+    target: &'a str,
+    offset: u64,
+    limiters: &'a [&'a RateLimiter],
 }
 
 #[derive(Clone, Copy)]
@@ -177,6 +215,71 @@ struct FileItem<'a> {
 struct Progress {
     samples: VecDeque<(Instant, u64)>,
     last_emit: Option<Instant>,
+}
+
+// Directions and limits
+
+impl TransferDirection {
+    pub fn of(source: &dyn FileSystem, target: &dyn FileSystem) -> Self {
+        match (source.is_remote(), target.is_remote()) {
+            (false, false) => Self::Local,
+            (true, false) => Self::Download,
+            (false, true) => Self::Upload,
+            (true, true) => Self::ServerToServer,
+        }
+    }
+
+    pub fn downloads(self) -> bool {
+        matches!(self, Self::Download | Self::ServerToServer)
+    }
+
+    pub fn uploads(self) -> bool {
+        matches!(self, Self::Upload | Self::ServerToServer)
+    }
+}
+
+impl Parallelism {
+    pub fn new(total: usize) -> Self {
+        Self {
+            total: total.max(1),
+            downloads: None,
+            uploads: None,
+        }
+    }
+
+    pub fn download_limit(&self) -> usize {
+        self.downloads
+            .unwrap_or(self.total)
+            .clamp(1, self.total.max(1))
+    }
+
+    pub fn upload_limit(&self) -> usize {
+        self.uploads
+            .unwrap_or(self.total)
+            .clamp(1, self.total.max(1))
+    }
+}
+
+impl Default for Parallelism {
+    fn default() -> Self {
+        Self::new(DEFAULT_PARALLELISM)
+    }
+}
+
+impl RetryPolicy {
+    pub fn delay_before(&self, attempt: u32) -> Duration {
+        let factor = 2u32.saturating_pow(attempt.saturating_sub(1));
+        self.delay.saturating_mul(factor)
+    }
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            attempts: DEFAULT_RETRIES,
+            delay: DEFAULT_RETRY_DELAY,
+        }
+    }
 }
 
 // Statuses
@@ -259,12 +362,14 @@ impl TransferQueue {
                 state: Mutex::new(State {
                     jobs: Vec::new(),
                     next_id: 1,
-                    parallelism: parallelism.max(1),
+                    parallelism: Parallelism::new(parallelism),
                     policy: ConflictPolicy::default(),
-                    retry_delay: RETRY_DELAY,
+                    retry: RetryPolicy::default(),
                     events: None,
                 }),
                 wake: Notify::new(),
+                download_limit: RateLimiter::default(),
+                upload_limit: RateLimiter::default(),
             }),
         }
     }
@@ -304,6 +409,7 @@ impl TransferQueue {
             .clone()
             .unwrap_or_else(|| request.source.file_name(&request.source_path).to_string());
         let target_path = request.target.join(&request.target_directory, &name);
+        let direction = TransferDirection::of(request.source.as_ref(), request.target.as_ref());
         let mut state = self.state();
         let id = state.next_id;
         state.next_id += 1;
@@ -327,6 +433,7 @@ impl TransferQueue {
             snapshot,
             request,
             options,
+            direction,
             control: watch::Sender::new(Control::Run),
             plan: None,
             next_item: 0,
@@ -471,29 +578,73 @@ impl TransferQueue {
         self.state().policy = policy;
     }
 
-    pub fn set_parallelism(&self, parallelism: usize) {
-        self.state().parallelism = parallelism.max(1);
+    pub fn parallelism(&self) -> Parallelism {
+        self.state().parallelism
+    }
+
+    pub fn set_parallelism(&self, total: usize) {
+        self.state().parallelism.total = total.max(1);
         self.inner.wake.notify_one();
     }
 
-    pub fn set_retry_delay(&self, delay: Duration) {
-        self.state().retry_delay = delay;
+    pub fn set_direction_limits(&self, downloads: Option<usize>, uploads: Option<usize>) {
+        {
+            let mut state = self.state();
+            state.parallelism.downloads = downloads.map(|limit| limit.max(1));
+            state.parallelism.uploads = uploads.map(|limit| limit.max(1));
+        }
+        self.inner.wake.notify_one();
+    }
+
+    pub fn retry_policy(&self) -> RetryPolicy {
+        self.state().retry
+    }
+
+    pub fn set_retry_policy(&self, retry: RetryPolicy) {
+        self.state().retry = retry;
+    }
+
+    pub fn speed_limits(&self) -> SpeedLimits {
+        SpeedLimits {
+            download: self.inner.download_limit.rate(),
+            upload: self.inner.upload_limit.rate(),
+        }
+    }
+
+    pub fn set_speed_limits(&self, limits: SpeedLimits) {
+        self.inner.download_limit.set_rate(limits.download);
+        self.inner.upload_limit.set_rate(limits.upload);
     }
 
     // Scheduling
 
     fn start_ready(&self) {
         let mut state = self.state();
-        let mut running = state.jobs.iter().filter(|job| job.active).count();
-        let mut started = Vec::new();
         let parallelism = state.parallelism;
+        let mut running = 0;
+        let mut downloads = 0;
+        let mut uploads = 0;
+        for job in state.jobs.iter().filter(|job| job.active) {
+            running += 1;
+            downloads += usize::from(job.direction.downloads());
+            uploads += usize::from(job.direction.uploads());
+        }
+        let mut started = Vec::new();
         for job in &mut state.jobs {
-            if running >= parallelism {
+            if running >= parallelism.total {
                 break;
             }
             if job.active || job.snapshot.status != JobStatus::Queued {
                 continue;
             }
+            let direction = job.direction;
+            if (direction.downloads() && downloads >= parallelism.download_limit())
+                || (direction.uploads() && uploads >= parallelism.upload_limit())
+            {
+                continue;
+            }
+            downloads += usize::from(direction.downloads());
+            uploads += usize::from(direction.uploads());
             job.active = true;
             job.snapshot.status = if job.plan.is_some() {
                 JobStatus::Running
@@ -536,14 +687,17 @@ impl TransferQueue {
     // Execution
 
     async fn execute(&self, id: JobId) -> Result<Outcome> {
-        let Some((request, mut control, target_root, planned)) = self.with_job(id, |job| {
-            (
-                job.request.clone(),
-                job.control.subscribe(),
-                job.snapshot.target_path.clone(),
-                job.plan.is_some(),
-            )
-        }) else {
+        let Some((request, mut control, target_root, planned, direction)) =
+            self.with_job(id, |job| {
+                (
+                    job.request.clone(),
+                    job.control.subscribe(),
+                    job.snapshot.target_path.clone(),
+                    job.plan.is_some(),
+                    job.direction,
+                )
+            })
+        else {
             return Ok(Outcome::Interrupted(Control::Cancel));
         };
         if !planned {
@@ -604,7 +758,7 @@ impl TransferQueue {
                         modified: *modified,
                     };
                     match self
-                        .transfer_file(id, &request, &file, &mut control)
+                        .transfer_file(id, &request, &file, direction, &mut control)
                         .await?
                     {
                         Some(Outcome::Interrupted(signal)) => {
@@ -635,6 +789,7 @@ impl TransferQueue {
         id: JobId,
         request: &TransferRequest,
         file: &FileItem<'_>,
+        direction: TransferDirection,
         control: &mut watch::Receiver<Control>,
     ) -> Result<Option<Outcome>> {
         let FileItem {
@@ -658,6 +813,7 @@ impl TransferQueue {
             }
         });
         let base = self.with_job(id, |job| job.completed_bytes).unwrap_or(0);
+        let limiters = self.limiters(direction);
         let mut progress = Progress::new();
         let mut attempt = 0;
         loop {
@@ -673,7 +829,13 @@ impl TransferQueue {
                         });
                     }
                 };
-                copy_stream(request, source, &path, offset, control, &mut report).await
+                let stream = Stream {
+                    source,
+                    target: &path,
+                    offset,
+                    limiters: &limiters,
+                };
+                copy_stream(request, &stream, control, &mut report).await
             };
             match result {
                 Ok(Outcome::Completed) => {
@@ -687,9 +849,9 @@ impl TransferQueue {
                     return Ok(Some(Outcome::Completed));
                 }
                 Ok(outcome) => return Ok(Some(outcome)),
-                Err(error) if is_retryable(&error) && attempt < MAX_RETRIES => {
+                Err(error) if is_retryable(&error) && attempt < self.state().retry.attempts => {
                     attempt += 1;
-                    let delay = self.state().retry_delay * 2u32.pow(attempt - 1);
+                    let delay = self.state().retry.delay_before(attempt);
                     self.change(id, |job| {
                         job.snapshot.status = JobStatus::Retrying(attempt);
                         job.snapshot.bytes_per_second = 0.0;
@@ -801,6 +963,17 @@ impl TransferQueue {
                 offset: 0,
             },
         })
+    }
+
+    fn limiters(&self, direction: TransferDirection) -> Vec<&RateLimiter> {
+        let mut limiters = Vec::new();
+        if direction.downloads() {
+            limiters.push(&self.inner.download_limit);
+        }
+        if direction.uploads() {
+            limiters.push(&self.inner.upload_limit);
+        }
+        limiters
     }
 
     // State
@@ -984,28 +1157,45 @@ async fn ensure_directory(file_system: &dyn FileSystem, path: &str) -> Result<()
 
 async fn copy_stream(
     request: &TransferRequest,
-    source: &str,
-    target: &str,
-    offset: u64,
+    stream: &Stream<'_>,
     control: &mut watch::Receiver<Control>,
     report: &mut impl FnMut(u64),
 ) -> Result<Outcome> {
+    let Stream {
+        source,
+        target,
+        offset,
+        limiters,
+    } = *stream;
     let mut reader = request.source.open_read(source, offset).await?;
     let mut writer = request.target.open_write(target, offset).await?;
     let mut buffer = vec![0; BUFFER_SIZE];
     let mut position = offset;
     report(position);
     loop {
+        let chunk = limiters
+            .iter()
+            .fold(BUFFER_SIZE, |size, limiter| limiter.chunk_size(size));
         let read = tokio::select! {
             biased;
             signal = wait_for_stop(control) => {
                 let _ = writer.shutdown().await;
                 return Ok(Outcome::Interrupted(signal));
             }
-            read = reader.read(&mut buffer) => read.map_err(|error| Error::from_io(&error, source))?,
+            read = reader.read(&mut buffer[..chunk]) => read.map_err(|error| Error::from_io(&error, source))?,
         };
         if read == 0 {
             break;
+        }
+        for limiter in limiters {
+            tokio::select! {
+                biased;
+                signal = wait_for_stop(control) => {
+                    let _ = writer.shutdown().await;
+                    return Ok(Outcome::Interrupted(signal));
+                }
+                () = limiter.acquire(read as u64) => {}
+            }
         }
         writer
             .write_all(&buffer[..read])
@@ -1056,11 +1246,14 @@ mod tests {
 
     // Fakes
 
+    type Pair = (Arc<dyn FileSystem>, Arc<dyn FileSystem>);
+
     #[derive(Debug, Default)]
     struct TestFileSystem {
         delay: Option<Duration>,
         failures: AtomicU32,
         fail_after: u64,
+        remote: bool,
     }
 
     struct TestReader {
@@ -1105,6 +1298,10 @@ mod tests {
     }
 
     impl FileSystem for TestFileSystem {
+        fn is_remote(&self) -> bool {
+            self.remote
+        }
+
         fn home(&self) -> BoxFuture<'_, Result<String>> {
             LocalFileSystem.home()
         }
@@ -1470,7 +1667,10 @@ mod tests {
         std::fs::create_dir_all(&target).expect("creating failed");
 
         let queue = TransferQueue::default();
-        queue.set_retry_delay(Duration::from_millis(10));
+        queue.set_retry_policy(RetryPolicy {
+            delay: Duration::from_millis(10),
+            ..RetryPolicy::default()
+        });
         let mut events = start(&queue);
         let flaky: Arc<dyn FileSystem> = Arc::new(TestFileSystem {
             failures: AtomicU32::new(2),
@@ -1487,7 +1687,7 @@ mod tests {
         );
 
         let broken: Arc<dyn FileSystem> = Arc::new(TestFileSystem {
-            failures: AtomicU32::new(MAX_RETRIES + 1),
+            failures: AtomicU32::new(DEFAULT_RETRIES + 1),
             fail_after: 10 * 1024,
             ..TestFileSystem::default()
         });
@@ -1541,6 +1741,328 @@ mod tests {
                 .values()
                 .all(|status| *status == JobStatus::Completed)
         );
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[derive(Default)]
+    struct Peaks {
+        statuses: HashMap<JobId, JobStatus>,
+        total: usize,
+        downloads: usize,
+        uploads: usize,
+    }
+
+    impl Peaks {
+        fn record(
+            &mut self,
+            snapshot: JobSnapshot,
+            directions: &HashMap<JobId, TransferDirection>,
+        ) {
+            self.statuses.insert(snapshot.id, snapshot.status);
+            let active: Vec<TransferDirection> = self
+                .statuses
+                .iter()
+                .filter(|(_, status)| status.is_active())
+                .filter_map(|(id, _)| directions.get(id).copied())
+                .collect();
+            self.total = self.total.max(active.len());
+            self.downloads = self
+                .downloads
+                .max(active.iter().filter(|d| d.downloads()).count());
+            self.uploads = self
+                .uploads
+                .max(active.iter().filter(|d| d.uploads()).count());
+        }
+
+        fn all_finished(&self, count: usize) -> bool {
+            self.statuses.len() == count && self.statuses.values().all(JobStatus::is_finished)
+        }
+    }
+
+    fn slow(remote: bool, delay: u64) -> Arc<dyn FileSystem> {
+        Arc::new(TestFileSystem {
+            delay: Some(Duration::from_millis(delay)),
+            remote,
+            ..TestFileSystem::default()
+        })
+    }
+
+    fn remote() -> Arc<dyn FileSystem> {
+        Arc::new(TestFileSystem {
+            remote: true,
+            ..TestFileSystem::default()
+        })
+    }
+
+    fn add_jobs(
+        queue: &TransferQueue,
+        directory: &Path,
+        jobs: &[Pair],
+        size: usize,
+    ) -> HashMap<JobId, TransferDirection> {
+        let mut directions = HashMap::new();
+        for (index, (source, target)) in jobs.iter().enumerate() {
+            let file = directory.join(format!("file{index}.bin"));
+            std::fs::write(&file, content(size)).expect("writing failed");
+            let folder = directory.join(format!("target{index}"));
+            std::fs::create_dir_all(&folder).expect("creating failed");
+            let id = queue.add(request(
+                Arc::clone(source),
+                &file,
+                Arc::clone(target),
+                &folder,
+            ));
+            directions.insert(id, TransferDirection::of(source.as_ref(), target.as_ref()));
+        }
+        directions
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn direction_limits_cap_running_jobs() {
+        let directory = temporary_directory("directions");
+        let queue = TransferQueue::new(3);
+        queue.set_direction_limits(Some(1), Some(2));
+        assert_eq!(queue.parallelism().download_limit(), 1);
+        assert_eq!(queue.parallelism().upload_limit(), 2);
+        let mut events = start(&queue);
+        let jobs: Vec<_> = (0..6)
+            .map(|index| {
+                if index % 2 == 0 {
+                    (slow(true, 1), local())
+                } else {
+                    (slow(false, 1), remote())
+                }
+            })
+            .collect();
+        let directions = add_jobs(&queue, &directory, &jobs, 40 * 1024);
+        let mut peaks = Peaks::default();
+        while !peaks.all_finished(jobs.len()) {
+            if let TransferEvent::Updated(snapshot) = wait_until(&mut events, |_| true).await {
+                peaks.record(snapshot, &directions);
+            }
+        }
+        assert_eq!((peaks.downloads, peaks.uploads, peaks.total), (1, 2, 3));
+        assert!(
+            peaks
+                .statuses
+                .values()
+                .all(|status| *status == JobStatus::Completed)
+        );
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn server_to_server_copies_count_as_download_and_upload() {
+        assert_eq!(
+            TransferDirection::of(remote().as_ref(), remote().as_ref()),
+            TransferDirection::ServerToServer
+        );
+        assert_eq!(
+            TransferDirection::of(local().as_ref(), local().as_ref()),
+            TransferDirection::Local
+        );
+        let directory = temporary_directory("server-to-server");
+        let queue = TransferQueue::new(4);
+        queue.set_direction_limits(None, Some(1));
+        let mut events = start(&queue);
+        let jobs = [
+            (slow(true, 1), remote()),
+            (slow(false, 1), remote()),
+            (slow(true, 1), local()),
+        ];
+        let directions = add_jobs(&queue, &directory, &jobs, 40 * 1024);
+        let mut peaks = Peaks::default();
+        while !peaks.all_finished(jobs.len()) {
+            if let TransferEvent::Updated(snapshot) = wait_until(&mut events, |_| true).await {
+                peaks.record(snapshot, &directions);
+            }
+        }
+        assert_eq!(peaks.uploads, 1);
+        assert_eq!(peaks.total, 2);
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn parallelism_changes_apply_live() {
+        let directory = temporary_directory("live-parallel");
+        let queue = TransferQueue::new(1);
+        let mut events = start(&queue);
+        let jobs: Vec<_> = (0..3).map(|_| (slow(true, 2), local())).collect();
+        let directions = add_jobs(&queue, &directory, &jobs, 200 * 1024);
+        let mut peaks = Peaks::default();
+        let mut raised = false;
+        while !peaks.all_finished(jobs.len()) {
+            if let TransferEvent::Updated(snapshot) = wait_until(&mut events, |_| true).await {
+                let running = snapshot.status == JobStatus::Running;
+                peaks.record(snapshot, &directions);
+                if running && !raised {
+                    assert_eq!(peaks.total, 1);
+                    queue.set_parallelism(3);
+                    raised = true;
+                }
+            }
+        }
+        assert_eq!(peaks.total, 3);
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    // Retries
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn retries_follow_the_policy() {
+        let directory = temporary_directory("retry-policy");
+        let source = directory.join("flaky.bin");
+        std::fs::write(&source, content(20 * 1024)).expect("writing failed");
+        let queue = TransferQueue::default();
+        let mut events = start(&queue);
+        let flaky = |failures: u32| -> Arc<dyn FileSystem> {
+            Arc::new(TestFileSystem {
+                failures: AtomicU32::new(failures),
+                fail_after: 4 * 1024,
+                ..TestFileSystem::default()
+            })
+        };
+
+        for (attempts, failures, completes) in [(0, 1, false), (1, 2, false), (2, 2, true)] {
+            queue.set_retry_policy(RetryPolicy {
+                attempts,
+                delay: Duration::from_millis(100),
+            });
+            let target = directory.join(format!("target-{attempts}-{failures}"));
+            std::fs::create_dir_all(&target).expect("creating failed");
+            let started = Instant::now();
+            let id = queue.add(request(flaky(failures), &source, local(), &target));
+            let mut retries = Vec::new();
+            let done = loop {
+                let snapshot = wait_for_status(&mut events, id, |status| {
+                    status.is_finished() || matches!(status, JobStatus::Retrying(_))
+                })
+                .await;
+                match snapshot.status {
+                    JobStatus::Retrying(attempt) => {
+                        if retries.last() != Some(&attempt) {
+                            retries.push(attempt);
+                        }
+                    }
+                    _ => break snapshot,
+                }
+            };
+            let expected: Vec<u32> = (1..=attempts.min(failures)).collect();
+            assert_eq!(retries, expected, "{attempts} attempts");
+            assert_eq!(
+                done.status == JobStatus::Completed,
+                completes,
+                "{attempts} attempts"
+            );
+            let waited: u64 = (1..=attempts.min(failures))
+                .map(|attempt| 100 * 2u64.pow(attempt - 1))
+                .sum();
+            assert!(
+                started.elapsed() >= Duration::from_millis(waited),
+                "{attempts} attempts took {:?}",
+                started.elapsed()
+            );
+        }
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[test]
+    fn retry_delays_double() {
+        let policy = RetryPolicy {
+            attempts: 10,
+            delay: Duration::from_secs(3),
+        };
+        let delays: Vec<u64> = (1..=4)
+            .map(|attempt| policy.delay_before(attempt).as_secs())
+            .collect();
+        assert_eq!(delays, [3, 6, 12, 24]);
+        assert_eq!(RetryPolicy::default().attempts, 3);
+        assert_eq!(RetryPolicy::default().delay, Duration::from_secs(1));
+    }
+
+    // Speed limits
+
+    async fn timed_copy(
+        queue: &TransferQueue,
+        events: &mut mpsc::UnboundedReceiver<TransferEvent>,
+        directory: &Path,
+        source: Arc<dyn FileSystem>,
+        target: Arc<dyn FileSystem>,
+        size: usize,
+    ) -> Duration {
+        let name = format!("limited-{}.bin", queue.snapshots().len());
+        let file = directory.join(&name);
+        std::fs::write(&file, content(size)).expect("writing failed");
+        let folder = directory.join(format!("{name}-target"));
+        std::fs::create_dir_all(&folder).expect("creating failed");
+        let started = Instant::now();
+        let id = queue.add(request(source, &file, target, &folder));
+        let done = wait_for_status(events, id, JobStatus::is_finished).await;
+        assert_eq!(done.status, JobStatus::Completed);
+        assert_eq!(
+            std::fs::read(folder.join(&name)).expect("reading failed"),
+            content(size)
+        );
+        started.elapsed()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn speed_limits_hold_the_rate_per_direction() {
+        let directory = temporary_directory("speed");
+        let queue = TransferQueue::default();
+        let mut events = start(&queue);
+        queue.set_speed_limits(SpeedLimits {
+            download: Some(256 * 1024),
+            upload: Some(128 * 1024),
+        });
+        assert_eq!(queue.speed_limits().download, Some(256 * 1024));
+
+        let size = 320 * 1024;
+        let download = timed_copy(&queue, &mut events, &directory, remote(), local(), size).await;
+        assert!(
+            (Duration::from_millis(900)..Duration::from_secs(4)).contains(&download),
+            "{download:?}"
+        );
+        let upload = timed_copy(&queue, &mut events, &directory, local(), remote(), size).await;
+        assert!(
+            (Duration::from_millis(2_000)..Duration::from_secs(6)).contains(&upload),
+            "{upload:?}"
+        );
+        let copy = timed_copy(&queue, &mut events, &directory, remote(), remote(), size).await;
+        assert!(copy >= Duration::from_millis(2_000), "{copy:?}");
+        let local_copy = timed_copy(&queue, &mut events, &directory, local(), local(), size).await;
+        assert!(local_copy < Duration::from_millis(900), "{local_copy:?}");
+
+        queue.set_speed_limits(SpeedLimits::default());
+        let unlimited = timed_copy(&queue, &mut events, &directory, remote(), local(), size).await;
+        assert!(unlimited < Duration::from_millis(900), "{unlimited:?}");
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn speed_limits_are_shared_by_running_jobs() {
+        let directory = temporary_directory("shared-speed");
+        let queue = TransferQueue::new(4);
+        queue.set_speed_limits(SpeedLimits {
+            download: Some(512 * 1024),
+            upload: None,
+        });
+        let mut events = start(&queue);
+        let jobs: Vec<_> = (0..4).map(|_| (remote(), local())).collect();
+        let started = Instant::now();
+        let directions = add_jobs(&queue, &directory, &jobs, 256 * 1024);
+        let mut peaks = Peaks::default();
+        while !peaks.all_finished(jobs.len()) {
+            if let TransferEvent::Updated(snapshot) = wait_until(&mut events, |_| true).await {
+                peaks.record(snapshot, &directions);
+            }
+        }
+        let elapsed = started.elapsed();
+        assert!(
+            (Duration::from_millis(1_600)..Duration::from_secs(6)).contains(&elapsed),
+            "{elapsed:?}"
+        );
+        assert_eq!(peaks.downloads, 4);
         std::fs::remove_dir_all(directory).expect("cleaning up failed");
     }
 

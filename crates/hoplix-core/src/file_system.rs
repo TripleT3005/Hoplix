@@ -20,6 +20,10 @@ pub trait FileSystem: Debug + Send + Sync {
         None
     }
 
+    fn is_remote(&self) -> bool {
+        self.label().is_some()
+    }
+
     fn home(&self) -> BoxFuture<'_, Result<String>>;
 
     fn list(&self, path: &str) -> BoxFuture<'_, Result<Vec<Entry>>>;

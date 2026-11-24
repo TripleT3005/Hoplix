@@ -2,6 +2,14 @@ use std::path::PathBuf;
 
 use crate::target::Target;
 
+// Constants
+
+pub const MAX_RETRIES: u32 = 10;
+pub const MAX_RETRY_DELAY: u32 = 60;
+const KIB: u64 = 1024;
+const MIB: u64 = 1024 * 1024;
+const MAX_RATE: u64 = 1_000_000 * MIB;
+
 // Types
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +64,10 @@ pub struct Options {
     pub mirror: bool,
     pub delete: bool,
     pub dry_run: bool,
+    pub retries: Option<u32>,
+    pub retry_delay: Option<u32>,
+    pub limit_download: Option<u64>,
+    pub limit_upload: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +113,24 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
             "--mirror" => options.mirror = true,
             "--delete" => options.delete = true,
             "--dry-run" => options.dry_run = true,
+            "--retries" => {
+                options.retries = Some(number("--retries", &value("--retries")?, 0, MAX_RETRIES)?);
+            }
+            "--retry-delay" => {
+                options.retry_delay = Some(number(
+                    "--retry-delay",
+                    &value("--retry-delay")?,
+                    1,
+                    MAX_RETRY_DELAY,
+                )?);
+            }
+            "--limit-download" => {
+                options.limit_download =
+                    Some(rate("--limit-download", &value("--limit-download")?)?);
+            }
+            "--limit-upload" => {
+                options.limit_upload = Some(rate("--limit-upload", &value("--limit-upload")?)?);
+            }
             "-r" | "--recursive" => recursive = true,
             "-h" | "--help" => positional.insert(0, "help".to_string()),
             "-V" | "--version" => positional.insert(0, "version".to_string()),
@@ -138,6 +168,17 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
     {
         return Err("--mirror, --delete and --dry-run only work with sync".to_string());
     }
+    let transferring = matches!(command, Command::Copy { .. } | Command::Sync { .. });
+    let tuned = options.retries.is_some()
+        || options.retry_delay.is_some()
+        || options.limit_download.is_some()
+        || options.limit_upload.is_some();
+    if tuned && !transferring {
+        return Err(
+            "--retries, --retry-delay, --limit-download and --limit-upload only work with get, put, cp and sync"
+                .to_string(),
+        );
+    }
     if [options.resume, options.skip_existing, options.keep_both]
         .iter()
         .filter(|flag| **flag)
@@ -147,6 +188,35 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
         return Err("use only one of --resume, --skip-existing and --keep-both".to_string());
     }
     Ok(Invocation { command, options })
+}
+
+fn number(name: &str, text: &str, low: u32, high: u32) -> Result<u32, String> {
+    text.parse::<u32>()
+        .ok()
+        .filter(|value| (low..=high).contains(value))
+        .ok_or_else(|| format!("{name} needs a whole number from {low} to {high}"))
+}
+
+fn rate(name: &str, text: &str) -> Result<u64, String> {
+    let lower = text.trim().to_ascii_lowercase();
+    let digits_end = lower
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(lower.len());
+    let (digits, unit) = lower.split_at(digits_end);
+    let factor = match unit.trim_end_matches("/s") {
+        "" | "k" | "kib" => KIB,
+        "m" | "mib" => MIB,
+        _ => 0,
+    };
+    digits
+        .parse::<u64>()
+        .ok()
+        .filter(|_| factor > 0)
+        .map(|amount| amount.saturating_mul(factor))
+        .filter(|bytes| *bytes <= MAX_RATE)
+        .ok_or_else(|| {
+            format!("{name} needs a rate like 500 (KiB/s), 500K or 2M (MiB/s), 0 for no limit")
+        })
 }
 
 fn command_from(positional: &[String], recursive: bool) -> Result<Command, String> {
@@ -257,6 +327,14 @@ Options:
                             completed, equal ones skipped); default: overwrite
   --skip-existing           Leave files that already exist untouched
   --keep-both               Store new files next to existing ones as name (1).ext
+  --retries <n>             Retry a file this often when the connection drops
+                            (0 to 10, default 3)
+  --retry-delay <seconds>   Wait this long before the first retry; each further
+                            wait is twice as long (1 to 60, default 1)
+  --limit-download <rate>   Limit the download speed, e.g. 500K or 2M; a number
+                            without unit means KiB/s, 0 means no limit
+  --limit-upload <rate>     Limit the upload speed in the same way
+                            (a copy between two servers is limited by both)
 
 Compare and sync:
   --size-only               Compare only the size, ignore modification times
@@ -420,6 +498,66 @@ mod tests {
         assert!(run(&["get", "a", "b", "--exclude", "*.tmp"]).is_err());
         assert!(run(&["sync", "a", "b", "--exclude"]).is_err());
         assert!(run(&["sync", "a", "b", "--mirror"]).is_ok());
+    }
+
+    #[test]
+    fn retry_and_limit_options_parse() {
+        let invocation = run(&[
+            "get",
+            "sftp://demo@host/big.iso",
+            "big.iso",
+            "--retries",
+            "5",
+            "--retry-delay",
+            "10",
+            "--limit-download",
+            "2M",
+            "--limit-upload",
+            "512",
+        ])
+        .expect("valid");
+        let options = invocation.options;
+        assert_eq!(options.retries, Some(5));
+        assert_eq!(options.retry_delay, Some(10));
+        assert_eq!(options.limit_download, Some(2 * 1024 * 1024));
+        assert_eq!(options.limit_upload, Some(512 * 1024));
+
+        for (text, bytes) in [
+            ("0", 0),
+            ("300k", 300 * 1024),
+            ("300KiB", 300 * 1024),
+            ("300KiB/s", 300 * 1024),
+            ("1mib", 1024 * 1024),
+            ("7M/s", 7 * 1024 * 1024),
+        ] {
+            let invocation = run(&["sync", "a", "b", "--limit-upload", text]).expect("valid rate");
+            assert_eq!(invocation.options.limit_upload, Some(bytes), "{text}");
+        }
+        let invocation = run(&["put", "a", "sftp://demo@host/a", "--retries", "0"]).expect("valid");
+        assert_eq!(invocation.options.retries, Some(0));
+    }
+
+    #[test]
+    fn retry_and_limit_mistakes_are_reported() {
+        for arguments in [
+            &["get", "a", "b", "--retries", "11"][..],
+            &["get", "a", "b", "--retries", "-1"],
+            &["get", "a", "b", "--retries"],
+            &["get", "a", "b", "--retry-delay", "0"],
+            &["get", "a", "b", "--retry-delay", "61"],
+            &["get", "a", "b", "--limit-download", "fast"],
+            &["get", "a", "b", "--limit-download", "2G"],
+            &["get", "a", "b", "--limit-download", "1.5M"],
+            &["get", "a", "b", "--limit-upload", "M"],
+            &["get", "a", "b", "--limit-upload", "9999999M"],
+            &["ls", "a", "--retries", "2"],
+            &["compare", "a", "b", "--limit-download", "1M"],
+            &["rm", "a", "--retry-delay", "5"],
+        ] {
+            assert!(run(arguments).is_err(), "{arguments:?}");
+        }
+        let error = run(&["get", "a", "b", "--retries", "11"]).expect_err("accepted");
+        assert!(error.contains("0 to 10"), "{error}");
     }
 
     #[test]
