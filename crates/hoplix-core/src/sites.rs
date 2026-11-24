@@ -65,7 +65,7 @@ impl Site {
         }
     }
 
-    pub fn url(&self) -> String {
+    pub fn address(&self) -> String {
         let port = if self.port == self.protocol.default_port() {
             String::new()
         } else {
@@ -78,12 +78,7 @@ impl Site {
         } else {
             format!("/~/{}", self.remote_path)
         };
-        format!(
-            "{}://{}@{}{port}{path}",
-            self.protocol.scheme(),
-            self.username,
-            self.host
-        )
+        format!("{}://{}{port}{path}", self.protocol.scheme(), self.host)
     }
 
     pub fn uses_key_file(&self) -> bool {
@@ -493,10 +488,10 @@ mod tests {
     // Connections
 
     #[test]
-    fn sites_build_params_and_urls() {
+    fn sites_build_params_and_addresses() {
         let mut web = site("Web", "");
         web.remote_path = "www".to_string();
-        assert_eq!(web.url(), "sftp://demo@files.example.test/~/www");
+        assert_eq!(web.address(), "sftp://files.example.test/~/www");
         let password = test_password();
         assert_eq!(
             web.to_params(Some(password.clone())).authentication,
@@ -506,7 +501,7 @@ mod tests {
         web.key_path = "id".to_string();
         web.port = 2222;
         web.remote_path = "/srv".to_string();
-        assert_eq!(web.url(), "sftp://demo@files.example.test:2222/srv");
+        assert_eq!(web.address(), "sftp://files.example.test:2222/srv");
         assert_eq!(
             web.to_params(Some(String::new())).authentication,
             Authentication::KeyFile {
