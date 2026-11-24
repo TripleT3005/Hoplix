@@ -136,7 +136,7 @@ edit.upload_failed = “{name}” could not be uploaded and stays marked as chan
 edit.folder_failed = No temporary folder for editing could be created: {detail}
 settings.editor = Editor
 settings.editor.placeholder = Empty: the default program of the system
-settings.editor.hint = Edit (F4) opens files with this program, Open (double-click or Enter) with the default program. Files from a server are downloaded to a temporary folder and watched; Hoplix offers to upload them when they change and deletes the copies when it closes.
+settings.editor.hint = Edit (F4) opens files with this program or command line, for example code --wait %1 or "C:\Program Files\Notepad++\notepad++.exe" -multiInst %1. %1 stands for the file; without it, the file is added as the last argument. Put paths with spaces in quotes. Open (double-click or Enter) uses the default program. Files from a server are downloaded to a temporary folder and watched; Hoplix offers to upload them when they change and deletes the copies when it closes.
 settings.upload_changes = Upload changes automatically
 command.edit = Edit in external program
 
