@@ -291,5 +291,6 @@ jobs:
       title: Hoplix ${{ needs.version.outputs.version }}
       version: ${{ needs.version.outputs.version }}
       tag: v${{ needs.version.outputs.version }}
+      page: hoplix
     secrets:
       DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
