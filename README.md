@@ -10,7 +10,7 @@ Hoplix is a file transfer client for Windows and Linux, written in Rust with [ic
 
 > **Work in progress:** Hoplix is at an early stage of development. Features, settings files and the user interface may still change.
 
-> Feedback and bug reports are welcome as [issues](../../issues).
+> Feedback and bug reports are welcome as [issues](../../issues). Not affiliated with or endorsed by Microsoft, the GNOME project or KDE. Windows is a trademark of the Microsoft group of companies.
 
 <p>
   <img src="assets/screenshot-light.png" alt="Hoplix in light mode with two panes showing demo folders" width="49%">
@@ -19,7 +19,32 @@ Hoplix is a file transfer client for Windows and Linux, written in Rust with [ic
 
 ### Installation
 
-There are no releases yet. See [Building](#building).
+Download one of the files from [Releases](../../releases):
+
+- **Installer** `Hoplix-<version>-windows-x64-setup.exe` – installs Hoplix and `hoplix-cli` for the current user (default, no administrator rights, to `%LOCALAPPDATA%\Programs\Hoplix`) or for all users (to `C:\Program Files\Hoplix`, asks for administrator rights) and adds a Start menu entry and optionally a desktop shortcut. It can be removed under Settings → Apps.
+- **Portable for Windows** `Hoplix-<version>-windows-x64-portable.zip` – extract it to any folder and start `hoplix.exe`. Keep the `lang` folder next to the program.
+- **Portable for Linux** `Hoplix-<version>-linux-x64.tar.gz` – extract it and start `hoplix`. Keep the `lang` folder next to the program.
+
+Versions 0.x are published as pre-releases. The programs are not signed, so SmartScreen may warn on the first start: "More info" → "Run anyway". Each file has a `.sha256` file to verify the download, and the release notes link a VirusTotal scan. Changes are listed in the [changelog](CHANGELOG.md).
+
+#### Installer parameters
+
+The installer accepts the usual Inno Setup parameters, e.g. for a silent installation:
+
+| Parameter | Effect |
+|---|---|
+| `/CURRENTUSER` | Install for the current user only (default) |
+| `/ALLUSERS` | Install for all users (asks for administrator rights) |
+| `/DIR="C:\Path"` | Installation folder |
+| `/SILENT`, `/VERYSILENT` | Without wizard (with or without progress window) |
+| `/SUPPRESSMSGBOXES` | No message boxes in silent mode |
+| `/TASKS="desktopicon"` | Add a desktop shortcut; without the parameter there is none |
+| `/NOICONS` | No Start menu entry |
+| `/LOG="C:\Path\setup.log"` | Write a log file |
+
+Example: `Hoplix-0.2.0-windows-x64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /ALLUSERS /TASKS="desktopicon"`
+
+Settings such as the language, the layout or the editor are stored per user and are not set by the installer. Uninstalling removes the program and its shortcuts but keeps your settings, sites and trusted server keys in `%APPDATA%\Hoplix` and the passwords saved in the Windows Credential Manager.
 
 ### Usage
 
@@ -101,8 +126,8 @@ Commands: `ls`, `stat`, `get [-r]`, `put [-r]`, `cp [-r]`, `mkdir`, `rm [-r]`, `
 - The transfer queue in `hoplix-core` streams every file from the source to the target in 128 KiB blocks, so copies between two servers never touch the local disk. Folders are read first to know the total size, then copied file by file; parallel transfers run as separate jobs. SFTP runs parallel transfers as separate requests on the one SSH session, FTP opens extra connections for them. Retries wait 1, 2 and 4 seconds and continue at the size the target file already has.
 - `crates/hoplix-app` contains the iced user interface, `crates/hoplix-cli` the command-line tool.
 - Comparing and synchronising (`sync.rs` in `hoplix-core`) lists both folders, matches entries by name and compares size and modification time. A sync builds a plan first (deletions, new folders, copies), so the app and `--dry-run` can show it; copies then run through the transfer queue with *overwrite*, and the modification time is set afterwards (SFTP `SETSTAT`, FTP `MFMT` or `MDTM`, locally directly). Sync uses only the connections that are already open.
-- On Windows, `build/resources.rs` embeds the icon, the version information and a manifest (per-monitor DPI awareness, UTF-8) into both programs without extra tools; the version comes only from the workspace `Cargo.toml`, and a test checks that `Cargo.lock` and `CHANGELOG.md` agree with it. The title bar takes the colours of the current theme.
-- Texts come from `lang/<code>.lang` files. English is built in; missing texts fall back to English one by one.
+- On Windows, `build/resources.rs` embeds the icon, the version information and a manifest (per-monitor DPI awareness, UTF-8) into both programs without extra tools; the version comes only from the workspace `Cargo.toml`, and a test checks that `Cargo.lock`, `CHANGELOG.md`, the installer script and the release workflow agree with it. The title bar takes the colours of the current theme.
+- Texts come from `lang/<code>.lang` files (`key = text`, UTF-8) with a comment header naming the language, its category and its reviewers; [LANGUAGES.md](LANGUAGES.md) lists them. English is built in; missing texts fall back one by one to the language named with `language.fallback`, otherwise to English. `language.direction = rtl` marks a right-to-left language; it is read, but the layout is not mirrored yet.
 - Sites are stored in `sites.conf` without any password. Saved passwords go to the Windows Credential Manager (entries `Hoplix:site/<id>`) or the Secret Service on Linux (GNOME Keyring, KWallet; attributes `application=Hoplix`, `name=site/<id>`). With a master password they are kept in `secrets.vault` instead: the key is derived with PBKDF2-HMAC-SHA256 (600,000 iterations, random 32-byte salt) and every entry is encrypted with AES-256-GCM (random nonce, bound to its name), all with `ring`. A forgotten master password cannot be recovered.
 - Settings are stored in `%APPDATA%\Hoplix\settings.conf` on Windows and in `$XDG_CONFIG_HOME/hoplix/settings.conf` (default `~/.config/hoplix/`) on Linux. Open tabs (folder paths and site ids) and the window size and position are kept in `session.conf` next to it. Trusted server keys are kept in `known_hosts` in the same folder, in OpenSSH format, trusted FTPS certificates in `trusted_certificates` (one line per server: `host:port SHA256:…`).
 
@@ -131,6 +156,12 @@ The program is `target/release/hoplix` (`hoplix.exe` on Windows); keep the `lang
 
 Tests: `cargo test`. The SFTP integration tests are skipped by default; run them against a test server with `cargo test -p hoplix-core --test sftp -- --ignored` after setting `HOPLIX_TEST_SFTP_HOST`, `HOPLIX_TEST_SFTP_USER` and `HOPLIX_TEST_SFTP_KEY` or `HOPLIX_TEST_SFTP_PASSWORD` (optional: `HOPLIX_TEST_SFTP_PORT`, `HOPLIX_TEST_SFTP_PASSPHRASE`, `HOPLIX_TEST_SFTP_OTHER_KEY`). The keyring tests write to the real system keyring and are skipped too: `cargo test -p hoplix-core --lib -- --ignored`. The FTP tests work the same way with `--test ftp` and `HOPLIX_TEST_FTP_HOST`, `HOPLIX_TEST_FTP_USER`, `HOPLIX_TEST_FTP_PASSWORD` (optional: `HOPLIX_TEST_FTP_PORT`, `HOPLIX_TEST_FTP_PROTOCOL` = `ftp`, `ftpes` or `ftps`).
 
+[LANGUAGES.md](LANGUAGES.md) is generated from the headers of the language files. After changing them, run `UPDATE_LANGUAGES=1 cargo test -p hoplix-core --test languages` (PowerShell: `$env:UPDATE_LANGUAGES = 1; cargo test -p hoplix-core --test languages`); the tests fail if it is out of date.
+
+#### Releases
+
+The version is set once in the workspace `Cargo.toml`. When a new version reaches `main`, the release workflow builds Hoplix for Windows x64 and Linux x64 and publishes it as `v<version>`: the portable ZIP, the installer (Inno Setup, `installer/hoplix.iss`, which gets the version from the workflow) and the Linux archive, each with a `.sha256` file. The section of the version in [CHANGELOG.md](CHANGELOG.md), with English and German notes, becomes the release notes; the release fails without it and while `[Unreleased]` still has entries. Versions `0.x` and versions with a suffix like `1.0.0-beta.1` are pre-releases. With the repository secret `VT_API_KEY`, all files are uploaded to VirusTotal and the scan links are added to the release notes; without it the workflow only warns. Pull requests that change the release workflow or the installer build and package everything as a dry run without publishing.
+
 <!-- /web:skip -->
 
 ### License
@@ -143,7 +174,7 @@ Hoplix ist ein Client zur Dateiübertragung für Windows und Linux, geschrieben 
 
 > **Work in progress:** Hoplix steht noch am Anfang der Entwicklung. Funktionen, Einstellungsdateien und Oberfläche können sich noch ändern.
 
-> Rückmeldungen und Fehlerberichte gern als [Issue](../../issues).
+> Rückmeldungen und Fehlerberichte gern als [Issue](../../issues). Keine Verbindung zu Microsoft, dem GNOME-Projekt oder KDE und nicht von ihnen unterstützt. Windows ist eine Marke der Microsoft-Unternehmensgruppe.
 
 <p>
   <img src="assets/screenshot-light.png" alt="Hoplix im hellen Modus mit zwei Bereichen und Beispielordnern" width="49%">
@@ -152,7 +183,32 @@ Hoplix ist ein Client zur Dateiübertragung für Windows und Linux, geschrieben 
 
 ### Installation
 
-Es gibt noch keine Releases. Siehe [Bauen](#bauen).
+Eine der Dateien unter [Releases](../../releases) herunterladen:
+
+- **Installer** `Hoplix-<Version>-windows-x64-setup.exe` – installiert Hoplix und `hoplix-cli` für den aktuellen Benutzer (Standard, ohne Administratorrechte, nach `%LOCALAPPDATA%\Programs\Hoplix`) oder für alle Benutzer (nach `C:\Program Files\Hoplix`, fragt nach Administratorrechten) und legt einen Startmenü-Eintrag und auf Wunsch eine Desktop-Verknüpfung an. Entfernen lässt es sich unter Einstellungen → Apps.
+- **Portabel für Windows** `Hoplix-<Version>-windows-x64-portable.zip` – in einen beliebigen Ordner entpacken und `hoplix.exe` starten. Den Ordner `lang` neben dem Programm lassen.
+- **Portabel für Linux** `Hoplix-<Version>-linux-x64.tar.gz` – entpacken und `hoplix` starten. Den Ordner `lang` neben dem Programm lassen.
+
+Versionen 0.x erscheinen als Vorabversionen. Die Programme sind nicht signiert, daher kann SmartScreen beim ersten Start warnen: „Weitere Informationen“ → „Trotzdem ausführen“. Zu jeder Datei gibt es eine `.sha256`-Datei zum Prüfen des Downloads, und die Release-Notizen verlinken einen VirusTotal-Scan. Änderungen stehen im [Changelog](CHANGELOG.md).
+
+#### Installer-Parameter
+
+Der Installer kennt die üblichen Inno-Setup-Parameter, z. B. für eine stille Installation:
+
+| Parameter | Wirkung |
+|---|---|
+| `/CURRENTUSER` | Nur für den aktuellen Benutzer installieren (Standard) |
+| `/ALLUSERS` | Für alle Benutzer installieren (fragt nach Administratorrechten) |
+| `/DIR="C:\Pfad"` | Installationsordner |
+| `/SILENT`, `/VERYSILENT` | Ohne Assistent (mit oder ohne Fortschrittsfenster) |
+| `/SUPPRESSMSGBOXES` | Keine Meldungsfenster im stillen Modus |
+| `/TASKS="desktopicon"` | Desktop-Verknüpfung anlegen; ohne den Parameter gibt es keine |
+| `/NOICONS` | Kein Startmenü-Eintrag |
+| `/LOG="C:\Pfad\setup.log"` | Protokolldatei schreiben |
+
+Beispiel: `Hoplix-0.2.0-windows-x64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /ALLUSERS /TASKS="desktopicon"`
+
+Einstellungen wie Sprache, Ansicht oder Editor gelten pro Benutzer und werden nicht über den Installer gesetzt. Die Deinstallation entfernt Programm und Verknüpfungen, lässt aber deine Einstellungen, Server und vertrauenswürdigen Serverschlüssel in `%APPDATA%\Hoplix` und die in der Windows-Anmeldeinformationsverwaltung gespeicherten Passwörter stehen.
 
 ### Bedienung
 
@@ -234,8 +290,8 @@ Befehle: `ls`, `stat`, `get [-r]`, `put [-r]`, `cp [-r]`, `mkdir`, `rm [-r]`, `m
 - Die Übertragungswarteschlange in `hoplix-core` reicht jede Datei in Blöcken von 128 KiB von der Quelle zum Ziel durch, Kopien zwischen zwei Servern berühren daher nie die lokale Festplatte. Ordner werden zuerst gelesen, um die Gesamtgröße zu kennen, und dann Datei für Datei kopiert; gleichzeitige Übertragungen laufen als eigene Aufträge. SFTP schickt gleichzeitige Übertragungen als getrennte Anfragen über die eine SSH-Sitzung, FTP öffnet dafür zusätzliche Verbindungen. Wiederholungen warten 1, 2 und 4 Sekunden und machen bei der Größe weiter, die die Zieldatei schon hat.
 - `crates/hoplix-app` enthält die Oberfläche mit iced, `crates/hoplix-cli` das Kommandozeilenwerkzeug.
 - Vergleichen und Synchronisieren (`sync.rs` in `hoplix-core`) liest beide Ordner, ordnet die Einträge über den Namen zu und vergleicht Größe und Änderungszeit. Eine Synchronisierung erstellt zuerst einen Plan (Löschen, neue Ordner, Kopien), den die App und `--dry-run` anzeigen; die Kopien laufen dann mit *Überschreiben* über die Übertragungswarteschlange, danach wird die Änderungszeit gesetzt (SFTP `SETSTAT`, FTP `MFMT` oder `MDTM`, lokal direkt). Die Synchronisierung nutzt nur die bereits offenen Verbindungen.
-- Unter Windows bettet `build/resources.rs` Icon, Versionsinfo und ein Manifest (DPI pro Monitor, UTF-8) ohne zusätzliche Werkzeuge in beide Programme ein; die Version steht nur in der `Cargo.toml` des Workspaces, ein Test prüft, dass `Cargo.lock` und `CHANGELOG.md` dazu passen. Die Titelleiste übernimmt die Farben des aktuellen Designs.
-- Die Texte stammen aus `lang/<code>.lang`. Englisch ist eingebaut; fehlende Texte fallen einzeln auf Englisch zurück.
+- Unter Windows bettet `build/resources.rs` Icon, Versionsinfo und ein Manifest (DPI pro Monitor, UTF-8) ohne zusätzliche Werkzeuge in beide Programme ein; die Version steht nur in der `Cargo.toml` des Workspaces, ein Test prüft, dass `Cargo.lock`, `CHANGELOG.md`, das Installer-Skript und der Release-Workflow dazu passen. Die Titelleiste übernimmt die Farben des aktuellen Designs.
+- Die Texte stammen aus `lang/<code>.lang` (`Schlüssel = Text`, UTF-8) mit einem Kommentarkopf, der Sprache, Kategorie und Prüfende nennt; [LANGUAGES.md](LANGUAGES.md) listet sie auf. Englisch ist eingebaut; fehlende Texte fallen einzeln auf die mit `language.fallback` genannte Sprache zurück, sonst auf Englisch. `language.direction = rtl` kennzeichnet eine Sprache mit Schreibrichtung von rechts nach links; das wird gelesen, die Oberfläche aber noch nicht gespiegelt.
 - Server stehen ohne Passwörter in `sites.conf`. Gespeicherte Passwörter landen in der Windows-Anmeldeinformationsverwaltung (Einträge `Hoplix:site/<id>`) bzw. unter Linux im Secret Service (GNOME Keyring, KWallet; Attribute `application=Hoplix`, `name=site/<id>`). Mit Master-Passwort liegen sie stattdessen in `secrets.vault`: Der Schlüssel wird mit PBKDF2-HMAC-SHA256 abgeleitet (600.000 Durchläufe, zufälliges 32-Byte-Salt), jeder Eintrag ist mit AES-256-GCM verschlüsselt (zufällige Nonce, an seinen Namen gebunden), alles mit `ring`. Ein vergessenes Master-Passwort lässt sich nicht wiederherstellen.
 - Die Einstellungen liegen unter Windows in `%APPDATA%\Hoplix\settings.conf`, unter Linux in `$XDG_CONFIG_HOME/hoplix/settings.conf` (standardmäßig `~/.config/hoplix/`). Offene Tabs (Ordnerpfade und Server-IDs) sowie Größe und Position des Fensters stehen daneben in `session.conf`. Vertrauenswürdige Serverschlüssel stehen im selben Ordner in `known_hosts` im OpenSSH-Format, vertrauenswürdige FTPS-Zertifikate in `trusted_certificates` (eine Zeile pro Server: `host:port SHA256:…`).
 
@@ -263,6 +319,12 @@ cargo build --release
 Das Programm liegt unter `target/release/hoplix` (unter Windows `hoplix.exe`); der Ordner `lang` gehört daneben. Das Kommandozeilenwerkzeug ist `target/release/hoplix-cli`.
 
 Tests: `cargo test`. Die SFTP-Integrationstests sind standardmäßig übersprungen; gegen einen Testserver laufen sie mit `cargo test -p hoplix-core --test sftp -- --ignored`, nachdem `HOPLIX_TEST_SFTP_HOST`, `HOPLIX_TEST_SFTP_USER` und `HOPLIX_TEST_SFTP_KEY` oder `HOPLIX_TEST_SFTP_PASSWORD` gesetzt sind (optional: `HOPLIX_TEST_SFTP_PORT`, `HOPLIX_TEST_SFTP_PASSPHRASE`, `HOPLIX_TEST_SFTP_OTHER_KEY`). Die Schlüsselbund-Tests schreiben in den echten Schlüsselbund des Systems und sind ebenfalls übersprungen: `cargo test -p hoplix-core --lib -- --ignored`. Die FTP-Tests funktionieren genauso mit `--test ftp` und `HOPLIX_TEST_FTP_HOST`, `HOPLIX_TEST_FTP_USER`, `HOPLIX_TEST_FTP_PASSWORD` (optional: `HOPLIX_TEST_FTP_PORT`, `HOPLIX_TEST_FTP_PROTOCOL` = `ftp`, `ftpes` oder `ftps`).
+
+[LANGUAGES.md](LANGUAGES.md) wird aus den Köpfen der Sprachdateien erzeugt. Nach Änderungen daran `UPDATE_LANGUAGES=1 cargo test -p hoplix-core --test languages` (PowerShell: `$env:UPDATE_LANGUAGES = 1; cargo test -p hoplix-core --test languages`) ausführen; die Tests schlagen fehl, wenn sie veraltet ist.
+
+#### Releases
+
+Die Version steht nur in der `Cargo.toml` des Workspaces. Sobald eine neue Version auf `main` landet, baut der Release-Workflow Hoplix für Windows x64 und Linux x64 und veröffentlicht es als `v<Version>`: die portable ZIP, den Installer (Inno Setup, `installer/hoplix.iss`, der die Version vom Workflow bekommt) und das Linux-Archiv, jeweils mit einer `.sha256`-Datei. Der Abschnitt der Version in der [CHANGELOG.md](CHANGELOG.md) mit englischen und deutschen Notizen wird zu den Release-Notizen; ohne ihn und solange `[Unreleased]` noch Einträge hat, schlägt das Release fehl. Versionen `0.x` und Versionen mit Zusatz wie `1.0.0-beta.1` sind Vorabversionen. Mit dem Repository-Secret `VT_API_KEY` werden alle Dateien zu VirusTotal hochgeladen und die Scan-Links in die Release-Notizen eingetragen; ohne das Secret warnt der Workflow nur. Pull Requests, die den Release-Workflow oder den Installer ändern, bauen und packen alles nur zur Probe, ohne zu veröffentlichen.
 
 <!-- /web:skip -->
 
