@@ -5,7 +5,7 @@ use iced::keyboard::key::Named;
 
 use super::*;
 use crate::app::{Dialog, TabId};
-use crate::compare::Mark;
+use crate::compare::{CompareMessage, Mark};
 
 // Helpers
 
@@ -214,6 +214,110 @@ fn the_modern_layout_compares_with_the_chosen_tab() {
     assert_eq!(mark(&harness, 0, "newer.txt"), Some(Mark::NewerHere));
     harness.send(Message::SelectTab(second));
     assert!(harness.has("«"));
+}
+
+fn compared_tabs(harness: &Harness) -> Option<(TabId, TabId)> {
+    harness
+        .app
+        .compare
+        .comparison
+        .as_ref()
+        .map(|comparison| (comparison.left, comparison.right))
+}
+
+#[test]
+fn the_comparison_follows_the_active_tab_of_each_pane() {
+    let mut harness = classic("compare-follow-classic");
+    let (left, right) = (
+        harness.app.panes[0].tabs[0].id,
+        harness.app.panes[1].tabs[0].id,
+    );
+    harness.click("Compare");
+    harness.click("Include subfolders");
+    assert_eq!(compared_tabs(&harness), Some((left, right)));
+    assert!(
+        harness
+            .app
+            .compare
+            .comparison
+            .as_ref()
+            .is_some_and(|comparison| comparison.recursive)
+    );
+
+    harness.send(Message::NewTab(0));
+    let added = harness.app.panes[0].active_tab().expect("no active tab").id;
+    assert_eq!(compared_tabs(&harness), Some((added, right)));
+    open(&mut harness, added, "right");
+    assert_eq!(mark(&harness, 0, "size.txt"), Some(Mark::Equal));
+    assert_eq!(mark(&harness, 0, "only-right.txt"), Some(Mark::Equal));
+    assert!(
+        harness
+            .app
+            .compare
+            .comparison
+            .as_ref()
+            .is_some_and(|comparison| comparison.recursive)
+    );
+
+    harness.send(Message::SelectTab(left));
+    assert_eq!(compared_tabs(&harness), Some((left, right)));
+    assert_eq!(mark(&harness, 0, "size.txt"), Some(Mark::SizeDiffers));
+    assert_eq!(mark(&harness, 0, "docs"), Some(Mark::ContentDiffers));
+    assert!(harness.has("»"));
+
+    harness.send(Message::CloseTab(left));
+    assert_eq!(compared_tabs(&harness), Some((added, right)));
+    assert_eq!(mark(&harness, 0, "newer.txt"), Some(Mark::Equal));
+    assert!(harness.has("Differences: 0 · Equal: 5"));
+}
+
+#[test]
+fn the_comparison_moves_to_the_picked_tab_or_ends() {
+    let mut harness = Harness::start("compare-follow-modern", Layout::Modern, prepare);
+    let first = harness.tab().id;
+    open(&mut harness, first, "left");
+    harness.send(Message::NewTab(0));
+    let second = harness.tab().id;
+    open(&mut harness, second, "right");
+    harness.send(Message::NewTab(0));
+    let third = harness.tab().id;
+    open(&mut harness, third, "left");
+
+    harness.send(Message::SelectTab(first));
+    harness.send(Message::Compare(CompareMessage::With(second)));
+    assert_eq!(compared_tabs(&harness), Some((first, second)));
+    assert_eq!(mark(&harness, 0, "newer.txt"), Some(Mark::NewerHere));
+
+    harness.send(Message::SelectTab(second));
+    assert_eq!(compared_tabs(&harness), Some((first, second)));
+    assert!(harness.has("«"));
+
+    harness.send(Message::SelectTab(third));
+    assert_eq!(compared_tabs(&harness), Some((first, third)));
+    assert_eq!(mark(&harness, 0, "newer.txt"), Some(Mark::Equal));
+    let counts = harness
+        .app
+        .compare
+        .comparison
+        .as_ref()
+        .map(|comparison| comparison.counts());
+    assert_eq!(
+        counts.map(|counts| (counts.different, counts.equal)),
+        Some((0, 5))
+    );
+
+    harness.send(Message::SelectTab(first));
+    assert_eq!(compared_tabs(&harness), Some((first, third)));
+    harness.send(Message::CloseTab(first));
+    assert_eq!(harness.tab().id, second);
+    assert_eq!(compared_tabs(&harness), Some((second, third)));
+    assert_eq!(mark(&harness, 0, "newer.txt"), Some(Mark::OlderHere));
+
+    harness.send(Message::SelectTab(third));
+    harness.send(Message::CloseTab(third));
+    assert_eq!(harness.tab().id, second);
+    assert!(harness.app.compare.comparison.is_none());
+    assert!(!harness.has("«"));
 }
 
 // Synchronising

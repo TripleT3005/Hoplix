@@ -137,7 +137,7 @@ edit.upload_failed = „{name}“ konnte nicht hochgeladen werden und bleibt als
 edit.folder_failed = Es konnte kein temporärer Ordner zum Bearbeiten angelegt werden: {detail}
 settings.editor = Editor
 settings.editor.placeholder = Leer: Standardprogramm des Systems
-settings.editor.hint = Bearbeiten (F4) öffnet Dateien mit diesem Programm, Öffnen (Doppelklick oder Eingabetaste) mit dem Standardprogramm. Dateien vom Server werden in einen temporären Ordner heruntergeladen und beobachtet; ändern sie sich, bietet Hoplix das Hochladen an und löscht die Kopien beim Beenden.
+settings.editor.hint = Bearbeiten (F4) öffnet Dateien mit diesem Programm oder dieser Befehlszeile, zum Beispiel code --wait %1 oder "C:\Program Files\Notepad++\notepad++.exe" -multiInst %1. %1 steht für die Datei; fehlt es, wird die Datei als letztes Argument angehängt. Pfade mit Leerzeichen in Anführungszeichen setzen. Öffnen (Doppelklick oder Eingabetaste) nutzt das Standardprogramm. Dateien vom Server werden in einen temporären Ordner heruntergeladen und beobachtet; ändern sie sich, bietet Hoplix das Hochladen an und löscht die Kopien beim Beenden.
 settings.upload_changes = Änderungen automatisch hochladen
 command.edit = In externem Programm bearbeiten
 
