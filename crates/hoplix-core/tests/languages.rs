@@ -114,6 +114,27 @@ fn language_files_only_use_known_keys() {
 }
 
 #[test]
+fn backslashes_are_escaped() {
+    for (code, text) in language_texts() {
+        for (number, line) in text.lines().enumerate() {
+            if line.starts_with('#') {
+                continue;
+            }
+            let mut chars = line.chars();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    assert!(
+                        matches!(chars.next(), Some('n' | '\\')),
+                        "{code}.lang line {}: write a backslash as \\\\ and a line break as \\n",
+                        number + 1
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn placeholders_match_english() {
     let english = english();
     for language in languages() {
