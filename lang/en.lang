@@ -344,3 +344,23 @@ sync.failed = The synchronisation failed: {detail}
 # Session
 session.disconnected = Not connected. Hoplix does not reconnect on its own after a restart.
 session.reconnect = Connect
+
+# Updates
+settings.section.updates = Updates
+settings.updates.automatic = Check for updates automatically (once a day)
+settings.updates.version = Installed version
+settings.updates.label = Update check
+settings.updates.check = Check now
+settings.updates.checking = Checking…
+settings.updates.up_to_date = Hoplix is up to date.
+settings.updates.available = Hoplix {version} is available.
+settings.updates.failed = The update check failed: {detail}
+settings.updates.last_check = Last check
+settings.updates.never = Never
+settings.updates.hint = The check only asks api.github.com for the list of Hoplix releases; nothing is downloaded or installed. When a newer version exists, Hoplix tells you once and keeps a small note in the status bar. The release page opens in your browser. Without the automatic check, Hoplix only contacts GitHub when you click Check now.
+update.title = Hoplix {version} is available
+update.text = A newer version of Hoplix has been released. The release page shows what has changed and offers version {version} for download.
+update.open = Open release page
+update.later = Later
+update.hint = Update {version} available
+update.open_failed = The release page could not be opened: {detail}

@@ -345,3 +345,23 @@ sync.failed = Die Synchronisierung ist fehlgeschlagen: {detail}
 # Session
 session.disconnected = Nicht verbunden. Nach einem Neustart verbindet Hoplix nicht von selbst.
 session.reconnect = Verbinden
+
+# Updates
+settings.section.updates = Updates
+settings.updates.automatic = Automatisch nach Updates suchen (einmal am Tag)
+settings.updates.version = Installierte Version
+settings.updates.label = Update-Prüfung
+settings.updates.check = Jetzt prüfen
+settings.updates.checking = Wird geprüft…
+settings.updates.up_to_date = Hoplix ist auf dem neuesten Stand.
+settings.updates.available = Hoplix {version} ist verfügbar.
+settings.updates.failed = Die Update-Prüfung ist fehlgeschlagen: {detail}
+settings.updates.last_check = Zuletzt geprüft
+settings.updates.never = Noch nie
+settings.updates.hint = Die Prüfung fragt nur bei api.github.com die Liste der Hoplix-Versionen ab; es wird nichts heruntergeladen oder installiert. Gibt es eine neuere Version, weist Hoplix einmal darauf hin und zeigt danach einen kleinen Hinweis in der Statusleiste. Die Release-Seite öffnet sich im Browser. Ohne automatische Prüfung kontaktiert Hoplix GitHub nur, wenn du auf „Jetzt prüfen“ klickst.
+update.title = Hoplix {version} ist verfügbar
+update.text = Eine neuere Version von Hoplix ist erschienen. Die Release-Seite zeigt, was sich geändert hat, und bietet Version {version} zum Herunterladen an.
+update.open = Release-Seite öffnen
+update.later = Später
+update.hint = Update {version} verfügbar
+update.open_failed = Die Release-Seite konnte nicht geöffnet werden: {detail}

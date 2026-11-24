@@ -258,7 +258,10 @@ mod tests {
             ]))
         );
         assert_eq!(
-            value.get("b").and_then(|b| b.get("c")).and_then(Json::as_str),
+            value
+                .get("b")
+                .and_then(|b| b.get("c"))
+                .and_then(Json::as_str),
             Some("x\"y\\z/\nä😀")
         );
         assert_eq!(value.get("d"), Some(&Json::Object(Vec::new())));

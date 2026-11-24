@@ -23,9 +23,12 @@ impl Version {
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
         let text = text.strip_prefix(['v', 'V']).unwrap_or(text);
-        let text = text.split_once('+').map_or(text, |(version, build)| {
-            if build.is_empty() { "" } else { version }
-        });
+        let text = text.split_once('+').map_or(
+            text,
+            |(version, build)| {
+                if build.is_empty() { "" } else { version }
+            },
+        );
         let (core, pre) = match text.split_once('-') {
             Some((core, pre)) => (core, Some(pre)),
             None => (text, None),
@@ -168,8 +171,20 @@ mod tests {
     #[test]
     fn invalid_versions_are_rejected() {
         for text in [
-            "", "1", "1.2", "1.2.3.4", "01.2.3", "1.02.3", "a.b.c", "1.2.3-", "1.2.3-a..b",
-            "1.2.3-01", "1.2.3-ä", "1.2.3+", "-1.2.3", "1.2.x",
+            "",
+            "1",
+            "1.2",
+            "1.2.3.4",
+            "01.2.3",
+            "1.02.3",
+            "a.b.c",
+            "1.2.3-",
+            "1.2.3-a..b",
+            "1.2.3-01",
+            "1.2.3-ä",
+            "1.2.3+",
+            "-1.2.3",
+            "1.2.x",
         ] {
             assert_eq!(Version::parse(text), None, "{text:?} parsed");
         }

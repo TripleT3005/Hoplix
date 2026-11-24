@@ -3,6 +3,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
+use hoplix_core::update::{self, Version};
 use hoplix_core::{
     DEFAULT_PARALLELISM, DEFAULT_RETRIES, DEFAULT_RETRY_DELAY, RetryPolicy, SpeedLimits, key_value,
 };
@@ -11,6 +12,8 @@ use hoplix_core::{
 
 const FILE_NAME: &str = "settings.conf";
 const SAME_AS_TOTAL: &str = "same";
+const ON: &str = "on";
+const OFF: &str = "off";
 pub const MAX_PARALLEL_TRANSFERS: usize = 8;
 pub const MAX_RETRY_ATTEMPTS: u32 = 10;
 pub const MIN_RETRY_DELAY: u32 = 1;
@@ -62,6 +65,11 @@ pub struct Settings {
     pub auto_reconnect: bool,
     pub editor: String,
     pub upload_changes_automatically: bool,
+    pub update_check: bool,
+    pub update_last_check: Option<u64>,
+    pub update_notified_version: Option<String>,
+    pub update_latest_version: Option<String>,
+    pub update_latest_url: Option<String>,
 }
 
 impl Default for Settings {
@@ -80,6 +88,11 @@ impl Default for Settings {
             auto_reconnect: true,
             editor: String::new(),
             upload_changes_automatically: false,
+            update_check: true,
+            update_last_check: None,
+            update_notified_version: None,
+            update_latest_version: None,
+            update_latest_url: None,
         }
     }
 }
@@ -172,6 +185,14 @@ fn parse_direction_limit(value: &str) -> Option<Option<usize>> {
     parse_in(value, (1, MAX_PARALLEL_TRANSFERS)).map(Some)
 }
 
+fn parse_version(value: &str) -> Option<String> {
+    Version::parse(value).map(|version| version.to_string())
+}
+
+fn optional_text(value: Option<&String>) -> String {
+    value.cloned().unwrap_or_default()
+}
+
 fn direction_limit_text(limit: Option<usize>) -> String {
     limit.map_or_else(|| SAME_AS_TOTAL.to_string(), |count| count.to_string())
 }
@@ -247,6 +268,20 @@ impl Settings {
                 "upload_changes_automatically" => {
                     settings.upload_changes_automatically = value == "true";
                 }
+                "update_check" => match value.as_str() {
+                    ON => settings.update_check = true,
+                    OFF => settings.update_check = false,
+                    _ => {}
+                },
+                "update_last_check" => settings.update_last_check = value.parse().ok(),
+                "update_notified_version" => {
+                    settings.update_notified_version = parse_version(&value);
+                }
+                "update_latest_version" => settings.update_latest_version = parse_version(&value),
+                "update_latest_url" => {
+                    settings.update_latest_url =
+                        Some(value).filter(|url| update::is_release_page(url));
+                }
                 _ => {}
             }
         }
@@ -284,6 +319,28 @@ impl Settings {
             (
                 "upload_changes_automatically",
                 self.upload_changes_automatically.to_string(),
+            ),
+            (
+                "update_check",
+                (if self.update_check { ON } else { OFF }).to_string(),
+            ),
+            (
+                "update_last_check",
+                self.update_last_check
+                    .map(|seconds| seconds.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "update_notified_version",
+                optional_text(self.update_notified_version.as_ref()),
+            ),
+            (
+                "update_latest_version",
+                optional_text(self.update_latest_version.as_ref()),
+            ),
+            (
+                "update_latest_url",
+                optional_text(self.update_latest_url.as_ref()),
             ),
         ])
     }
@@ -331,8 +388,16 @@ mod tests {
             auto_reconnect: false,
             editor: r#"C:\Tools\My Editor = "new".exe"#.to_string(),
             upload_changes_automatically: true,
+            update_check: false,
+            update_last_check: Some(1_790_000_000),
+            update_notified_version: Some("1.0.0-beta.1".to_string()),
+            update_latest_version: Some("1.0.0".to_string()),
+            update_latest_url: Some(
+                "https://github.com/TripleT3005/Hoplix/releases/tag/v1.0.0".to_string(),
+            ),
         };
         assert_eq!(Settings::parse(&settings.to_text()), settings);
+        assert!(settings.to_text().contains("update_check = off"));
     }
 
     #[test]
@@ -341,7 +406,9 @@ mod tests {
             "theme = purple\nlayout = spiral\nlanguage =\nother = 1\nparallel_transfers = 99\n\
              parallel_downloads = 0\nparallel_uploads = many\ndownload_limit = -5\n\
              download_limit_unit = gib\nupload_limit = 99999999\nretry_attempts = 11\n\
-             retry_delay = 0\nreconnect_automatically = maybe\n",
+             retry_delay = 0\nreconnect_automatically = maybe\nupdate_check = maybe\n\
+             update_last_check = soon\nupdate_notified_version = new\n\
+             update_latest_version = 1.0\nupdate_latest_url = https://example.com/\n",
         );
         assert_eq!(settings, Settings::default());
         let settings = Settings::parse("retry_delay = 61\nretry_attempts = -1\n");
@@ -356,6 +423,8 @@ mod tests {
         assert_eq!(settings.retry_attempts, 3);
         assert_eq!(settings.retry_delay, 1);
         assert!(settings.auto_reconnect);
+        assert!(settings.update_check);
+        assert_eq!(settings.update_last_check, None);
         assert_eq!(settings.speed_limits(), SpeedLimits::default());
     }
 

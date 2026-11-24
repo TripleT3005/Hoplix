@@ -132,7 +132,11 @@ async fn read_limited<R: AsyncRead + Unpin>(
     }
 }
 
-pub(crate) async fn get_with<C, F, S>(url: &str, user_agent: &str, mut connect: C) -> Result<Vec<u8>>
+pub(crate) async fn get_with<C, F, S>(
+    url: &str,
+    user_agent: &str,
+    mut connect: C,
+) -> Result<Vec<u8>>
 where
     C: FnMut(String) -> F,
     F: Future<Output = Result<S>>,
@@ -232,7 +236,9 @@ fn dechunk(mut body: &[u8]) -> Result<Vec<u8>> {
         if data.len() + size > MAX_RESPONSE {
             return Err(too_large());
         }
-        let chunk = body.get(..size).ok_or_else(|| malformed("truncated chunk"))?;
+        let chunk = body
+            .get(..size)
+            .ok_or_else(|| malformed("truncated chunk"))?;
         data.extend_from_slice(chunk);
         body = body
             .get(size..)
@@ -394,7 +400,10 @@ mod tests {
             body("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello world"),
             b"hello"
         );
-        assert_eq!(body("HTTP/1.0 200 OK\r\nServer: x\r\n\r\nuntil end"), b"until end");
+        assert_eq!(
+            body("HTTP/1.0 200 OK\r\nServer: x\r\n\r\nuntil end"),
+            b"until end"
+        );
         let error = parse_response(b"HTTP/1.1 200 OK\r\ncontent-length: 50\r\n\r\nshort")
             .expect_err("a truncated body was accepted");
         assert!(error.detail().contains("truncated"));
@@ -414,7 +423,10 @@ mod tests {
             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n",
             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhelloXX0\r\n\r\n",
         ] {
-            assert!(parse_response(raw.as_bytes()).is_err(), "{raw:?} was accepted");
+            assert!(
+                parse_response(raw.as_bytes()).is_err(),
+                "{raw:?} was accepted"
+            );
         }
     }
 
@@ -428,8 +440,15 @@ mod tests {
         let error = parse_response(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
             .expect_err("403 was accepted");
         assert_eq!(error.detail(), "HTTP 403");
-        for raw in ["garbage", "SPDY/3 200 OK\r\n\r\n", "HTTP/1.1 abc OK\r\n\r\n"] {
-            assert!(parse_response(raw.as_bytes()).is_err(), "{raw:?} was accepted");
+        for raw in [
+            "garbage",
+            "SPDY/3 200 OK\r\n\r\n",
+            "HTTP/1.1 abc OK\r\n\r\n",
+        ] {
+            assert!(
+                parse_response(raw.as_bytes()).is_err(),
+                "{raw:?} was accepted"
+            );
         }
     }
 

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use std::collections::{HashMap, VecDeque};
 
@@ -25,7 +26,8 @@ use crate::site_actions::PendingAction;
 use crate::site_form::{SiteField, SiteForm};
 use crate::transfer_settings::TransferSetting;
 use crate::transfers::{Drag, DropTarget, TransferAction, TransferTarget};
-use crate::{edits, opener, theme, title_bar, transfers, ui};
+use crate::updates::{CheckState, UpdateMessage, UpdateSource};
+use crate::{edits, opener, theme, title_bar, transfers, ui, updates};
 
 // Types
 
@@ -130,6 +132,10 @@ pub enum Dialog {
         busy: bool,
     },
     Sync(Box<SyncDialog>),
+    Update {
+        version: String,
+        url: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -203,6 +209,7 @@ pub enum Message {
     Window(window::Id, window::Event),
     WindowClosing(window::Id, bool),
     Edit(EditMessage),
+    Update(UpdateMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -255,6 +262,7 @@ pub struct Hoplix {
     pub(crate) reconnect: Option<(TabId, String)>,
     pub(crate) services: Services,
     pub edits: Edits,
+    pub update_state: CheckState,
     next_tab_id: TabId,
 }
 
@@ -275,6 +283,8 @@ pub(crate) struct Services {
     pub local: Arc<dyn FileSystem>,
     pub opener: Opener,
     pub temp_dir: PathBuf,
+    pub update_source: UpdateSource,
+    pub update_delay: Duration,
 }
 
 impl Default for Services {
@@ -287,6 +297,8 @@ impl Default for Services {
             local: Arc::new(LocalFileSystem),
             opener: Arc::new(opener::open),
             temp_dir: std::env::temp_dir(),
+            update_source: updates::github_source(),
+            update_delay: updates::STARTUP_DELAY,
         }
     }
 }
@@ -347,7 +359,8 @@ impl Dialog {
             | Self::Conflict { .. }
             | Self::HostKey { .. }
             | Self::DeleteSite { .. }
-            | Self::DeleteSiteFolder { .. } => true,
+            | Self::DeleteSiteFolder { .. }
+            | Self::Update { .. } => true,
         }
     }
 }
@@ -386,6 +399,8 @@ impl Hoplix {
             .unwrap_or_default();
         let mut tasks = vec![read_system_theme()];
         tasks.push(app.restore_session(&session));
+        tasks.push(app.start_update_check());
+        app.offer_update();
         (app, Task::batch(tasks))
     }
 
@@ -427,6 +442,7 @@ impl Hoplix {
             next_tab_id: 1,
             services: Services::default(),
             edits: Edits::default(),
+            update_state: CheckState::default(),
             settings,
         }
     }
@@ -589,6 +605,7 @@ impl Hoplix {
             | Message::CursorMoved(_)
             | Message::MouseReleased) => return self.update_transfers(message),
             Message::Edit(message) => return self.update_edits(message),
+            Message::Update(message) => return self.update_updates(message),
             Message::TransferSetting(setting) => self.update_transfer_setting(setting),
             message => return self.update_sites(message),
         }
@@ -904,6 +921,11 @@ impl Hoplix {
             Dialog::HostKey { .. } => return self.answer_host_key(Some(false)),
             Dialog::Conflict { .. } => return self.answer_conflict(ConflictDecision::Overwrite),
             Dialog::Sync(_) => return self.start_sync(),
+            Dialog::Update { url, .. } => {
+                self.dialog = None;
+                self.open_release_page(&url);
+                return Task::none();
+            }
             Dialog::NewSiteFolder { .. }
             | Dialog::DeleteSite { .. }
             | Dialog::DeleteSiteFolder { .. }

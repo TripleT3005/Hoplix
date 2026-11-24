@@ -138,6 +138,12 @@ pub fn view<'a>(app: &'a Hoplix, dialog: &'a Dialog) -> Element<'a, Message> {
             "sync.start",
             sync.plan().is_some_and(|plan| plan.has_deletions()),
         ),
+        Dialog::Update { version, .. } => (
+            strings.format("update.title", &[("version", version)]),
+            text(strings.format("update.text", &[("version", version)])).into(),
+            "update.open",
+            false,
+        ),
     };
 
     let buttons = if let Dialog::Conflict { conflict, .. } = dialog {
@@ -195,13 +201,11 @@ fn standard_buttons<'a>(
     let strings = &app.strings;
     let mut buttons = row![Space::new().width(Length::Fill)].spacing(8);
     buttons = buttons.push(
-        button(text(strings.get(
-            if matches!(dialog, Dialog::HostKey { .. }) {
-                "hostkey.cancel"
-            } else {
-                "dialog.cancel"
-            },
-        )))
+        button(text(strings.get(match dialog {
+            Dialog::HostKey { .. } => "hostkey.cancel",
+            Dialog::Update { .. } => "update.later",
+            _ => "dialog.cancel",
+        })))
         .style(theme::secondary_button)
         .on_press(Message::DialogCancelled),
     );

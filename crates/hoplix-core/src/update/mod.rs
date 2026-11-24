@@ -11,7 +11,8 @@ pub use version::Version;
 
 // Constants
 
-pub const RELEASES_URL: &str = "https://api.github.com/repos/TripleT3005/Hoplix/releases?per_page=10";
+pub const RELEASES_URL: &str =
+    "https://api.github.com/repos/TripleT3005/Hoplix/releases?per_page=10";
 pub const RELEASES_PAGE: &str = "https://github.com/TripleT3005/Hoplix/releases";
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -206,8 +207,14 @@ mod tests {
     #[test]
     fn updates_are_only_offered_for_newer_versions() {
         let text = RELEASES;
-        assert_eq!(evaluate(text, "1.0.0").expect("failed"), UpdateStatus::UpToDate);
-        assert_eq!(evaluate(text, "1.2.0").expect("failed"), UpdateStatus::UpToDate);
+        assert_eq!(
+            evaluate(text, "1.0.0").expect("failed"),
+            UpdateStatus::UpToDate
+        );
+        assert_eq!(
+            evaluate(text, "1.2.0").expect("failed"),
+            UpdateStatus::UpToDate
+        );
         assert_eq!(
             evaluate(text, "1.1.0-beta.1").expect("failed"),
             UpdateStatus::UpToDate
@@ -229,7 +236,9 @@ mod tests {
         assert!(is_release_page(
             "https://github.com/TripleT3005/Hoplix/releases/tag/v1.0.0-beta.1"
         ));
-        assert!(!is_release_page("https://github.com/Other/Hoplix/releases/tag/v1"));
+        assert!(!is_release_page(
+            "https://github.com/Other/Hoplix/releases/tag/v1"
+        ));
         assert!(!is_release_page(
             "https://github.com/TripleT3005/Hoplix/releases/tag/v1\"&calc"
         ));
@@ -248,7 +257,10 @@ mod tests {
 
     #[test]
     fn the_user_agent_names_only_the_version() {
-        assert_eq!(user_agent(), format!("Hoplix/{}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            user_agent(),
+            format!("Hoplix/{}", env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[tokio::test]

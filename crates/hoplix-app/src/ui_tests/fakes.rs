@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
@@ -11,6 +12,7 @@ use hoplix_core::{
 use super::test_password;
 use crate::app::Connector;
 use crate::edits::Opener;
+use crate::updates::UpdateSource;
 
 // Credentials
 
@@ -110,6 +112,66 @@ pub fn opener(opened: Arc<Mutex<Vec<(PathBuf, String)>>>) -> Opener {
             .expect("the opener list is poisoned")
             .push((path.to_path_buf(), editor.to_string()));
         Ok(())
+    })
+}
+
+// Updates
+
+pub struct Updates {
+    requests: AtomicUsize,
+    response: Mutex<Result<String>>,
+}
+
+impl Updates {
+    pub fn up_to_date() -> Arc<Self> {
+        Self::offering(&["0.0.1"])
+    }
+
+    pub fn offering(versions: &[&str]) -> Arc<Self> {
+        Arc::new(Self {
+            requests: AtomicUsize::new(0),
+            response: Mutex::new(Ok(releases(versions))),
+        })
+    }
+
+    pub fn respond(&self, response: Result<String>) {
+        *self
+            .response
+            .lock()
+            .expect("the update response is poisoned") = response;
+    }
+
+    pub fn requests(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
+    }
+}
+
+pub fn release_page(version: &str) -> String {
+    format!("https://github.com/TripleT3005/Hoplix/releases/tag/v{version}")
+}
+
+pub fn releases(versions: &[&str]) -> String {
+    let items: Vec<String> = versions
+        .iter()
+        .map(|version| {
+            format!(
+                r#"{{"html_url": "{}", "tag_name": "v{version}", "draft": false, "prerelease": true}}"#,
+                release_page(version)
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(", "))
+}
+
+pub fn update_source(updates: Arc<Updates>) -> UpdateSource {
+    Arc::new(move || {
+        updates.requests.fetch_add(1, Ordering::SeqCst);
+        let response = updates
+            .response
+            .lock()
+            .expect("the update response is poisoned")
+            .clone();
+        Box::pin(async move { response })
     })
 }
 

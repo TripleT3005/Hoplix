@@ -1,4 +1,7 @@
+use std::time::{Duration, UNIX_EPOCH};
+
 use hoplix_core::SecretBackend;
+use hoplix_core::update::CURRENT_VERSION;
 use iced::widget::{
     Column, Space, button, checkbox, column, container, pick_list, row, rule, scrollable, text,
     text_input,
@@ -8,6 +11,7 @@ use iced::{Alignment, Element, Length};
 use crate::app::{Hoplix, Message};
 use crate::edits::EditMessage;
 use crate::i18n::Strings;
+use crate::local_time;
 use crate::settings::{
     Layout, MAX_PARALLEL_TRANSFERS, MAX_RETRY_ATTEMPTS, MAX_RETRY_DELAY, MIN_RETRY_DELAY, RateUnit,
     SpeedLimit, ThemePreference,
@@ -15,6 +19,7 @@ use crate::settings::{
 use crate::theme;
 use crate::transfer_settings::TransferSetting;
 use crate::ui::Choice;
+use crate::updates::{CheckState, UpdateMessage};
 
 // Constants
 
@@ -36,6 +41,7 @@ pub fn view(app: &Hoplix) -> Element<'_, Message> {
         connections(app),
         passwords(app),
         editor(app),
+        updates(app),
     ]
     .spacing(32)
     .max_width(780);
@@ -298,6 +304,71 @@ fn editor(app: &Hoplix) -> Element<'_, Message> {
                     .into(),
             ),
             hint(strings.get("settings.editor.hint")),
+        ],
+    )
+}
+
+fn updates(app: &Hoplix) -> Element<'_, Message> {
+    let strings = &app.strings;
+    let checking = app.update_state == CheckState::Checking;
+    let available = app.available_update();
+    let status = match (&app.update_state, &available) {
+        (CheckState::Checking, _) => strings.get("settings.updates.checking").to_string(),
+        (CheckState::Failed(error), _) => {
+            strings.format("settings.updates.failed", &[("detail", error.detail())])
+        }
+        (_, Some(update)) => strings.format(
+            "settings.updates.available",
+            &[("version", &update.version)],
+        ),
+        (CheckState::UpToDate | CheckState::Available, None) => {
+            strings.get("settings.updates.up_to_date").to_string()
+        }
+        (CheckState::Idle, None) => String::new(),
+    };
+    let mut check = row![
+        button(text(strings.get("settings.updates.check")))
+            .style(theme::secondary_button)
+            .on_press_maybe((!checking).then_some(Message::Update(UpdateMessage::CheckNow))),
+        text(status),
+    ]
+    .spacing(12)
+    .align_y(Alignment::Center);
+    if let Some(update) = available {
+        check = check.push(
+            button(text(strings.get("update.open")))
+                .style(button::text)
+                .on_press(Message::Update(UpdateMessage::OpenReleasePage(update.url))),
+        );
+    }
+    let last_check = app
+        .settings
+        .update_last_check
+        .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+        .and_then(local_time::local)
+        .map_or_else(
+            || strings.get("settings.updates.never").to_string(),
+            |time| local_time::format(&time, strings.get("date.format")),
+        );
+    section(
+        strings.get("settings.section.updates"),
+        vec![
+            checkbox_row(
+                checkbox(app.settings.update_check)
+                    .label(strings.get("settings.updates.automatic"))
+                    .on_toggle(|value| Message::Update(UpdateMessage::AutomaticToggled(value)))
+                    .into(),
+            ),
+            setting(
+                strings.get("settings.updates.version"),
+                text(CURRENT_VERSION).into(),
+            ),
+            setting(strings.get("settings.updates.label"), check.into()),
+            setting(
+                strings.get("settings.updates.last_check"),
+                text(last_check).into(),
+            ),
+            hint(strings.get("settings.updates.hint")),
         ],
     )
 }
