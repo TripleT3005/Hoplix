@@ -268,8 +268,8 @@ mod tests {
             arguments("code --wait"),
             [OsString::from("--wait"), file.clone()]
         );
-        assert_eq!(arguments("code"), [file.clone()]);
-        assert_eq!(arguments(r#"code "%1""#), [file.clone()]);
+        assert_eq!(arguments("code"), std::slice::from_ref(&file));
+        assert_eq!(arguments(r#"code "%1""#), std::slice::from_ref(&file));
         assert_eq!(
             arguments(r#"edit "--open=%1" -x"#),
             [
