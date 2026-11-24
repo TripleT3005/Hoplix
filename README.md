@@ -1,10 +1,16 @@
-# <img src="assets/icons/icon-64.png" alt="" width="40" align="center"> Hoplix
+# <img src="assets/icons/icon.svg" alt="" width="40" height="40" align="center"> Hoplix
 
+<!-- web:skip -->
 [English](#english) · [Deutsch](#deutsch)
+<!-- /web:skip -->
 
 ## English
 
-Hoplix is a file transfer client for Windows and Linux, written in Rust with [iced](https://iced.rs). It is at an early stage: it browses local folders and SFTP, FTP and FTPS servers in tabs. A command-line tool, `hoplix-cli`, uses the same core.
+Hoplix is a file transfer client for Windows and Linux, written in Rust with [iced](https://iced.rs). It connects to SFTP, FTP and FTPS servers, transfers files and whole folders, compares and synchronises folders and opens files in external programs. A command-line tool, `hoplix-cli`, uses the same core.
+
+> **Work in progress:** Hoplix is at an early stage of development. Features, settings files and the user interface may still change.
+
+> Feedback and bug reports are welcome as [issues](../../issues).
 
 <p>
   <img src="assets/screenshot-light.png" alt="Hoplix in light mode with two panes showing demo folders" width="49%">
@@ -110,6 +116,8 @@ Hoplix only connects to servers you enter yourself; there is no telemetry and no
 - **Saved data:** the settings file, `session.conf` with the folders of your open tabs and the window position, the `known_hosts` file with the keys of servers you chose to always trust, the `trusted_certificates` file with certificate fingerprints you chose to always trust, and `sites.conf` with your sites (no passwords). Passwords and passphrases are stored only when you tick *Save password*, and only in the Windows Credential Manager, the Linux system keyring or the encrypted `secrets.vault`, never as plain text. Nothing of this is sent anywhere.
 - Locally, Hoplix reads only the folders you open. Files you open or edit from a server are copied to a folder `hoplix-edit-…` in the temporary folder of your user account and deleted when Hoplix closes; opening a file starts the default program or the editor you set, nothing else.
 
+<!-- web:skip -->
+
 ### Building
 
 Requires Rust 1.88 or newer.
@@ -123,13 +131,19 @@ The program is `target/release/hoplix` (`hoplix.exe` on Windows); keep the `lang
 
 Tests: `cargo test`. The SFTP integration tests are skipped by default; run them against a test server with `cargo test -p hoplix-core --test sftp -- --ignored` after setting `HOPLIX_TEST_SFTP_HOST`, `HOPLIX_TEST_SFTP_USER` and `HOPLIX_TEST_SFTP_KEY` or `HOPLIX_TEST_SFTP_PASSWORD` (optional: `HOPLIX_TEST_SFTP_PORT`, `HOPLIX_TEST_SFTP_PASSPHRASE`, `HOPLIX_TEST_SFTP_OTHER_KEY`). The keyring tests write to the real system keyring and are skipped too: `cargo test -p hoplix-core --lib -- --ignored`. The FTP tests work the same way with `--test ftp` and `HOPLIX_TEST_FTP_HOST`, `HOPLIX_TEST_FTP_USER`, `HOPLIX_TEST_FTP_PASSWORD` (optional: `HOPLIX_TEST_FTP_PORT`, `HOPLIX_TEST_FTP_PROTOCOL` = `ftp`, `ftpes` or `ftps`).
 
+<!-- /web:skip -->
+
 ### License
 
 [MIT](LICENSE) © TripleT3005
 
 ## Deutsch
 
-Hoplix ist ein Client zur Dateiübertragung für Windows und Linux, geschrieben in Rust mit [iced](https://iced.rs). Er steht noch am Anfang: Er durchsucht lokale Ordner sowie SFTP-, FTP- und FTPS-Server in Tabs. Das Kommandozeilenwerkzeug `hoplix-cli` nutzt denselben Kern.
+Hoplix ist ein Client zur Dateiübertragung für Windows und Linux, geschrieben in Rust mit [iced](https://iced.rs). Er verbindet sich mit SFTP-, FTP- und FTPS-Servern, überträgt Dateien und ganze Ordner, vergleicht und synchronisiert Ordner und öffnet Dateien in externen Programmen. Das Kommandozeilenwerkzeug `hoplix-cli` nutzt denselben Kern.
+
+> **Work in progress:** Hoplix steht noch am Anfang der Entwicklung. Funktionen, Einstellungsdateien und Oberfläche können sich noch ändern.
+
+> Rückmeldungen und Fehlerberichte gern als [Issue](../../issues).
 
 <p>
   <img src="assets/screenshot-light.png" alt="Hoplix im hellen Modus mit zwei Bereichen und Beispielordnern" width="49%">
@@ -235,6 +249,8 @@ Hoplix verbindet sich nur mit Servern, die du selbst eingibst; es gibt keine Tel
 - **Gespeichert** werden die Einstellungsdatei, `session.conf` mit den Ordnern deiner offenen Tabs und der Fensterposition, die Datei `known_hosts` mit den Schlüsseln der Server, denen du immer vertraust, die Datei `trusted_certificates` mit den Zertifikats-Fingerabdrücken, denen du immer vertraust, und `sites.conf` mit deinen Servern (ohne Passwörter). Passwörter und Passphrasen werden nur gespeichert, wenn du *Passwort speichern* ankreuzt, und nur in der Windows-Anmeldeinformationsverwaltung, im Schlüsselbund des Systems unter Linux oder in der verschlüsselten `secrets.vault`, nie im Klartext. Nichts davon wird irgendwohin gesendet.
 - Lokal liest Hoplix nur die Ordner, die du öffnest. Dateien vom Server, die du öffnest oder bearbeitest, werden in einen Ordner `hoplix-edit-…` im temporären Ordner deines Benutzerkontos kopiert und beim Beenden gelöscht; beim Öffnen startet Hoplix nur das Standardprogramm oder den eingestellten Editor.
 
+<!-- web:skip -->
+
 ### Bauen
 
 Benötigt Rust 1.88 oder neuer.
@@ -247,6 +263,8 @@ cargo build --release
 Das Programm liegt unter `target/release/hoplix` (unter Windows `hoplix.exe`); der Ordner `lang` gehört daneben. Das Kommandozeilenwerkzeug ist `target/release/hoplix-cli`.
 
 Tests: `cargo test`. Die SFTP-Integrationstests sind standardmäßig übersprungen; gegen einen Testserver laufen sie mit `cargo test -p hoplix-core --test sftp -- --ignored`, nachdem `HOPLIX_TEST_SFTP_HOST`, `HOPLIX_TEST_SFTP_USER` und `HOPLIX_TEST_SFTP_KEY` oder `HOPLIX_TEST_SFTP_PASSWORD` gesetzt sind (optional: `HOPLIX_TEST_SFTP_PORT`, `HOPLIX_TEST_SFTP_PASSPHRASE`, `HOPLIX_TEST_SFTP_OTHER_KEY`). Die Schlüsselbund-Tests schreiben in den echten Schlüsselbund des Systems und sind ebenfalls übersprungen: `cargo test -p hoplix-core --lib -- --ignored`. Die FTP-Tests funktionieren genauso mit `--test ftp` und `HOPLIX_TEST_FTP_HOST`, `HOPLIX_TEST_FTP_USER`, `HOPLIX_TEST_FTP_PASSWORD` (optional: `HOPLIX_TEST_FTP_PORT`, `HOPLIX_TEST_FTP_PROTOCOL` = `ftp`, `ftpes` oder `ftps`).
+
+<!-- /web:skip -->
 
 ### Lizenz
 
