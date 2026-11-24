@@ -9,8 +9,11 @@ mod secrets;
 mod settings;
 mod sites;
 
+use std::collections::hash_map::RandomState;
 use std::fs;
+use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -39,6 +42,24 @@ const FONT_SIZE: f32 = 16.0;
 const LINE_HEIGHT: f32 = 1.3;
 const PICK_LIST_PADDING: f32 = 10.0;
 const LABEL_OFFSET: f32 = 160.0 + 12.0 + 24.0;
+
+// Passwords
+
+static PASSWORD_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub fn test_password() -> String {
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u64(PASSWORD_COUNTER.fetch_add(1, Ordering::Relaxed));
+    let first = hasher.finish();
+    hasher.write_u64(first);
+    let second = hasher.finish();
+    [first, second]
+        .into_iter()
+        .flat_map(u64::to_le_bytes)
+        .flat_map(|byte| [byte >> 4, byte & 0x0f])
+        .map(|nibble| char::from(b'a' + nibble))
+        .collect()
+}
 
 // Test folders
 

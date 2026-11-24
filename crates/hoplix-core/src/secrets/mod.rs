@@ -152,6 +152,7 @@ pub async fn move_to_keyring(vault: Vault, keyring: &Keyring) -> Result<Moved<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::test_password;
 
     #[test]
     fn names_link_secrets_to_sites() {
@@ -166,7 +167,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).expect("creating failed");
         assert_eq!(SecretBackend::detect(&directory), SecretBackend::Keyring);
-        let vault = Vault::create_with_iterations(&directory, "pw", 1_000).expect("created");
+        let vault =
+            Vault::create_with_iterations(&directory, &test_password(), 1_000).expect("created");
         assert_eq!(SecretBackend::detect(&directory), SecretBackend::Vault);
         assert_eq!(SecretStore::Vault(vault).backend(), SecretBackend::Vault);
         std::fs::remove_dir_all(directory).expect("cleaning up failed");
@@ -177,7 +179,8 @@ mod tests {
         let directory = std::env::temp_dir().join(format!("hoplix-store-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).expect("creating failed");
-        let vault = Vault::create_with_iterations(&directory, "pw", 1_000).expect("created");
+        let vault =
+            Vault::create_with_iterations(&directory, &test_password(), 1_000).expect("created");
         let mut store = SecretStore::Vault(vault);
         store.set("site/a", "alpha").await.expect("stored");
         assert_eq!(
@@ -198,7 +201,8 @@ mod tests {
         let keyring = Keyring::with_service(&format!("Hoplix-test-{}", std::process::id()));
         keyring.set("site/a", "alpha").await.expect("stored");
 
-        let vault = Vault::create_with_iterations(&directory, "pw", 1_000).expect("created");
+        let vault =
+            Vault::create_with_iterations(&directory, &test_password(), 1_000).expect("created");
         let names = vec!["site/a".to_string(), "site/missing".to_string()];
         let moved = move_to_vault(&keyring, vault, &names).await.expect("moved");
         assert!(moved.leftovers.is_empty());

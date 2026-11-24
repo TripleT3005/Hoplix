@@ -222,24 +222,23 @@ impl ConnectForm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui_tests::test_password;
 
-    fn filled() -> ConnectForm {
+    fn filled(password: &str) -> ConnectForm {
         let mut form = ConnectForm::default();
         form.apply(Field::Host(" files.example.test ".to_string()));
         form.apply(Field::Username("demo".to_string()));
-        form.apply(Field::Password("secret".to_string()));
+        form.apply(Field::Password(password.to_string()));
         form
     }
 
     #[test]
     fn valid_forms_become_params_with_default_port() {
-        let params = filled().to_params().expect("form is valid");
+        let password = test_password();
+        let params = filled(&password).to_params().expect("form is valid");
         assert_eq!(params.host, "files.example.test");
         assert_eq!(params.port, 22);
-        assert_eq!(
-            params.authentication,
-            Authentication::Password("secret".to_string())
-        );
+        assert_eq!(params.authentication, Authentication::Password(password));
     }
 
     #[test]
@@ -249,7 +248,7 @@ mod tests {
             Err(FormError::MissingHost)
         );
 
-        let mut form = filled();
+        let mut form = filled(&test_password());
         form.apply(Field::Port("70000".to_string()));
         assert_eq!(form.to_params(), Err(FormError::InvalidPort));
         form.apply(Field::Port("0".to_string()));
@@ -263,16 +262,14 @@ mod tests {
 
     #[test]
     fn ftp_always_signs_in_with_a_password() {
-        let mut form = filled();
+        let password = test_password();
+        let mut form = filled(&password);
         form.apply(Field::Method(AuthMethod::KeyFile));
         form.apply(Field::Protocol(Protocol::FtpsExplicit));
         assert_eq!(form.method, AuthMethod::Password);
         let params = form.to_params().expect("form is valid");
         assert_eq!(params.port, 21);
-        assert_eq!(
-            params.authentication,
-            Authentication::Password("secret".to_string())
-        );
+        assert_eq!(params.authentication, Authentication::Password(password));
         form.apply(Field::Protocol(Protocol::FtpsImplicit));
         assert_eq!(form.to_params().map(|params| params.port), Ok(990));
     }
@@ -286,23 +283,25 @@ mod tests {
         site.auth = SiteAuth::KeyFile;
         site.key_path = "id".to_string();
         site.save_secrets = true;
-        let mut form = filled();
+        let mut form = filled(&test_password());
         form.fill_from_site(&site);
         assert_eq!(form.password, "");
         assert_eq!(form.port, "2222");
         assert_eq!(form.site.as_deref(), Some(site.id.as_str()));
         assert!(form.save_password);
-        form.set_secret("phrase".to_string());
-        assert_eq!(form.passphrase, "phrase");
-        assert_eq!(form.secret(), "phrase");
+        let passphrase = test_password();
+        form.set_secret(passphrase.clone());
+        assert_eq!(form.passphrase, passphrase);
+        assert_eq!(form.secret(), passphrase);
         assert_eq!(form.site_auth(), SiteAuth::KeyFile);
 
         site.protocol = Protocol::Ftp;
         site.port = 21;
         form.fill_from_site(&site);
         assert_eq!(form.port, "");
-        form.set_secret("pw".to_string());
-        assert_eq!(form.password, "pw");
+        let password = test_password();
+        form.set_secret(password.clone());
+        assert_eq!(form.password, password);
         assert_eq!(form.site_auth(), SiteAuth::Password);
     }
 
@@ -314,7 +313,7 @@ mod tests {
         site.save_secrets = true;
         let mut form = ConnectForm::default();
         form.fill_from_site(&site);
-        form.edit(Field::Password("new".to_string()));
+        form.edit(Field::Password(test_password()));
         form.edit(Field::Protocol(Protocol::Sftp));
         assert_eq!(form.site.as_deref(), Some(site.id.as_str()));
         assert!(form.save_password);
@@ -330,23 +329,24 @@ mod tests {
 
     #[test]
     fn port_accepts_digits_only() {
-        let mut form = filled();
+        let mut form = filled(&test_password());
         form.apply(Field::Port("22a".to_string()));
         assert_eq!(form.port, "");
     }
 
     #[test]
     fn key_files_need_a_path_and_keep_the_passphrase() {
-        let mut form = filled();
+        let mut form = filled(&test_password());
         form.apply(Field::Method(AuthMethod::KeyFile));
         assert_eq!(form.to_params(), Err(FormError::MissingKey));
         form.apply(Field::KeyPath("\"C:\\keys\\id_ed25519\"".to_string()));
-        form.apply(Field::Passphrase("phrase".to_string()));
+        let passphrase = test_password();
+        form.apply(Field::Passphrase(passphrase.clone()));
         assert_eq!(
             form.to_params().map(|params| params.authentication),
             Ok(Authentication::KeyFile {
                 path: PathBuf::from("C:\\keys\\id_ed25519"),
-                passphrase: Some("phrase".to_string()),
+                passphrase: Some(passphrase),
             })
         );
         form.clear_secrets();

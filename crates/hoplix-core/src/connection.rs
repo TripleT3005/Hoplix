@@ -124,6 +124,7 @@ pub async fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::test_password;
 
     fn params(port: u16, authentication: Authentication) -> ConnectionParams {
         ConnectionParams {
@@ -137,7 +138,7 @@ mod tests {
 
     #[test]
     fn labels_hide_the_default_port() {
-        let password = Authentication::Password("x".to_string());
+        let password = Authentication::Password(test_password());
         assert_eq!(params(22, password.clone()).label(), "demo@example.test");
         assert_eq!(params(2222, password).label(), "demo@example.test:2222");
     }
@@ -156,18 +157,20 @@ mod tests {
 
     #[test]
     fn debug_output_hides_secrets() {
+        let password = test_password();
         let output = format!(
             "{:?}",
-            params(22, Authentication::Password("hunter2".to_string()))
+            params(22, Authentication::Password(password.clone()))
         );
-        assert!(!output.contains("hunter2"));
+        assert!(!output.contains(&password));
+        let passphrase = test_password();
         let output = format!(
             "{:?}",
             Authentication::KeyFile {
                 path: PathBuf::from("id"),
-                passphrase: Some("secret".to_string())
+                passphrase: Some(passphrase.clone())
             }
         );
-        assert!(!output.contains("secret"));
+        assert!(!output.contains(&passphrase));
     }
 }

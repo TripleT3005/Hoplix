@@ -374,6 +374,7 @@ pub(crate) fn write_atomically(path: &Path, content: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::test_password;
 
     fn site(name: &str, folder: &str) -> Site {
         Site {
@@ -496,9 +497,10 @@ mod tests {
         let mut web = site("Web", "");
         web.remote_path = "www".to_string();
         assert_eq!(web.url(), "sftp://demo@files.example.test/~/www");
+        let password = test_password();
         assert_eq!(
-            web.to_params(Some("pw".to_string())).authentication,
-            Authentication::Password("pw".to_string())
+            web.to_params(Some(password.clone())).authentication,
+            Authentication::Password(password)
         );
         web.auth = SiteAuth::KeyFile;
         web.key_path = "id".to_string();

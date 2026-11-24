@@ -1,3 +1,5 @@
+mod common;
+
 use std::sync::Arc;
 
 use hoplix_core::{
@@ -5,6 +7,8 @@ use hoplix_core::{
     connect, copy_file, remove_recursive,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use common::test_password;
 
 // Setup
 
@@ -116,7 +120,7 @@ async fn self_signed_certificates_are_confirmed_and_remembered() {
 #[ignore = "needs an FTP server, see HOPLIX_TEST_FTP_* variables"]
 async fn wrong_passwords_are_rejected() {
     let mut params = params();
-    params.authentication = Authentication::Password("definitely-wrong".to_string());
+    params.authentication = Authentication::Password(test_password());
     let store = trust_store("password");
     let trust = match connect(&params, &store, None).await {
         Err(error) if error.kind() == ErrorKind::UntrustedCertificate => Some(HostKeyTrust {

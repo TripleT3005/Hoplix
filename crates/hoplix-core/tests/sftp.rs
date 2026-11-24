@@ -1,3 +1,5 @@
+mod common;
+
 use std::path::PathBuf;
 
 use hoplix_core::{
@@ -5,6 +7,8 @@ use hoplix_core::{
     connect, remove_recursive,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use common::test_password;
 
 // Setup
 
@@ -110,7 +114,7 @@ async fn host_keys_are_verified_and_remembered() {
 #[ignore = "needs an SFTP server, see HOPLIX_TEST_SFTP_* variables"]
 async fn wrong_credentials_are_rejected() {
     let mut params = params();
-    params.authentication = Authentication::Password("definitely-wrong".to_string());
+    params.authentication = Authentication::Password(test_password());
     params.username = format!("{}-missing", params.username);
     let known_hosts = known_hosts_file();
     let fingerprint = connect(&params, &known_hosts, None)

@@ -614,6 +614,7 @@ impl Hoplix {
 mod tests {
     use super::*;
     use crate::settings::Settings;
+    use crate::ui_tests::test_password;
     use hoplix_core::{SiteList, Vault};
     use std::path::PathBuf;
 
@@ -732,7 +733,8 @@ mod tests {
     #[test]
     fn locked_vaults_ask_for_the_master_password_first() {
         let directory = temporary_directory("locked");
-        Vault::create_with_iterations(&directory, "master", 1_000).expect("created");
+        let master = test_password();
+        Vault::create_with_iterations(&directory, &master, 1_000).expect("created");
         let mut app = app(&directory);
         assert_eq!(app.secret_backend, SecretBackend::Vault);
         let mut saved = site("Web", "");
@@ -756,14 +758,15 @@ mod tests {
             Some(Dialog::MasterPassword { error: Some(shown), busy: false, .. }) if *shown == error
         ));
 
-        let mut vault = Vault::unlock(&directory, "master").expect("unlocked");
-        vault.set(&secret_name(&saved.id), "pw").expect("stored");
-        vault.set("site/orphan", "old").expect("stored");
+        let secret = test_password();
+        let mut vault = Vault::unlock(&directory, &master).expect("unlocked");
+        vault.set(&secret_name(&saved.id), &secret).expect("stored");
+        vault.set("site/orphan", &test_password()).expect("stored");
         let _ = app.update(Message::VaultUnlocked(Ok(vault)));
         assert_eq!(app.dialog, None);
         assert_eq!(app.pending, None);
         assert!(app.connect_form.connecting);
-        assert_eq!(app.connect_form.password, "pw");
+        assert_eq!(app.connect_form.password, secret);
         assert_eq!(
             app.vault.as_ref().expect("unlocked").names(),
             [secret_name(&saved.id)]
@@ -774,27 +777,29 @@ mod tests {
     #[test]
     fn unlocked_vaults_store_and_forget_site_secrets() {
         let directory = temporary_directory("store");
-        let vault = Vault::create_with_iterations(&directory, "master", 1_000).expect("created");
+        let master = test_password();
+        let vault = Vault::create_with_iterations(&directory, &master, 1_000).expect("created");
         let mut app = app(&directory);
         app.vault = Some(vault);
         let mut saved = site("Web", "");
         saved.save_secrets = true;
         app.sites.upsert(saved.clone());
 
-        let _ = app.store_secret(&saved.id, Some("pw".to_string()));
+        let secret = test_password();
+        let _ = app.store_secret(&saved.id, Some(secret.clone()));
         assert_eq!(
-            Vault::unlock(&directory, "master")
+            Vault::unlock(&directory, &master)
                 .expect("unlocked")
                 .get(&secret_name(&saved.id))
                 .expect("readable")
                 .as_deref(),
-            Some("pw")
+            Some(secret.as_str())
         );
         let _ = app.update(Message::SiteSelected(SiteSelection::Site(saved.id.clone())));
         let _ = app.update(Message::SiteDelete);
         let _ = app.update(Message::DialogConfirmed);
         assert!(
-            Vault::unlock(&directory, "master")
+            Vault::unlock(&directory, &master)
                 .expect("unlocked")
                 .names()
                 .is_empty()
@@ -809,11 +814,12 @@ mod tests {
         let _ = app.update(Message::SecretBackendSelected(SecretBackend::Vault));
         let can = |app: &Hoplix| app.dialog.as_ref().is_some_and(Dialog::can_confirm);
         assert!(!can(&app));
-        let _ = app.update(Message::DialogInput("one".to_string()));
+        let chosen = test_password();
+        let _ = app.update(Message::DialogInput(chosen.clone()));
         assert!(!can(&app));
-        let _ = app.update(Message::DialogConfirmInput("two".to_string()));
+        let _ = app.update(Message::DialogConfirmInput(test_password()));
         assert!(!can(&app));
-        let _ = app.update(Message::DialogConfirmInput("one".to_string()));
+        let _ = app.update(Message::DialogConfirmInput(chosen));
         assert!(can(&app));
         let _ = app.update(Message::DialogCancelled);
         assert_eq!(app.dialog, None);
