@@ -3,6 +3,7 @@ use iced::keyboard::key::Named;
 
 use super::*;
 use crate::app::Dialog;
+use crate::transfer_settings::TransferSetting;
 use crate::transfers::DropTarget;
 
 // Helpers
@@ -277,7 +278,7 @@ fn conflicts_ask_and_can_apply_to_all() {
         fs::write(root.data().join("target").join("b.txt"), "y").expect("writing failed");
         fs::write(root.data().join("target").join("c.txt"), "z").expect("writing failed");
     });
-    harness.send(Message::ParallelTransfersSelected(1));
+    harness.send(Message::TransferSetting(TransferSetting::Parallel(1)));
     let left = harness.find_all("a.txt")[0];
     harness.click_at(left.center());
     harness.shortcut("a", Modifiers::CTRL);
@@ -325,7 +326,7 @@ fn conflicts_can_skip_resume_or_cancel() {
         fs::write(root.data().join("target").join("b.txt"), "old").expect("writing failed");
         fs::write(root.data().join("target").join("c.txt"), "old").expect("writing failed");
     });
-    harness.send(Message::ParallelTransfersSelected(1));
+    harness.send(Message::TransferSetting(TransferSetting::Parallel(1)));
     for name in ["a.txt", "b.txt", "c.txt"] {
         let file = harness.find_all(name)[0];
         harness.click_at(file.center());

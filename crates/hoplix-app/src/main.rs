@@ -16,6 +16,7 @@ mod site_actions;
 mod site_form;
 mod theme;
 mod title_bar;
+mod transfer_settings;
 mod transfers;
 mod ui;
 

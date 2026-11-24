@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use hoplix_core::{Keyring, TransferEvent};
 use iced::keyboard::{self, Key, Modifiers, key};
+use iced::widget::scrollable::AbsoluteOffset;
 use iced::{Event, Point, Rectangle, Size, mouse, window};
 use iced_test::core::renderer::Headless;
 use iced_test::core::widget::{self, operation::Outcome};
@@ -30,9 +31,10 @@ use iced_test::runtime::{Action, task};
 use iced_test::selector::{Candidate, Selector};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::app::{Hoplix, Message, Services};
+use crate::app::{Hoplix, Message, Page, Services};
 use crate::settings::{Layout, Settings};
 use crate::transfers::{cursor_event, input_event};
+use crate::ui::SETTINGS_SCROLL_ID;
 
 // Constants
 
@@ -42,6 +44,7 @@ const FONT_SIZE: f32 = 16.0;
 const LINE_HEIGHT: f32 = 1.3;
 const PICK_LIST_PADDING: f32 = 10.0;
 const LABEL_OFFSET: f32 = 160.0 + 12.0 + 24.0;
+const REVEAL_MARGIN: f32 = 120.0;
 
 // Passwords
 
@@ -433,9 +436,16 @@ impl Harness {
     }
 
     pub fn pick(&mut self, label: &str, option: usize) {
+        self.pick_of(label, option, 0);
+    }
+
+    pub fn pick_of(&mut self, label: &str, option: usize, count: usize) {
+        if self.app.page == Page::Settings {
+            self.reveal(label);
+        }
         let row = self.bounds(label);
         let target = Point::new(row.x + LABEL_OFFSET, row.center_y());
-        self.pick_at(target, option, 0, FONT_SIZE);
+        self.pick_at(target, option, count, FONT_SIZE);
     }
 
     pub fn pick_at(&mut self, target: Point, option: usize, count: usize, text_size: f32) {
@@ -500,14 +510,46 @@ impl Harness {
     }
 
     pub fn find_all(&mut self, text: &str) -> Vec<Rectangle> {
+        let found = self.find_texts(text);
+        let visible = |found: &[(Rectangle, Option<Rectangle>)]| -> Vec<Rectangle> {
+            found.iter().filter_map(|(_, visible)| *visible).collect()
+        };
+        let complete = found.iter().any(|(bounds, visible)| {
+            visible.is_some_and(|visible| visible.height + 0.5 >= bounds.height)
+        });
+        if complete || self.app.page != Page::Settings {
+            return visible(&found);
+        }
+        if found.is_empty() {
+            return Vec::new();
+        }
+        self.reveal(text);
+        visible(&self.find_texts(text))
+    }
+
+    fn reveal(&mut self, text: &str) {
+        if let Some((bounds, _)) = self.find_texts(text).first().copied() {
+            self.scroll_settings((bounds.y - REVEAL_MARGIN).max(0.0));
+        }
+    }
+
+    pub fn scroll_settings(&mut self, offset: f32) {
+        self.run(iced::widget::operation::scroll_to(
+            SETTINGS_SCROLL_ID,
+            AbsoluteOffset { x: 0.0, y: offset },
+        ));
+    }
+
+    fn find_texts(&mut self, text: &str) -> Vec<(Rectangle, Option<Rectangle>)> {
         let wanted = text.to_string();
         self.search(
             move |candidate: Candidate<'_>| match candidate {
                 Candidate::Text {
                     content,
+                    bounds,
                     visible_bounds,
                     ..
-                } if content == wanted => visible_bounds,
+                } if content == wanted => Some((bounds, visible_bounds)),
                 _ => None,
             },
             true,

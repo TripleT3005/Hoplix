@@ -19,6 +19,8 @@ use crate::i18n::Strings;
 use crate::theme;
 
 pub use dialog::focus_input;
+#[cfg(test)]
+pub use settings_page::SCROLL_ID as SETTINGS_SCROLL_ID;
 
 // Types
 
