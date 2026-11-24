@@ -14,6 +14,7 @@ mod sftp;
 mod sites;
 mod sync;
 mod transfer;
+pub mod update;
 
 #[cfg(test)]
 mod test_support;
