@@ -2,14 +2,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use hoplix_core::key_value;
+use hoplix_core::language::{ENGLISH_CODE, FILE_EXTENSION, LanguageFile};
 
 // Constants
 
-pub const FALLBACK_CODE: &str = "en";
+pub const FALLBACK_CODE: &str = ENGLISH_CODE;
 const EMBEDDED_ENGLISH: &str = include_str!("../../../lang/en.lang");
 const LANG_DIRECTORY: &str = "lang";
-const LANG_EXTENSION: &str = "lang";
 const MAX_FALLBACK_DEPTH: usize = 8;
 
 // Types
@@ -53,28 +52,28 @@ pub fn load(code: &str) -> Strings {
         if current == FALLBACK_CODE || tables.len() >= MAX_FALLBACK_DEPTH {
             break;
         }
-        let Some(table) = read_language(&current) else {
+        let Some(file) = read_language(&current) else {
             break;
         };
-        next = table.get("language.fallback").cloned();
-        tables.push(table);
+        next = file.fallback().map(str::to_string);
+        tables.push(file.entries);
     }
-    if let Some(table) = read_language(FALLBACK_CODE) {
-        tables.push(table);
+    if let Some(file) = read_language(FALLBACK_CODE) {
+        tables.push(file.entries);
     }
-    tables.push(table_from(EMBEDDED_ENGLISH));
+    tables.push(embedded_english().entries);
     Strings { tables }
 }
 
 pub fn available_languages() -> Vec<LanguageInfo> {
-    let mut languages = vec![info_from(FALLBACK_CODE, &table_from(EMBEDDED_ENGLISH))];
+    let mut languages = vec![info_from(&embedded_english())];
     for directory in lang_directories() {
         let Ok(reader) = fs::read_dir(directory) else {
             continue;
         };
         for item in reader.filter_map(Result::ok) {
             let path = item.path();
-            if path.extension().and_then(|e| e.to_str()) != Some(LANG_EXTENSION) {
+            if path.extension().and_then(|e| e.to_str()) != Some(FILE_EXTENSION) {
                 continue;
             }
             let Some(code) = path.file_stem().and_then(|s| s.to_str()) else {
@@ -84,7 +83,7 @@ pub fn available_languages() -> Vec<LanguageInfo> {
                 continue;
             }
             if let Ok(text) = fs::read_to_string(&path) {
-                languages.push(info_from(code, &table_from(&text)));
+                languages.push(info_from(&LanguageFile::parse(code, &text)));
             }
         }
     }
@@ -164,26 +163,23 @@ fn lang_directories() -> Vec<PathBuf> {
     directories
 }
 
-fn read_language(code: &str) -> Option<HashMap<String, String>> {
+fn read_language(code: &str) -> Option<LanguageFile> {
     lang_directories()
         .into_iter()
         .find_map(|directory| {
-            fs::read_to_string(directory.join(format!("{code}.{LANG_EXTENSION}"))).ok()
+            fs::read_to_string(directory.join(format!("{code}.{FILE_EXTENSION}"))).ok()
         })
-        .map(|text| table_from(&text))
+        .map(|text| LanguageFile::parse(code, &text))
 }
 
-fn table_from(text: &str) -> HashMap<String, String> {
-    key_value::parse(text).into_iter().collect()
+fn embedded_english() -> LanguageFile {
+    LanguageFile::parse(FALLBACK_CODE, EMBEDDED_ENGLISH)
 }
 
-fn info_from(code: &str, table: &HashMap<String, String>) -> LanguageInfo {
+fn info_from(file: &LanguageFile) -> LanguageInfo {
     LanguageInfo {
-        code: code.to_string(),
-        name: table
-            .get("language.name")
-            .cloned()
-            .unwrap_or_else(|| code.to_string()),
+        code: file.code.clone(),
+        name: file.name().to_string(),
     }
 }
 
@@ -199,6 +195,10 @@ mod tests {
                 name: (*code).to_string(),
             })
             .collect()
+    }
+
+    fn table_from(text: &str) -> HashMap<String, String> {
+        LanguageFile::parse("", text).entries
     }
 
     // Matching
@@ -243,15 +243,6 @@ mod tests {
             let path = item.expect("reading an entry failed").path();
             let text = fs::read_to_string(&path).expect("reading a language file failed");
             let table = table_from(&text);
-            for key in [
-                "language.name",
-                "meta.ai_notice",
-                "meta.category",
-                "meta.report",
-                "meta.reviewed_by",
-            ] {
-                assert!(table.contains_key(key), "{} lacks {key}", path.display());
-            }
             let missing: Vec<_> = english
                 .keys()
                 .filter(|key| !table.contains_key(*key))

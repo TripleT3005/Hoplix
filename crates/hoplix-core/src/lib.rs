@@ -5,6 +5,7 @@ mod error;
 mod file_system;
 mod ftp;
 pub mod key_value;
+pub mod language;
 mod local;
 mod paths;
 mod secrets;
