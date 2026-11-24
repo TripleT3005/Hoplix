@@ -19,6 +19,7 @@ mod title_bar;
 mod transfer_settings;
 mod transfers;
 mod ui;
+mod updates;
 
 #[cfg(test)]
 mod ui_tests;

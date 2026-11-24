@@ -8,6 +8,7 @@ mod queue;
 mod secrets;
 mod settings;
 mod sites;
+mod updates;
 
 use std::collections::hash_map::RandomState;
 use std::fs;
@@ -134,6 +135,7 @@ pub struct Harness {
     transfer_events: UnboundedReceiver<TransferEvent>,
     driving: bool,
     pub opened: Arc<Mutex<Vec<(PathBuf, String)>>>,
+    pub updates: Arc<fakes::Updates>,
 }
 
 impl Harness {
@@ -142,6 +144,15 @@ impl Harness {
     }
 
     pub fn start(name: &str, layout: Layout, prepare: impl FnOnce(&TestRoot)) -> Self {
+        Self::launch(name, layout, prepare, fakes::Updates::up_to_date())
+    }
+
+    pub fn launch(
+        name: &str,
+        layout: Layout,
+        prepare: impl FnOnce(&TestRoot),
+        updates: Arc<fakes::Updates>,
+    ) -> Self {
         let root = TestRoot::new(name);
         Settings {
             language: Some("en".to_string()),
@@ -158,6 +169,8 @@ impl Harness {
             local: fakes::Folder::local(&root.data()),
             opener: fakes::opener(Arc::clone(&opened)),
             temp_dir: root.temp(),
+            update_source: fakes::update_source(Arc::clone(&updates)),
+            update_delay: Duration::ZERO,
         };
         let (app, task) = Hoplix::load(Some(root.config()), services);
         let transfer_events = app.transfers.subscribe();
@@ -182,16 +195,32 @@ impl Harness {
             transfer_events,
             driving: false,
             opened,
+            updates,
         };
         harness.run(task);
-        harness.send(Message::Window(
-            harness.window,
+        harness.open_window();
+        harness
+    }
+
+    pub fn restart(&mut self) {
+        let services = self.app.services.clone();
+        let (app, task) = Hoplix::load(Some(self.root.config()), services);
+        self.app = app;
+        self.cache = None;
+        self.driving = false;
+        self.transfer_events = self.app.transfers.subscribe();
+        self.run(task);
+        self.open_window();
+    }
+
+    fn open_window(&mut self) {
+        self.send(Message::Window(
+            self.window,
             window::Event::Opened {
                 position: None,
                 size: VIEWPORT,
             },
         ));
-        harness
     }
 
     // Messages and tasks

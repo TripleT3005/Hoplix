@@ -17,6 +17,7 @@ use iced::{Alignment, Element, Length};
 use crate::app::{Hoplix, LoadState, Message, Page, Tab, TabId};
 use crate::i18n::Strings;
 use crate::theme;
+use crate::updates::UpdateMessage;
 
 pub use dialog::focus_input;
 #[cfg(test)]
@@ -127,7 +128,18 @@ fn status_bar(app: &Hoplix) -> Element<'_, Message> {
             ),
             None => String::new(),
         });
-    container(text(status).size(13))
+    let mut content = row![text(status).size(13).width(Length::Fill)]
+        .spacing(12)
+        .align_y(Alignment::Center);
+    if let Some(update) = app.available_update() {
+        content = content.push(
+            button(text(strings.format("update.hint", &[("version", &update.version)])).size(13))
+                .padding([0, 4])
+                .style(button::text)
+                .on_press(Message::Update(UpdateMessage::OpenReleasePage(update.url))),
+        );
+    }
+    container(content)
         .padding([4, 12])
         .width(Length::Fill)
         .style(theme::bar)
