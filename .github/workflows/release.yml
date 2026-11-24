@@ -280,3 +280,16 @@ jobs:
           } > "$notes.scanned"
 
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes.scanned"
+
+  discord:
+    needs: [version, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    permissions:
+      contents: read
+    uses: TripleT3005/TripleT3005/.github/workflows/discord-release.yml@main
+    with:
+      title: Hoplix ${{ needs.version.outputs.version }}
+      version: ${{ needs.version.outputs.version }}
+      tag: v${{ needs.version.outputs.version }}
+    secrets:
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
