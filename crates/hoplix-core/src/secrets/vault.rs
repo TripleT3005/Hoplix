@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use ring::pbkdf2;
-use ring::rand::{SecureRandom, SystemRandom};
+use ring::rand::{self, SystemRandom};
 
 use crate::key_value::{self, from_hex, to_hex};
 use crate::sites::write_atomically;
@@ -74,7 +74,7 @@ impl Vault {
         }
         let iterations = NonZeroU32::new(iterations)
             .ok_or_else(|| Error::new(ErrorKind::Other, "iterations"))?;
-        let salt = random_bytes(SALT_LENGTH)?;
+        let salt = random_bytes::<SALT_LENGTH>()?.to_vec();
         let key = derive_key(password, &salt, iterations);
         let check = seal(&key, CHECK_NAME, CHECK_TEXT)?;
         let vault = Self {
@@ -176,7 +176,7 @@ impl Vault {
             let secret = self.get(&name)?.unwrap_or_default();
             plain.push((name, secret));
         }
-        let salt = random_bytes(SALT_LENGTH)?;
+        let salt = random_bytes::<SALT_LENGTH>()?.to_vec();
         let key = derive_key(password, &salt, self.iterations);
         let mut entries = BTreeMap::new();
         for (name, secret) in plain {
@@ -295,9 +295,7 @@ fn associated_data(name: &str) -> Vec<u8> {
 }
 
 fn seal(key: &[u8; KEY_LENGTH], name: &str, plain: &[u8]) -> Result<Vec<u8>> {
-    let nonce_bytes: [u8; NONCE_LEN] = random_bytes(NONCE_LEN)?
-        .try_into()
-        .map_err(|_| Error::new(ErrorKind::Other, "nonce"))?;
+    let nonce_bytes = random_bytes::<NONCE_LEN>()?;
     let mut data = plain.to_vec();
     cipher(key)?
         .seal_in_place_append_tag(
@@ -322,12 +320,10 @@ fn open(key: &[u8; KEY_LENGTH], name: &str, sealed: &[u8]) -> Option<Vec<u8>> {
     Some(plain.to_vec())
 }
 
-fn random_bytes(length: usize) -> Result<Vec<u8>> {
-    let mut bytes = vec![0u8; length];
-    SystemRandom::new()
-        .fill(&mut bytes)
-        .map_err(|_| Error::new(ErrorKind::Other, "no random numbers available"))?;
-    Ok(bytes)
+fn random_bytes<const N: usize>() -> Result<[u8; N]> {
+    rand::generate::<[u8; N]>(&SystemRandom::new())
+        .map(|random| random.expose())
+        .map_err(|_| Error::new(ErrorKind::Other, "no random numbers available"))
 }
 
 // Helpers
