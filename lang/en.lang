@@ -1,0 +1,324 @@
+# Hoplix language file
+
+# Metadata
+meta.ai_notice = Written with the help of AI. Please report mistakes.
+meta.category = Official
+meta.report = https://github.com/TripleT3005/Hoplix/issues
+meta.reviewed_by =
+language.name = English
+
+# Application
+app.name = Hoplix
+
+# Settings
+settings.open = Settings
+settings.title = Settings
+settings.back = Back
+settings.theme = Appearance
+settings.theme.system = Follow system
+settings.theme.light = Light
+settings.theme.dark = Dark
+settings.language = Language
+settings.language.system = Follow system
+settings.layout = Layout
+settings.layout.modern = Modern: one browser with tabs
+settings.layout.classic = Classic: two panes side by side
+settings.save_failed = The settings could not be saved: {detail}
+
+# Tabs
+tabs.new = New tab
+tabs.empty = No tabs are open.
+
+# Browser
+browser.up = Up
+browser.refresh = Refresh
+browser.path = Path
+browser.name = Name
+browser.kind = Type
+browser.size = Size
+browser.modified = Modified
+browser.kind.folder = Folder
+browser.kind.file = File
+browser.kind.file_with_extension = {extension} file
+browser.loading = Loading…
+browser.empty = This folder is empty.
+
+# Errors
+error.not_found = The path does not exist: {detail}
+error.permission_denied = Access denied: {detail}
+error.not_a_directory = This is not a folder: {detail}
+error.other = Something went wrong: {detail}
+error.already_exists = This name is already taken: {detail}
+error.directory_not_empty = The folder is not empty: {detail}
+error.connection_failed = The connection failed: {detail}
+error.authentication_failed = Sign-in failed for {detail}. Check the user name, password or key.
+error.invalid_key = The key file could not be read: {detail}
+error.unknown_host_key = The server key is unknown: {detail}
+error.untrusted_certificate = The server certificate is not trusted: {detail}
+error.certificate_changed = Warning: the server certificate has changed ({detail}) and is not signed by a trusted authority. Someone could be intercepting the connection, so Hoplix did not connect. If the change is expected, remove the old entry from the trusted_certificates file in the Hoplix settings folder.
+error.host_key_changed = Warning: the server key has changed ({detail}). Someone could be intercepting the connection, so Hoplix did not connect. If the change is expected, remove the old entry from the known_hosts file in the Hoplix settings folder.
+
+# Status
+status.items.one = 1 item
+status.items.other = {count} items
+status.loading = Loading {path}…
+
+# Numbers
+number.decimal_separator = .
+date.format = {year}-{month}-{day} {hour}:{minute}
+
+# Connect
+connect.open = Connect
+connect.title = Connect to a server
+connect.protocol = Protocol
+connect.protocol.sftp = SFTP (SSH)
+connect.protocol.ftp = FTP (unencrypted)
+connect.protocol.ftpes = FTPS (explicit TLS)
+connect.protocol.ftps = FTPS (implicit TLS)
+connect.unencrypted = FTP is not encrypted: your password and all files are sent in plain text and can be read on the way. Use SFTP or FTPS if the server supports it.
+connect.host = Server
+connect.port = Port
+connect.username = User name
+connect.method = Sign in with
+connect.method.password = Password
+connect.method.key = Key file
+connect.password = Password
+connect.key_path = Key file
+connect.passphrase = Key passphrase (optional)
+connect.submit = Connect
+connect.connecting = Connecting…
+connect.invalid.host = Enter a server address.
+connect.invalid.port = The port must be a number from 1 to 65535.
+connect.invalid.username = Enter a user name.
+connect.invalid.key = Enter the path to a key file.
+
+# Host keys
+hostkey.title = Unknown server
+hostkey.text = Hoplix has not connected to {host} before. Only continue if this fingerprint matches the server's key:
+hostkey.once = Trust once
+hostkey.always = Always trust
+hostkey.cancel = Cancel
+
+# Certificates
+certificate.title = Untrusted certificate
+certificate.text = The certificate of {host} is not signed by a trusted authority, for example because it is self-signed. Only continue if this fingerprint matches the server's certificate:
+
+# Operations
+dialog.cancel = Cancel
+operation.name = Name
+operation.new_folder = New folder
+operation.new_folder.title = New folder
+operation.new_folder.confirm = Create
+operation.rename = Rename
+operation.rename.title = Rename “{name}”
+operation.rename.confirm = Rename
+operation.delete = Delete
+operation.delete.title = Delete “{name}”?
+operation.delete.file = The file will be deleted permanently.
+operation.delete.folder = The folder and everything in it will be deleted permanently.
+operation.delete.confirm = Delete
+
+# Edited files
+operation.edit = Edit
+edit.title = Edited files ({count})
+edit.status.downloading = Downloading…
+edit.status.watching = Open, watching for changes
+edit.status.uploading = Uploading…
+edit.changed = “{name}” was changed.
+edit.upload = Upload
+edit.ignore = Ignore
+edit.stop = Stop watching
+edit.open_failed = The file could not be opened: {detail}
+edit.download_failed = “{name}” could not be downloaded for editing.
+edit.upload_failed = “{name}” could not be uploaded and stays marked as changed.
+edit.folder_failed = No temporary folder for editing could be created: {detail}
+settings.editor = Editor
+settings.editor.placeholder = Empty: the default program of the system
+settings.editor.hint = Edit (F4) opens files with this program, Open (double-click or Enter) with the default program. Files from a server are downloaded to a temporary folder and watched; Hoplix offers to upload them when they change and deletes the copies when it closes.
+settings.upload_changes = Upload changes automatically
+command.edit = Edit in external program
+
+# Sites
+sites.open = Sites
+sites.new = New site
+sites.new_folder = New folder
+sites.connect = Connect
+sites.duplicate = Duplicate
+sites.empty = No saved sites yet. Create one with New site, or use Save as site on the Connect page.
+sites.hint = Select a site to edit it, or create a new one.
+sites.new_name = New site
+sites.copy_name = {name} (copy)
+sites.new_title = New site
+sites.name = Name
+sites.folder = Folder
+sites.folder.root = (top level)
+sites.remote_path = Remote folder
+sites.remote_path.hint = Home folder
+sites.local_path = Local folder
+sites.local_path.hint = Not set
+sites.notes = Notes
+sites.save = Save
+sites.save_connect = Save and connect
+sites.secret.keep = Leave empty to keep the saved one
+sites.invalid.name = Enter a name for the site.
+sites.new_folder.title = New folder
+sites.new_folder.title_in = New folder in “{folder}”
+sites.delete.site = The site will be removed. Its saved password is deleted too.
+sites.delete.folder = The folder and the {count} site(s) in it will be removed, together with their saved passwords.
+sites.load_failed = The saved sites could not be read: {detail}
+sites.save_failed = The sites could not be saved: {detail}
+connect.save_as_site = Save as site
+connect.save_password = Save password
+connect.save_passphrase = Save passphrase
+
+# Saved passwords
+settings.secrets = Saved passwords
+settings.secrets.keyring = System keyring
+settings.secrets.keyring.windows = Windows Credential Manager
+settings.secrets.vault = Encrypted with a master password
+settings.secrets.change = Change master password
+settings.secrets.hint = Passwords are never stored as plain text. With a master password they are kept in an encrypted file that you unlock once per session.
+secrets.switched.vault = Saved passwords are now protected by your master password.
+secrets.switched.keyring = Saved passwords are now kept in the system keyring.
+secrets.leftovers = Saved passwords are now protected by your master password, but {count} could not be removed from the system keyring.
+secrets.changed = The master password has been changed.
+secrets.failed = The password could not be saved or read: {detail}
+master.unlock.title = Unlock saved passwords
+master.unlock.text = Enter your master password to use the saved passwords.
+master.unlock = Unlock
+master.create.title = Set a master password
+master.create.text = Saved passwords will be moved into a file encrypted with this master password. If you forget it, the saved passwords cannot be recovered.
+master.create = Set master password
+master.change.title = Change master password
+master.change.text = Enter the new master password.
+master.change = Change
+master.password = Master password
+master.confirm = Repeat master password
+master.mismatch = The passwords do not match.
+master.working = Please wait…
+error.wrong_master_password = The master password is wrong.
+error.vault_locked = The saved passwords are locked.
+error.secret_storage = The system keyring is not available: {detail}
+
+# Transfers
+settings.parallel_transfers = Parallel transfers
+operation.delete.many_title = Delete {count} items?
+transfer.title = Transfers
+transfer.copy_to = Copy to…
+transfer.copy_to_other = Copy to other side
+transfer.same_folder = Source and target are the same folder.
+transfer.drag_hint = Release over a tab or pane to copy the selection there.
+transfer.summary = {active} running, {queued} waiting
+transfer.summary_failed = {count} failed
+transfer.speed = {speed}/s
+transfer.amount = {done} of {total}
+transfer.remaining = {time} left
+transfer.policy = If a file exists:
+transfer.policy.ask = Ask
+transfer.policy.overwrite = Overwrite
+transfer.policy.resume = Resume if smaller
+transfer.policy.rename = Keep both
+transfer.policy.skip = Skip
+transfer.pause = Pause
+transfer.resume = Resume
+transfer.cancel = Cancel
+transfer.retry = Retry
+transfer.remove = Remove
+transfer.pause_all = Pause all
+transfer.resume_all = Resume all
+transfer.cancel_all = Cancel all
+transfer.clear = Clear finished
+transfer.status.queued = Waiting
+transfer.status.scanning = Reading folder…
+transfer.status.retrying = Connection lost, retry {attempt} of {max}…
+transfer.status.waiting = Waiting for your decision
+transfer.status.paused = Paused
+transfer.status.completed = Done
+transfer.status.completed_skipped = Done, {count} skipped
+transfer.status.cancelled = Cancelled
+transfer.conflict.title = File already exists
+transfer.conflict.text = “{path}” already exists.
+transfer.conflict.sizes = New file: {source} · Existing file: {target}
+transfer.conflict.all = Do this for all further conflicts
+transfer.conflict.cancel = Cancel transfer
+transfer.conflict.skip = Skip
+transfer.conflict.rename = Keep both
+transfer.conflict.resume = Resume
+transfer.conflict.overwrite = Overwrite
+
+# Commands
+command.open = Commands
+command.placeholder = Type a command or server name…
+command.no_match = No matching command.
+command.connect = Connect to a server
+command.sites = Open the server list
+command.settings = Open settings
+command.new_tab = New tab
+command.close_tab = Close tab
+command.next_tab = Next tab
+command.previous_tab = Previous tab
+command.refresh = Refresh folder
+command.up = Go to the parent folder
+command.new_folder = New folder
+command.rename = Rename
+command.delete = Delete
+command.select_all = Select all
+command.toggle_theme = Switch between light and dark
+command.toggle_layout = Switch between modern and classic layout
+command.toggle_transfers = Show or hide transfers
+command.connect_site = Connect to {name}
+
+# Compare and synchronise
+command.compare = Compare folders
+command.synchronise = Synchronise folders
+compare.open = Compare
+compare.with = Compare with…
+compare.stop = Stop comparing
+compare.title = Comparing {left} and {right}
+compare.loading = Comparing…
+compare.summary = Differences: {differences} · Equal: {equal}
+compare.only_differences = Only differences
+compare.recursive = Include subfolders
+compare.no_differences = No differences in this folder.
+compare.choose = Open a second tab or choose one under “Compare with…” first.
+compare.failed = The folders could not be compared: {detail}
+compare.mark.only_here = only here
+compare.mark.newer = newer
+compare.mark.older = older
+compare.mark.size = different size
+compare.mark.kind = file and folder
+compare.mark.content = contents differ
+compare.mark.equal = equal
+sync.open = Synchronise…
+sync.title = Synchronise folders
+sync.direction.to_right = {left} → {right}
+sync.direction.to_left = {left} ← {right}
+sync.direction.both = Both ways, newer wins
+sync.mode.update = Update: copy new and newer files
+sync.mode.mirror = Mirror: make the target identical
+sync.recursive = Include subfolders
+sync.size_only = Compare the size only, ignore modification times
+sync.skip_hidden = Skip hidden files (names starting with a dot)
+sync.delete_extra = Delete files that are missing on the source
+sync.exclude = Exclude, e.g. *.tmp; .git
+sync.loading = Comparing the folders…
+sync.summary.nothing = Both sides are already the same.
+sync.summary.upload = Upload: {count} ({size})
+sync.summary.download = Download: {count} ({size})
+sync.summary.copy_to = Copy to {name}: {count} ({size})
+sync.summary.folders = New folders: {count}
+sync.summary.delete = Delete: {count}
+sync.summary.conflicts = Skipped: {count} (file and folder with the same name, or a different size with the same time)
+sync.summary.total = Total size: {size}
+sync.preview.more = … and {count} more
+sync.delete_warning = {count} files and folders on {name} will be deleted. This cannot be undone.
+sync.confirm_delete = Yes, delete them
+sync.start = Start
+sync.running = Synchronising…
+sync.done = Synchronisation finished.
+sync.done_failed = Synchronisation finished with errors, see the transfers.
+sync.failed = The synchronisation failed: {detail}
+
+# Session
+session.disconnected = Not connected. Hoplix does not reconnect on its own after a restart.
+session.reconnect = Connect

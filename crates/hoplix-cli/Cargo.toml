@@ -1,0 +1,19 @@
+[package]
+name = "hoplix-cli"
+description = "Command-line client for Hoplix"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "hoplix-cli"
+path = "src/main.rs"
+
+[dependencies]
+hoplix-core.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[lints]
+workspace = true

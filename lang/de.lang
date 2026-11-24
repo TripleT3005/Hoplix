@@ -1,0 +1,325 @@
+# Hoplix-Sprachdatei
+
+# Metadata
+meta.ai_notice = Mit Unterstützung von KI übersetzt. Fehler bitte melden.
+meta.category = Official
+meta.report = https://github.com/TripleT3005/Hoplix/issues
+meta.reviewed_by =
+language.name = Deutsch
+language.fallback = en
+
+# Application
+app.name = Hoplix
+
+# Settings
+settings.open = Einstellungen
+settings.title = Einstellungen
+settings.back = Zurück
+settings.theme = Darstellung
+settings.theme.system = Wie im System
+settings.theme.light = Hell
+settings.theme.dark = Dunkel
+settings.language = Sprache
+settings.language.system = Wie im System
+settings.layout = Ansicht
+settings.layout.modern = Modern: ein Browser mit Tabs
+settings.layout.classic = Klassisch: zwei Bereiche nebeneinander
+settings.save_failed = Die Einstellungen konnten nicht gespeichert werden: {detail}
+
+# Tabs
+tabs.new = Neuer Tab
+tabs.empty = Es sind keine Tabs geöffnet.
+
+# Browser
+browser.up = Nach oben
+browser.refresh = Aktualisieren
+browser.path = Pfad
+browser.name = Name
+browser.kind = Typ
+browser.size = Größe
+browser.modified = Geändert
+browser.kind.folder = Ordner
+browser.kind.file = Datei
+browser.kind.file_with_extension = {extension}-Datei
+browser.loading = Wird geladen …
+browser.empty = Dieser Ordner ist leer.
+
+# Errors
+error.not_found = Der Pfad existiert nicht: {detail}
+error.permission_denied = Zugriff verweigert: {detail}
+error.not_a_directory = Das ist kein Ordner: {detail}
+error.other = Etwas ist schiefgelaufen: {detail}
+error.already_exists = Dieser Name ist schon vergeben: {detail}
+error.directory_not_empty = Der Ordner ist nicht leer: {detail}
+error.connection_failed = Die Verbindung ist fehlgeschlagen: {detail}
+error.authentication_failed = Die Anmeldung für {detail} ist fehlgeschlagen. Prüfe Benutzername, Passwort oder Schlüssel.
+error.invalid_key = Die Schlüsseldatei konnte nicht gelesen werden: {detail}
+error.unknown_host_key = Der Schlüssel des Servers ist unbekannt: {detail}
+error.untrusted_certificate = Dem Zertifikat des Servers wird nicht vertraut: {detail}
+error.certificate_changed = Achtung: Das Zertifikat des Servers hat sich geändert ({detail}) und ist nicht von einer vertrauenswürdigen Stelle signiert. Jemand könnte die Verbindung abfangen, daher hat Hoplix nicht verbunden. Ist die Änderung gewollt, entferne den alten Eintrag aus der Datei trusted_certificates im Einstellungsordner von Hoplix.
+error.host_key_changed = Achtung: Der Schlüssel des Servers hat sich geändert ({detail}). Jemand könnte die Verbindung abfangen, daher hat Hoplix nicht verbunden. Ist die Änderung gewollt, entferne den alten Eintrag aus der Datei known_hosts im Einstellungsordner von Hoplix.
+
+# Status
+status.items.one = 1 Eintrag
+status.items.other = {count} Einträge
+status.loading = {path} wird geladen …
+
+# Numbers
+number.decimal_separator = ,
+date.format = {day}.{month}.{year} {hour}:{minute}
+
+# Connect
+connect.open = Verbinden
+connect.title = Mit einem Server verbinden
+connect.protocol = Protokoll
+connect.protocol.sftp = SFTP (SSH)
+connect.protocol.ftp = FTP (unverschlüsselt)
+connect.protocol.ftpes = FTPS (explizites TLS)
+connect.protocol.ftps = FTPS (implizites TLS)
+connect.unencrypted = FTP ist nicht verschlüsselt: Dein Passwort und alle Dateien werden im Klartext übertragen und können unterwegs mitgelesen werden. Nutze SFTP oder FTPS, wenn der Server es unterstützt.
+connect.host = Server
+connect.port = Port
+connect.username = Benutzername
+connect.method = Anmelden mit
+connect.method.password = Passwort
+connect.method.key = Schlüsseldatei
+connect.password = Passwort
+connect.key_path = Schlüsseldatei
+connect.passphrase = Passphrase des Schlüssels (optional)
+connect.submit = Verbinden
+connect.connecting = Verbinde …
+connect.invalid.host = Gib eine Serveradresse ein.
+connect.invalid.port = Der Port muss eine Zahl von 1 bis 65535 sein.
+connect.invalid.username = Gib einen Benutzernamen ein.
+connect.invalid.key = Gib den Pfad zu einer Schlüsseldatei ein.
+
+# Host keys
+hostkey.title = Unbekannter Server
+hostkey.text = Hoplix war noch nie mit {host} verbunden. Fahre nur fort, wenn dieser Fingerabdruck zum Schlüssel des Servers passt:
+hostkey.once = Einmal vertrauen
+hostkey.always = Immer vertrauen
+hostkey.cancel = Abbrechen
+
+# Certificates
+certificate.title = Nicht vertrauenswürdiges Zertifikat
+certificate.text = Das Zertifikat von {host} ist nicht von einer vertrauenswürdigen Stelle signiert, zum Beispiel weil es selbst signiert ist. Fahre nur fort, wenn dieser Fingerabdruck zum Zertifikat des Servers passt:
+
+# Operations
+dialog.cancel = Abbrechen
+operation.name = Name
+operation.new_folder = Neuer Ordner
+operation.new_folder.title = Neuer Ordner
+operation.new_folder.confirm = Anlegen
+operation.rename = Umbenennen
+operation.rename.title = „{name}“ umbenennen
+operation.rename.confirm = Umbenennen
+operation.delete = Löschen
+operation.delete.title = „{name}“ löschen?
+operation.delete.file = Die Datei wird endgültig gelöscht.
+operation.delete.folder = Der Ordner und sein gesamter Inhalt werden endgültig gelöscht.
+operation.delete.confirm = Löschen
+
+# Edited files
+operation.edit = Bearbeiten
+edit.title = Bearbeitete Dateien ({count})
+edit.status.downloading = Wird heruntergeladen …
+edit.status.watching = Geöffnet, Änderungen werden beobachtet
+edit.status.uploading = Wird hochgeladen …
+edit.changed = „{name}“ wurde geändert.
+edit.upload = Hochladen
+edit.ignore = Ignorieren
+edit.stop = Nicht mehr beobachten
+edit.open_failed = Die Datei konnte nicht geöffnet werden: {detail}
+edit.download_failed = „{name}“ konnte zum Bearbeiten nicht heruntergeladen werden.
+edit.upload_failed = „{name}“ konnte nicht hochgeladen werden und bleibt als geändert markiert.
+edit.folder_failed = Es konnte kein temporärer Ordner zum Bearbeiten angelegt werden: {detail}
+settings.editor = Editor
+settings.editor.placeholder = Leer: Standardprogramm des Systems
+settings.editor.hint = Bearbeiten (F4) öffnet Dateien mit diesem Programm, Öffnen (Doppelklick oder Eingabetaste) mit dem Standardprogramm. Dateien vom Server werden in einen temporären Ordner heruntergeladen und beobachtet; ändern sie sich, bietet Hoplix das Hochladen an und löscht die Kopien beim Beenden.
+settings.upload_changes = Änderungen automatisch hochladen
+command.edit = In externem Programm bearbeiten
+
+# Sites
+sites.open = Server
+sites.new = Neuer Server
+sites.new_folder = Neuer Ordner
+sites.connect = Verbinden
+sites.duplicate = Duplizieren
+sites.empty = Noch keine Server gespeichert. Lege einen mit „Neuer Server“ an oder nutze „Als Server speichern“ auf der Seite „Verbinden“.
+sites.hint = Wähle einen Server zum Bearbeiten aus oder lege einen neuen an.
+sites.new_name = Neuer Server
+sites.copy_name = {name} (Kopie)
+sites.new_title = Neuer Server
+sites.name = Name
+sites.folder = Ordner
+sites.folder.root = (oberste Ebene)
+sites.remote_path = Ordner auf dem Server
+sites.remote_path.hint = Home-Ordner
+sites.local_path = Lokaler Ordner
+sites.local_path.hint = Nicht festgelegt
+sites.notes = Notizen
+sites.save = Speichern
+sites.save_connect = Speichern und verbinden
+sites.secret.keep = Leer lassen, um das gespeicherte zu behalten
+sites.invalid.name = Gib einen Namen für den Server ein.
+sites.new_folder.title = Neuer Ordner
+sites.new_folder.title_in = Neuer Ordner in „{folder}“
+sites.delete.site = Der Server wird entfernt, sein gespeichertes Passwort ebenfalls.
+sites.delete.folder = Der Ordner und die {count} Server darin werden entfernt, samt ihrer gespeicherten Passwörter.
+sites.load_failed = Die gespeicherten Server konnten nicht gelesen werden: {detail}
+sites.save_failed = Die Server konnten nicht gespeichert werden: {detail}
+connect.save_as_site = Als Server speichern
+connect.save_password = Passwort speichern
+connect.save_passphrase = Passphrase speichern
+
+# Saved passwords
+settings.secrets = Gespeicherte Passwörter
+settings.secrets.keyring = Schlüsselbund des Systems
+settings.secrets.keyring.windows = Windows-Anmeldeinformationsverwaltung
+settings.secrets.vault = Verschlüsselt mit Master-Passwort
+settings.secrets.change = Master-Passwort ändern
+settings.secrets.hint = Passwörter werden nie im Klartext gespeichert. Mit Master-Passwort liegen sie in einer verschlüsselten Datei, die du einmal pro Sitzung entsperrst.
+secrets.switched.vault = Gespeicherte Passwörter sind jetzt durch dein Master-Passwort geschützt.
+secrets.switched.keyring = Gespeicherte Passwörter liegen jetzt im Schlüsselbund des Systems.
+secrets.leftovers = Gespeicherte Passwörter sind jetzt durch dein Master-Passwort geschützt, aber {count} konnten nicht aus dem Schlüsselbund des Systems entfernt werden.
+secrets.changed = Das Master-Passwort wurde geändert.
+secrets.failed = Das Passwort konnte nicht gespeichert oder gelesen werden: {detail}
+master.unlock.title = Gespeicherte Passwörter entsperren
+master.unlock.text = Gib dein Master-Passwort ein, um die gespeicherten Passwörter zu nutzen.
+master.unlock = Entsperren
+master.create.title = Master-Passwort festlegen
+master.create.text = Gespeicherte Passwörter werden in eine Datei verschoben, die mit diesem Master-Passwort verschlüsselt ist. Vergisst du es, lassen sich die gespeicherten Passwörter nicht wiederherstellen.
+master.create = Master-Passwort festlegen
+master.change.title = Master-Passwort ändern
+master.change.text = Gib das neue Master-Passwort ein.
+master.change = Ändern
+master.password = Master-Passwort
+master.confirm = Master-Passwort wiederholen
+master.mismatch = Die Passwörter stimmen nicht überein.
+master.working = Bitte warten …
+error.wrong_master_password = Das Master-Passwort ist falsch.
+error.vault_locked = Die gespeicherten Passwörter sind gesperrt.
+error.secret_storage = Der Schlüsselbund des Systems ist nicht verfügbar: {detail}
+
+# Transfers
+settings.parallel_transfers = Gleichzeitige Übertragungen
+operation.delete.many_title = {count} Einträge löschen?
+transfer.title = Übertragungen
+transfer.copy_to = Kopieren nach …
+transfer.copy_to_other = Zur anderen Seite kopieren
+transfer.same_folder = Quelle und Ziel sind derselbe Ordner.
+transfer.drag_hint = Über einem Tab oder Bereich loslassen, um die Auswahl dorthin zu kopieren.
+transfer.summary = {active} laufen, {queued} warten
+transfer.summary_failed = {count} fehlgeschlagen
+transfer.speed = {speed}/s
+transfer.amount = {done} von {total}
+transfer.remaining = noch {time}
+transfer.policy = Wenn die Datei existiert:
+transfer.policy.ask = Nachfragen
+transfer.policy.overwrite = Überschreiben
+transfer.policy.resume = Fortsetzen, wenn kleiner
+transfer.policy.rename = Beide behalten
+transfer.policy.skip = Überspringen
+transfer.pause = Pausieren
+transfer.resume = Fortsetzen
+transfer.cancel = Abbrechen
+transfer.retry = Wiederholen
+transfer.remove = Entfernen
+transfer.pause_all = Alle pausieren
+transfer.resume_all = Alle fortsetzen
+transfer.cancel_all = Alle abbrechen
+transfer.clear = Erledigte entfernen
+transfer.status.queued = Wartet
+transfer.status.scanning = Ordner wird gelesen …
+transfer.status.retrying = Verbindung verloren, Versuch {attempt} von {max} …
+transfer.status.waiting = Wartet auf deine Entscheidung
+transfer.status.paused = Pausiert
+transfer.status.completed = Fertig
+transfer.status.completed_skipped = Fertig, {count} übersprungen
+transfer.status.cancelled = Abgebrochen
+transfer.conflict.title = Datei existiert bereits
+transfer.conflict.text = „{path}“ existiert bereits.
+transfer.conflict.sizes = Neue Datei: {source} · Vorhandene Datei: {target}
+transfer.conflict.all = Für alle weiteren Konflikte so verfahren
+transfer.conflict.cancel = Übertragung abbrechen
+transfer.conflict.skip = Überspringen
+transfer.conflict.rename = Beide behalten
+transfer.conflict.resume = Fortsetzen
+transfer.conflict.overwrite = Überschreiben
+
+# Commands
+command.open = Befehle
+command.placeholder = Befehl oder Servername eingeben …
+command.no_match = Kein passender Befehl.
+command.connect = Mit einem Server verbinden
+command.sites = Serverliste öffnen
+command.settings = Einstellungen öffnen
+command.new_tab = Neuer Tab
+command.close_tab = Tab schließen
+command.next_tab = Nächster Tab
+command.previous_tab = Vorheriger Tab
+command.refresh = Ordner aktualisieren
+command.up = In den übergeordneten Ordner
+command.new_folder = Neuer Ordner
+command.rename = Umbenennen
+command.delete = Löschen
+command.select_all = Alles auswählen
+command.toggle_theme = Zwischen hell und dunkel wechseln
+command.toggle_layout = Zwischen moderner und klassischer Ansicht wechseln
+command.toggle_transfers = Übertragungen ein- oder ausblenden
+command.connect_site = Mit {name} verbinden
+
+# Compare and synchronise
+command.compare = Ordner vergleichen
+command.synchronise = Ordner synchronisieren
+compare.open = Vergleichen
+compare.with = Vergleichen mit…
+compare.stop = Vergleich beenden
+compare.title = Vergleich von {left} und {right}
+compare.loading = Vergleiche…
+compare.summary = Unterschiede: {differences} · Gleich: {equal}
+compare.only_differences = Nur Unterschiede
+compare.recursive = Unterordner einbeziehen
+compare.no_differences = Keine Unterschiede in diesem Ordner.
+compare.choose = Öffne zuerst einen zweiten Tab oder wähle einen unter „Vergleichen mit…“.
+compare.failed = Die Ordner konnten nicht verglichen werden: {detail}
+compare.mark.only_here = nur hier
+compare.mark.newer = neuer
+compare.mark.older = älter
+compare.mark.size = andere Größe
+compare.mark.kind = Datei und Ordner
+compare.mark.content = Inhalt unterschiedlich
+compare.mark.equal = gleich
+sync.open = Synchronisieren…
+sync.title = Ordner synchronisieren
+sync.direction.to_right = {left} → {right}
+sync.direction.to_left = {left} ← {right}
+sync.direction.both = In beide Richtungen, neuere gewinnt
+sync.mode.update = Aktualisieren: neue und neuere Dateien kopieren
+sync.mode.mirror = Spiegeln: Ziel genau angleichen
+sync.recursive = Unterordner einbeziehen
+sync.size_only = Nur die Größe vergleichen, Änderungszeiten ignorieren
+sync.skip_hidden = Versteckte Dateien überspringen (Namen mit Punkt am Anfang)
+sync.delete_extra = Dateien löschen, die in der Quelle fehlen
+sync.exclude = Ausschließen, z. B. *.tmp; .git
+sync.loading = Vergleiche die Ordner…
+sync.summary.nothing = Beide Seiten sind bereits gleich.
+sync.summary.upload = Hochladen: {count} ({size})
+sync.summary.download = Herunterladen: {count} ({size})
+sync.summary.copy_to = Nach {name} kopieren: {count} ({size})
+sync.summary.folders = Neue Ordner: {count}
+sync.summary.delete = Löschen: {count}
+sync.summary.conflicts = Übersprungen: {count} (Datei und Ordner mit gleichem Namen oder andere Größe bei gleicher Zeit)
+sync.summary.total = Gesamtgröße: {size}
+sync.preview.more = … und {count} weitere
+sync.delete_warning = {count} Dateien und Ordner in {name} werden gelöscht. Das lässt sich nicht rückgängig machen.
+sync.confirm_delete = Ja, löschen
+sync.start = Starten
+sync.running = Synchronisiere…
+sync.done = Synchronisierung abgeschlossen.
+sync.done_failed = Synchronisierung mit Fehlern abgeschlossen, siehe Übertragungen.
+sync.failed = Die Synchronisierung ist fehlgeschlagen: {detail}
+
+# Session
+session.disconnected = Nicht verbunden. Nach einem Neustart verbindet Hoplix nicht von selbst.
+session.reconnect = Verbinden

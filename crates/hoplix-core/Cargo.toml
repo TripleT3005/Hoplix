@@ -1,0 +1,30 @@
+[package]
+name = "hoplix-core"
+description = "File system abstraction and protocol backends for Hoplix"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh-sftp = "4"
+ring = "0.17.14"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7.1"
+suppaftp = { version = "13", default-features = false, features = ["deprecated", "tokio-rustls-ring"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "5.2", features = ["rt-tokio-crypto-rust"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "rt-multi-thread"] }
+
+[lints]
+workspace = true
