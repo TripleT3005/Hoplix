@@ -2,6 +2,22 @@
 
 All notable changes are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.1] – 2026-11-24
+
+### English
+
+#### Security
+
+- `hoplix-cli sites` no longer shows user names or which sites have a saved password, so the list can be shared or logged without revealing accounts.
+- The encrypted password file (master password) now creates its salts and nonces directly from the system's random number generator, without an intermediate buffer.
+
+### Deutsch
+
+#### Sicherheit
+
+- `hoplix-cli sites` zeigt keine Benutzernamen mehr und auch nicht, für welche Server ein Passwort gespeichert ist; die Liste lässt sich so teilen oder protokollieren, ohne Konten preiszugeben.
+- Die verschlüsselte Passwortdatei (Master-Passwort) erzeugt Salts und Nonces jetzt direkt aus dem Zufallszahlengenerator des Systems, ohne Zwischenpuffer.
+
 ## [0.2.0] – 2026-11-24
 
 ### English
