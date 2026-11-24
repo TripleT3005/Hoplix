@@ -157,6 +157,159 @@ fn create_session_folder(base: &Path) -> io::Result<PathBuf> {
     Err(last)
 }
 
+// Stale folders
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessState {
+    Exited,
+    Other,
+    Hoplix,
+    Unknown,
+}
+
+pub fn session_folder_process(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix(FOLDER_PREFIX)?.strip_prefix('-')?;
+    let (process, seed) = rest.split_once('-')?;
+    let is_number = |text: &str, radix: u32, length: usize| {
+        (1..=length).contains(&text.len())
+            && text
+                .chars()
+                .all(|character| character.is_digit(radix) && !character.is_ascii_uppercase())
+    };
+    if !is_number(process, 10, 10) || !is_number(seed, 16, 32) {
+        return None;
+    }
+    process.parse().ok()
+}
+
+pub fn remove_stale_folders(base: &Path, state: impl Fn(u32) -> ProcessState) -> usize {
+    let Ok(items) = fs::read_dir(base) else {
+        return 0;
+    };
+    let own = std::process::id();
+    let mut removed = 0;
+    for item in items.flatten() {
+        let Some(process) = item
+            .file_name()
+            .to_str()
+            .and_then(session_folder_process)
+            .filter(|&process| process != own)
+        else {
+            continue;
+        };
+        if !item.file_type().is_ok_and(|kind| kind.is_dir()) || !is_owned(&item.path()) {
+            continue;
+        }
+        if matches!(state(process), ProcessState::Exited | ProcessState::Other)
+            && fs::remove_dir_all(item.path()).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+pub fn remove_stale_folders_in_background(base: PathBuf) {
+    std::thread::spawn(move || remove_stale_folders(&base, process_state));
+}
+
+fn classify_process(name: &str) -> ProcessState {
+    let name = name.trim().to_lowercase();
+    if name.is_empty() {
+        return ProcessState::Unknown;
+    }
+    let own = std::env::current_exe().ok().and_then(|path| {
+        path.file_stem()
+            .map(|stem| stem.to_string_lossy().to_lowercase())
+    });
+    let is_own = own.is_some_and(|own| own == name || (name.len() >= 15 && own.starts_with(&name)));
+    if is_own || name.contains("hoplix") {
+        ProcessState::Hoplix
+    } else {
+        ProcessState::Other
+    }
+}
+
+#[cfg(unix)]
+fn is_owned(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    #[allow(unsafe_code)]
+    let user = unsafe { libc::geteuid() };
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.uid() == user)
+}
+
+#[cfg(not(unix))]
+fn is_owned(_path: &Path) -> bool {
+    true
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+pub fn process_state(process: u32) -> ProcessState {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
+    };
+
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process) };
+    if handle.is_null() {
+        return if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
+            ProcessState::Exited
+        } else {
+            ProcessState::Unknown
+        };
+    }
+    let mut code = 0u32;
+    let state = if unsafe { GetExitCodeProcess(handle, &mut code) } == 0 {
+        ProcessState::Unknown
+    } else if code != STILL_ACTIVE as u32 {
+        ProcessState::Exited
+    } else {
+        let mut buffer = vec![0u16; 32_768];
+        let mut length = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
+        let found = unsafe {
+            QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, buffer.as_mut_ptr(), &mut length)
+        };
+        if found == 0 {
+            ProcessState::Unknown
+        } else {
+            let image = String::from_utf16_lossy(&buffer[..length as usize]);
+            Path::new(&image)
+                .file_stem()
+                .map_or(ProcessState::Unknown, |stem| {
+                    classify_process(&stem.to_string_lossy())
+                })
+        }
+    };
+    unsafe { CloseHandle(handle) };
+    state
+}
+
+#[cfg(target_os = "linux")]
+pub fn process_state(process: u32) -> ProcessState {
+    let folder = PathBuf::from(format!("/proc/{process}"));
+    match fs::symlink_metadata(&folder) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if Path::new("/proc/self").exists() {
+                ProcessState::Exited
+            } else {
+                ProcessState::Unknown
+            }
+        }
+        Err(_) => ProcessState::Unknown,
+        Ok(_) => fs::read_to_string(folder.join("comm"))
+            .map_or(ProcessState::Unknown, |name| classify_process(&name)),
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn process_state(_process: u32) -> ProcessState {
+    ProcessState::Unknown
+}
+
 impl Edits {
     fn get_mut(&mut self, id: EditId) -> Option<&mut EditedFile> {
         self.files.iter_mut().find(|file| file.id == id)
@@ -538,5 +691,105 @@ mod tests {
             assert_eq!(mode & 0o777, 0o700);
         }
         fs::remove_dir_all(base).expect("cleaning up failed");
+    }
+
+    // Stale folders
+
+    #[test]
+    fn only_exact_folder_names_belong_to_a_session() {
+        assert_eq!(session_folder_process("hoplix-edit-42-ff"), Some(42));
+        assert_eq!(
+            session_folder_process(&session_folder_name(7, u128::MAX)),
+            Some(7)
+        );
+        for name in [
+            "hoplix-edit-42",
+            "hoplix-edit-42-",
+            "hoplix-edit--ff",
+            "hoplix-edit-42-FF",
+            "hoplix-edit-42-fg",
+            "hoplix-edit-+42-ff",
+            "hoplix-edit-42-ff-1",
+            "hoplix-edit-42-ff.txt",
+            "hoplix-edit-99999999999-ff",
+            "hoplix-edits-42-ff",
+            "Hoplix-edit-42-ff",
+            "my-hoplix-edit-42-ff",
+            "hoplix-edit-42-11111111111111111111111111111111f",
+        ] {
+            assert_eq!(session_folder_process(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn folders_of_ended_processes_are_removed() {
+        let base = temporary_directory("stale");
+        let own = std::process::id();
+        let names = [
+            ("hoplix-edit-101-1a", true),
+            ("hoplix-edit-102-2b", true),
+            ("hoplix-edit-103-3c", false),
+            ("hoplix-edit-104-4d", false),
+            ("hoplix-edit-101-x", false),
+            ("hoplix-edit-101", false),
+            ("other-folder", false),
+        ];
+        for (name, _) in names {
+            fs::create_dir_all(base.join(name).join("1")).expect("creating failed");
+            fs::write(base.join(name).join("1").join("a.txt"), b"a").expect("writing failed");
+        }
+        let own_folder = base.join(session_folder_name(own, 1));
+        fs::create_dir_all(&own_folder).expect("creating failed");
+        fs::write(base.join("hoplix-edit-105-5e"), b"not a folder").expect("writing failed");
+
+        let asked = std::sync::Mutex::new(Vec::new());
+        let removed = remove_stale_folders(&base, |process| {
+            asked.lock().expect("lock poisoned").push(process);
+            match process {
+                101 => ProcessState::Exited,
+                102 => ProcessState::Other,
+                103 => ProcessState::Hoplix,
+                _ => ProcessState::Unknown,
+            }
+        });
+        assert_eq!(removed, 2);
+        for (name, gone) in names {
+            assert_eq!(!base.join(name).exists(), gone, "{name}");
+        }
+        assert!(own_folder.is_dir());
+        assert!(base.join("hoplix-edit-105-5e").is_file());
+        let mut asked = asked.into_inner().expect("lock poisoned");
+        asked.sort_unstable();
+        assert!(!asked.contains(&own));
+        assert!(!asked.contains(&105));
+        assert_eq!(
+            remove_stale_folders(&base.join("missing"), |_| ProcessState::Exited),
+            0
+        );
+        fs::remove_dir_all(base).expect("cleaning up failed");
+    }
+
+    #[test]
+    fn process_names_tell_hoplix_apart() {
+        assert_eq!(classify_process("hoplix"), ProcessState::Hoplix);
+        assert_eq!(classify_process("Hoplix\n"), ProcessState::Hoplix);
+        assert_eq!(classify_process("notepad"), ProcessState::Other);
+        assert_eq!(classify_process(" "), ProcessState::Unknown);
+        let own = std::env::current_exe()
+            .ok()
+            .and_then(|path| {
+                path.file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+            })
+            .expect("no executable name");
+        assert_eq!(classify_process(&own), ProcessState::Hoplix);
+    }
+
+    #[test]
+    fn the_running_process_is_seen_as_alive() {
+        #[cfg(any(windows, target_os = "linux"))]
+        assert_eq!(process_state(std::process::id()), ProcessState::Hoplix);
+        #[cfg(any(windows, target_os = "linux"))]
+        assert_eq!(process_state(u32::MAX - 2), ProcessState::Exited);
     }
 }

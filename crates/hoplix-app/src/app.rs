@@ -355,7 +355,9 @@ impl Dialog {
 
 impl Hoplix {
     pub fn new() -> (Self, Task<Message>) {
-        Self::load(config_dir(), Services::default())
+        let services = Services::default();
+        edits::remove_stale_folders_in_background(services.temp_dir.clone());
+        Self::load(config_dir(), services)
     }
 
     pub(crate) fn load(config_dir: Option<PathBuf>, services: Services) -> (Self, Task<Message>) {
