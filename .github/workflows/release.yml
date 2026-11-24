@@ -1,0 +1,274 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - installer/**
+      - build/**
+      - assets/icons/**
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::Cargo.toml has no valid workspace version: '$version'"
+            exit 1
+          fi
+          section=$(sed -n 's/^## \[\([^]]*\)\].*/\1/p' CHANGELOG.md | grep -vx Unreleased | head -n 1)
+          if [ "$section" != "$version" ]; then
+            echo "::error::The newest section of CHANGELOG.md is '$section', but Cargo.toml has $version"
+            exit 1
+          fi
+          for crate in hoplix-core hoplix-app hoplix-cli; do
+            locked=$(awk -v name="name = \"$crate\"" '$0 == name { getline; print; exit }' Cargo.lock)
+            if [ "$locked" != "version = \"$version\"" ]; then
+              echo "::error::Cargo.lock has '$locked' for $crate, expected $version"
+              exit 1
+            fi
+          done
+          if grep -nE '^[[:space:]]*#define[[:space:]]+AppVersion' installer/hoplix.iss; then
+            echo "::error::installer/hoplix.iss must not define its own version; it is passed with /DAppVersion"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing tag
+        id: check
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          exists=false
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            exists=true
+          fi
+          if [ "$exists" = false ] && awk '/^## \[Unreleased\]/ { found = 1; next } /^## \[/ { found = 0 } found && NF' CHANGELOG.md | grep -q .; then
+            echo "::error::CHANGELOG.md still has entries under [Unreleased]; move them into the section for $VERSION"
+            exit 1
+          fi
+          echo "exists=$exists" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    if: needs.version.outputs.exists == 'false' || github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+          - os: ubuntu-latest
+            platform: linux-x64
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Check versions and language files
+        run: cargo test -p hoplix-core --test version --test languages --locked
+
+      - name: Build
+        run: cargo build --workspace --release --locked
+
+      - name: Check program versions
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            for exe in hoplix.exe hoplix-cli.exe; do
+              product=$(powershell -NoProfile -Command "(Get-Item 'target/release/$exe').VersionInfo.ProductVersion")
+              product=${product%$'\r'}
+              if [ "$product" != "$VERSION" ]; then
+                echo "::error::$exe has the product version '$product', expected $VERSION"
+                exit 1
+              fi
+            done
+            cli=target/release/hoplix-cli.exe
+          else
+            cli=target/release/hoplix-cli
+          fi
+          if ! "$cli" --version | grep -qF "$VERSION"; then
+            echo "::error::hoplix-cli --version does not report $VERSION"
+            exit 1
+          fi
+
+      - name: Package
+        shell: bash
+        run: |
+          name="Hoplix-$VERSION-${{ matrix.platform }}"
+          if [ "$RUNNER_OS" = Windows ]; then
+            name="$name-portable"
+            binaries=(target/release/hoplix.exe target/release/hoplix-cli.exe)
+          else
+            binaries=(target/release/hoplix target/release/hoplix-cli)
+          fi
+          mkdir -p "dist/$name/lang"
+          cp "${binaries[@]}" "dist/$name/"
+          cp lang/*.lang "dist/$name/lang/"
+          cp LICENSE README.md CHANGELOG.md "dist/$name/"
+          cd dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            archive="$name.zip"
+            7z a -tzip -bso0 "$archive" "$name"
+          else
+            archive="$name.tar.gz"
+            tar -czf "$archive" "$name"
+          fi
+          sha256sum "$archive" > "$archive.sha256"
+          rm -r "$name"
+
+      - name: Build installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = @(
+            (Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe"),
+            (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe")
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $compiler) {
+            choco install innosetup --no-progress -y
+            $compiler = @(
+              (Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe"),
+              (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe")
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          & $compiler /Qp "/DAppVersion=$env:VERSION" installer\hoplix.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Set-Location dist
+          $setup = "Hoplix-$env:VERSION-windows-x64-setup.exe"
+          $product = (Get-Item $setup).VersionInfo.ProductVersion
+          if ($product -ne $env:VERSION) {
+            Write-Output "::error::$setup has the product version '$product', expected $env:VERSION"
+            exit 1
+          }
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash *$setup" | Out-File -Encoding ascii -NoNewline "$setup.sha256"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.platform }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.exe
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    if: github.event_name != 'pull_request' && needs.version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          notes="$RUNNER_TEMP/notes.md"
+          awk -v heading="## [$VERSION]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md | sed '/./,$!d' > "$notes"
+          if [ ! -s "$notes" ]; then
+            echo "::error::CHANGELOG.md has no text for version $VERSION"
+            exit 1
+          fi
+
+          cd dist
+          for file in *; do
+            case "$file" in *.sha256) continue ;; esac
+            if [ ! -s "$file.sha256" ]; then
+              echo "::error::$file has no .sha256 file"
+              exit 1
+            fi
+          done
+
+          prerelease=()
+          case "$VERSION" in 0.*|*-*) prerelease=(--prerelease) ;; esac
+
+          gh release create "$TAG" ./* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Hoplix $VERSION" \
+            --notes-file "$notes" \
+            "${prerelease[@]}"
+
+          if [ -z "$VT_API_KEY" ]; then
+            echo "::warning::The repository secret VT_API_KEY is not set, so $TAG has no VirusTotal scan"
+            exit 0
+          fi
+
+          {
+            cat "$notes"
+            echo
+            echo "---"
+            echo
+            echo "### VirusTotal Scan Report"
+            echo "Scanned on: $(date -u +%Y-%m-%d)"
+            echo
+            for file in *; do
+              case "$file" in *.sha256) continue ;; esac
+              upload=https://www.virustotal.com/api/v3/files
+              if [ "$(stat -c %s "$file")" -gt 33554432 ]; then
+                upload=$(curl --fail --silent --show-error \
+                  --header "x-apikey: $VT_API_KEY" \
+                  https://www.virustotal.com/api/v3/files/upload_url | jq -r .data)
+              fi
+              curl --fail --silent --show-error \
+                --header "x-apikey: $VT_API_KEY" \
+                --form "file=@$file" \
+                "$upload" > /dev/null
+              hash=$(cut -d ' ' -f 1 "$file.sha256")
+              echo "- **$file:** [Scan Report](https://www.virustotal.com/gui/file/$hash)"
+            done
+          } > "$notes.scanned"
+
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes.scanned"

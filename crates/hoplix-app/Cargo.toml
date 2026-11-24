@@ -1,0 +1,29 @@
+[package]
+name = "hoplix-app"
+description = "Hoplix file transfer client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "hoplix"
+path = "src/main.rs"
+
+[dependencies]
+hoplix-core.workspace = true
+iced = { version = "0.14", default-features = false, features = ["crisp", "linux-theme-detection", "tiny-skia", "tokio", "wayland", "wgpu", "x11"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Dwm", "Win32_System_Time", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+iced_test = "0.14"
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
+[lints]
+workspace = true
