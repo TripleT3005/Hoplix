@@ -402,9 +402,9 @@ impl Hoplix {
             .collect()
     }
 
-    pub(crate) fn follow_active_tabs(&mut self, before: &[Option<TabId>]) -> Task<Message> {
+    pub(crate) fn follow_active_tabs(&mut self, before: &[Option<TabId>]) -> Option<Task<Message>> {
         let Some(comparison) = &self.compare.comparison else {
-            return Task::none();
+            return None;
         };
         let original = (comparison.left, comparison.right);
         let (mut left, mut right) = original;
@@ -423,12 +423,12 @@ impl Hoplix {
         }
         if left == right || self.tab_by_id(left).is_none() || self.tab_by_id(right).is_none() {
             self.compare.comparison = None;
-            return Task::none();
+            return None;
         }
         if (left, right) == original {
-            return Task::none();
+            return None;
         }
-        self.start_comparison(left, right)
+        Some(self.start_comparison(left, right))
     }
 
     fn recompare(&mut self) -> Task<Message> {

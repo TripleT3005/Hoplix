@@ -474,7 +474,10 @@ impl Hoplix {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let active = self.active_tabs();
         let task = self.handle(message);
-        Task::batch([task, self.follow_active_tabs(&active)])
+        match self.follow_active_tabs(&active) {
+            Some(follow) => Task::batch([task, follow]),
+            None => task,
+        }
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
