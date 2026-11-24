@@ -12,6 +12,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - Compare two folders (Ctrl+D): differences are marked in both file lists, optionally including subfolders, with a filter for only the differences.
 - Synchronise two folders (Ctrl+Shift+D) in one direction or both ways, as update or mirror, optionally deleting files missing on the source, with exclude patterns and a preview before starting; copied files keep their modification time.
 - `hoplix-cli compare` and `hoplix-cli sync` (with `--dry-run`, `--delete`, `--mirror`, `--size-only`, `--skip-hidden` and `--exclude`).
+- The licenses of the libraries used are included with the program (`THIRD-PARTY-LICENSES.txt`).
 
 ### Deutsch
 
@@ -21,6 +22,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - Zwei Ordner vergleichen (Strg+D): Unterschiede werden in beiden Dateilisten markiert, auf Wunsch mit Unterordnern und mit einem Filter für nur die Unterschiede.
 - Zwei Ordner synchronisieren (Strg+Umschalt+D) in eine oder beide Richtungen, als Aktualisieren oder Spiegeln, auf Wunsch mit Löschen von Dateien, die in der Quelle fehlen, mit Ausschlussmustern und Vorschau vor dem Start; kopierte Dateien behalten ihre Änderungszeit.
 - `hoplix-cli compare` und `hoplix-cli sync` (mit `--dry-run`, `--delete`, `--mirror`, `--size-only`, `--skip-hidden` und `--exclude`).
+- Die Lizenzen der verwendeten Bibliotheken liegen dem Programm bei (`THIRD-PARTY-LICENSES.txt`).
 
 ## [0.1.0] – 2026-11-24
 

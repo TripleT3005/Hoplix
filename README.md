@@ -158,6 +158,8 @@ Tests: `cargo test`. The SFTP integration tests are skipped by default; run them
 
 [LANGUAGES.md](LANGUAGES.md) is generated from the headers of the language files. After changing them, run `UPDATE_LANGUAGES=1 cargo test -p hoplix-core --test languages` (PowerShell: `$env:UPDATE_LANGUAGES = 1; cargo test -p hoplix-core --test languages`); the tests fail if it is out of date.
 
+[THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt) is generated from `cargo tree` and `cargo metadata` and the license files of the crates. After changing dependencies, run `UPDATE_THIRD_PARTY_LICENSES=1 cargo test -p hoplix-core --test third_party_licenses` (PowerShell: `$env:UPDATE_THIRD_PARTY_LICENSES = 1; cargo test -p hoplix-core --test third_party_licenses`); the tests fail if it is out of date.
+
 #### Releases
 
 The version is set once in the workspace `Cargo.toml`. When a new version reaches `main`, the release workflow builds Hoplix for Windows x64 and Linux x64 and publishes it as `v<version>`: the portable ZIP, the installer (Inno Setup, `installer/hoplix.iss`, which gets the version from the workflow) and the Linux archive, each with a `.sha256` file. The section of the version in [CHANGELOG.md](CHANGELOG.md), with English and German notes, becomes the release notes; the release fails without it and while `[Unreleased]` still has entries. Versions `0.x` and versions with a suffix like `1.0.0-beta.1` are pre-releases. With the repository secret `VT_API_KEY`, all files are uploaded to VirusTotal and the scan links are added to the release notes; without it the workflow only warns. Pull requests that change the release workflow or the installer build and package everything as a dry run without publishing.
@@ -167,6 +169,8 @@ The version is set once in the workspace `Cargo.toml`. When a new version reache
 ### License
 
 [MIT](LICENSE) © TripleT3005
+
+The licenses of the libraries used are in [THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt), which is included with the program.
 
 ## Deutsch
 
@@ -322,6 +326,8 @@ Tests: `cargo test`. Die SFTP-Integrationstests sind standardmäßig übersprung
 
 [LANGUAGES.md](LANGUAGES.md) wird aus den Köpfen der Sprachdateien erzeugt. Nach Änderungen daran `UPDATE_LANGUAGES=1 cargo test -p hoplix-core --test languages` (PowerShell: `$env:UPDATE_LANGUAGES = 1; cargo test -p hoplix-core --test languages`) ausführen; die Tests schlagen fehl, wenn sie veraltet ist.
 
+[THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt) wird mit `cargo tree` und `cargo metadata` aus den Lizenzdateien der Crates erzeugt. Nach Änderungen an den Abhängigkeiten `UPDATE_THIRD_PARTY_LICENSES=1 cargo test -p hoplix-core --test third_party_licenses` (PowerShell: `$env:UPDATE_THIRD_PARTY_LICENSES = 1; cargo test -p hoplix-core --test third_party_licenses`) ausführen; die Tests schlagen fehl, wenn sie veraltet ist.
+
 #### Releases
 
 Die Version steht nur in der `Cargo.toml` des Workspaces. Sobald eine neue Version auf `main` landet, baut der Release-Workflow Hoplix für Windows x64 und Linux x64 und veröffentlicht es als `v<Version>`: die portable ZIP, den Installer (Inno Setup, `installer/hoplix.iss`, der die Version vom Workflow bekommt) und das Linux-Archiv, jeweils mit einer `.sha256`-Datei. Der Abschnitt der Version in der [CHANGELOG.md](CHANGELOG.md) mit englischen und deutschen Notizen wird zu den Release-Notizen; ohne ihn und solange `[Unreleased]` noch Einträge hat, schlägt das Release fehl. Versionen `0.x` und Versionen mit Zusatz wie `1.0.0-beta.1` sind Vorabversionen. Mit dem Repository-Secret `VT_API_KEY` werden alle Dateien zu VirusTotal hochgeladen und die Scan-Links in die Release-Notizen eingetragen; ohne das Secret warnt der Workflow nur. Pull Requests, die den Release-Workflow oder den Installer ändern, bauen und packen alles nur zur Probe, ohne zu veröffentlichen.
@@ -331,3 +337,5 @@ Die Version steht nur in der `Cargo.toml` des Workspaces. Sobald eine neue Versi
 ### Lizenz
 
 [MIT](LICENSE) © TripleT3005
+
+Die Lizenzen der verwendeten Bibliotheken stehen in [THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt), die dem Programm beiliegt.

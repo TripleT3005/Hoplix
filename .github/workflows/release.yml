@@ -98,8 +98,8 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
-      - name: Check versions and language files
-        run: cargo test -p hoplix-core --test version --test languages --locked
+      - name: Check versions, language files and third-party licenses
+        run: cargo test -p hoplix-core --test version --test languages --test third_party_licenses --locked
 
       - name: Build
         run: cargo build --workspace --release --locked
@@ -138,15 +138,23 @@ jobs:
           mkdir -p "dist/$name/lang"
           cp "${binaries[@]}" "dist/$name/"
           cp lang/*.lang "dist/$name/lang/"
-          cp LICENSE README.md CHANGELOG.md "dist/$name/"
+          cp LICENSE THIRD-PARTY-LICENSES.txt README.md CHANGELOG.md "dist/$name/"
           cd dist
           if [ "$RUNNER_OS" = Windows ]; then
             archive="$name.zip"
             7z a -tzip -bso0 "$archive" "$name"
+            contents=$(7z l -ba -slt "$archive" | sed -n 's/^Path = //p' | tr '\134' /)
           else
             archive="$name.tar.gz"
             tar -czf "$archive" "$name"
+            contents=$(tar -tzf "$archive")
           fi
+          for file in LICENSE THIRD-PARTY-LICENSES.txt README.md CHANGELOG.md; do
+            if ! grep -qxF "$name/$file" <<< "$contents"; then
+              echo "::error::$archive does not contain $file"
+              exit 1
+            fi
+          done
           sha256sum "$archive" > "$archive.sha256"
           rm -r "$name"
 
