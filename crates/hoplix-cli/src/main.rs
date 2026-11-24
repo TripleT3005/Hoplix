@@ -77,12 +77,7 @@ async fn run(invocation: Invocation) -> Result<(), String> {
                 .max()
                 .unwrap_or(0);
             for site in sorted {
-                let saved = if site.save_secrets {
-                    "  (password saved)"
-                } else {
-                    ""
-                };
-                println!("{:<width$}  {}{saved}", site.display_path(), site.url());
+                println!("{:<width$}  {}", site.display_path(), site.address());
             }
         }
         Command::List(target) => {
