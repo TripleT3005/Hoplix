@@ -145,7 +145,7 @@ Hoplix only connects to servers you enter yourself; there is no telemetry and no
 
 ### Building
 
-Requires Rust 1.88 or newer.
+Requires Rust 1.89 or newer.
 On Debian or Ubuntu, install `pkg-config`, `libxkbcommon-dev` and `libwayland-dev` first.
 
 ```sh
@@ -313,7 +313,7 @@ Hoplix verbindet sich nur mit Servern, die du selbst eingibst; es gibt keine Tel
 
 ### Bauen
 
-Benötigt Rust 1.88 oder neuer.
+Benötigt Rust 1.89 oder neuer.
 Unter Debian oder Ubuntu vorher `pkg-config`, `libxkbcommon-dev` und `libwayland-dev` installieren.
 
 ```sh
