@@ -9,7 +9,6 @@ use iced::keyboard::Modifiers;
 use iced::{Point, Subscription, Task, event, keyboard, mouse};
 
 use crate::app::{Dialog, Hoplix, Message, Tab, TabId};
-use crate::settings::MAX_PARALLEL_TRANSFERS;
 
 // Constants
 
@@ -112,12 +111,6 @@ impl Hoplix {
                 if let Some(Dialog::Conflict { apply_to_all, .. }) = &mut self.dialog {
                     *apply_to_all = value;
                 }
-            }
-            Message::ParallelTransfersSelected(count) => {
-                let count = count.clamp(1, MAX_PARALLEL_TRANSFERS);
-                self.settings.parallel_transfers = count;
-                self.transfers.set_parallelism(count);
-                self.save_settings();
             }
             Message::ModifiersChanged(modifiers) => self.modifiers = modifiers,
             Message::DragEntered(target) => self.drop_target = Some(target),

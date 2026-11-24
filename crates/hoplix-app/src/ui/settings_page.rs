@@ -1,21 +1,59 @@
 use hoplix_core::SecretBackend;
-use iced::widget::{Space, button, checkbox, column, container, pick_list, row, text, text_input};
+use iced::widget::{
+    Column, Space, button, checkbox, column, container, pick_list, row, rule, scrollable, text,
+    text_input,
+};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{Hoplix, Message};
 use crate::edits::EditMessage;
-use crate::settings::{Layout, MAX_PARALLEL_TRANSFERS, ThemePreference};
+use crate::i18n::Strings;
+use crate::settings::{
+    Layout, MAX_PARALLEL_TRANSFERS, MAX_RETRY_ATTEMPTS, MAX_RETRY_DELAY, MIN_RETRY_DELAY, RateUnit,
+    SpeedLimit, ThemePreference,
+};
 use crate::theme;
+use crate::transfer_settings::TransferSetting;
 use crate::ui::Choice;
 
 // Constants
 
+pub const SCROLL_ID: &str = "settings-page";
 const LABEL_WIDTH: f32 = 160.0;
 const PICKER_WIDTH: f32 = 380.0;
+const AMOUNT_WIDTH: f32 = 140.0;
+const UNIT_WIDTH: f32 = 110.0;
+const HINT_SIZE: u32 = 13;
 
 // Page
 
 pub fn view(app: &Hoplix) -> Element<'_, Message> {
+    let strings = &app.strings;
+    let content = column![
+        text(strings.get("settings.title")).size(24),
+        general(app),
+        transfers(app),
+        connections(app),
+        passwords(app),
+        editor(app),
+    ]
+    .spacing(32)
+    .max_width(780);
+
+    scrollable(
+        container(content)
+            .padding(24)
+            .width(Length::Fill)
+            .center_x(Length::Fill),
+    )
+    .id(SCROLL_ID)
+    .height(Length::Fill)
+    .into()
+}
+
+// Sections
+
+fn general(app: &Hoplix) -> Element<'_, Message> {
     let strings = &app.strings;
 
     let themes: Vec<Choice<ThemePreference>> = ThemePreference::ALL
@@ -31,10 +69,7 @@ pub fn view(app: &Hoplix) -> Element<'_, Message> {
                 .to_string(),
         })
         .collect();
-    let selected_theme = themes
-        .iter()
-        .find(|c| c.value == app.settings.theme)
-        .cloned();
+    let selected_theme = selected(&themes, &app.settings.theme);
 
     let mut languages = vec![Choice {
         value: None,
@@ -44,10 +79,7 @@ pub fn view(app: &Hoplix) -> Element<'_, Message> {
         value: Some(language.code.clone()),
         label: language.name.clone(),
     }));
-    let selected_language = languages
-        .iter()
-        .find(|c| c.value == app.settings.language)
-        .cloned();
+    let selected_language = selected(&languages, &app.settings.language);
 
     let layouts: Vec<Choice<Layout>> = Layout::ALL
         .into_iter()
@@ -61,11 +93,148 @@ pub fn view(app: &Hoplix) -> Element<'_, Message> {
                 .to_string(),
         })
         .collect();
-    let selected_layout = layouts
-        .iter()
-        .find(|c| c.value == app.settings.layout)
-        .cloned();
+    let selected_layout = selected(&layouts, &app.settings.layout);
 
+    section(
+        strings.get("settings.section.general"),
+        vec![
+            setting(
+                strings.get("settings.theme"),
+                pick_list(themes, selected_theme, |choice| {
+                    Message::ThemeSelected(choice.value)
+                })
+                .width(PICKER_WIDTH)
+                .into(),
+            ),
+            setting(
+                strings.get("settings.language"),
+                pick_list(languages, selected_language, |choice| {
+                    Message::LanguageSelected(choice.value)
+                })
+                .width(PICKER_WIDTH)
+                .into(),
+            ),
+            setting(
+                strings.get("settings.layout"),
+                pick_list(layouts, selected_layout, |choice| {
+                    Message::LayoutSelected(choice.value)
+                })
+                .width(PICKER_WIDTH)
+                .into(),
+            ),
+        ],
+    )
+}
+
+fn transfers(app: &Hoplix) -> Element<'_, Message> {
+    let strings = &app.strings;
+    let settings = &app.settings;
+    section(
+        strings.get("settings.section.transfers"),
+        vec![
+            setting(
+                strings.get("settings.parallel_transfers"),
+                pick_list(
+                    (1..=MAX_PARALLEL_TRANSFERS).collect::<Vec<usize>>(),
+                    Some(settings.parallel_transfers),
+                    |count| Message::TransferSetting(TransferSetting::Parallel(count)),
+                )
+                .width(PICKER_WIDTH)
+                .into(),
+            ),
+            setting(
+                strings.get("settings.parallel_downloads"),
+                direction_picker(
+                    strings,
+                    settings.parallel_downloads,
+                    TransferSetting::Downloads,
+                ),
+            ),
+            setting(
+                strings.get("settings.parallel_uploads"),
+                direction_picker(strings, settings.parallel_uploads, TransferSetting::Uploads),
+            ),
+            setting(
+                strings.get("settings.download_limit"),
+                speed_limit(
+                    strings,
+                    settings.download_limit,
+                    TransferSetting::DownloadLimit,
+                    TransferSetting::DownloadUnit,
+                ),
+            ),
+            setting(
+                strings.get("settings.upload_limit"),
+                speed_limit(
+                    strings,
+                    settings.upload_limit,
+                    TransferSetting::UploadLimit,
+                    TransferSetting::UploadUnit,
+                ),
+            ),
+            hint(strings.get("settings.transfers.hint")),
+        ],
+    )
+}
+
+fn connections(app: &Hoplix) -> Element<'_, Message> {
+    let strings = &app.strings;
+    let settings = &app.settings;
+
+    let attempts: Vec<Choice<u32>> = (0..=MAX_RETRY_ATTEMPTS)
+        .map(|value| Choice {
+            value,
+            label: if value == 0 {
+                strings.get("settings.retries.off").to_string()
+            } else {
+                value.to_string()
+            },
+        })
+        .collect();
+    let selected_attempts = selected(&attempts, &settings.retry_attempts);
+
+    let delays: Vec<Choice<u32>> = (MIN_RETRY_DELAY..=MAX_RETRY_DELAY)
+        .map(|value| Choice {
+            value,
+            label: strings.format("settings.seconds", &[("count", &value.to_string())]),
+        })
+        .collect();
+    let selected_delay = selected(&delays, &settings.retry_delay);
+
+    section(
+        strings.get("settings.section.connections"),
+        vec![
+            setting(
+                strings.get("settings.retries"),
+                pick_list(attempts, selected_attempts, |choice| {
+                    Message::TransferSetting(TransferSetting::RetryAttempts(choice.value))
+                })
+                .width(PICKER_WIDTH)
+                .into(),
+            ),
+            setting(
+                strings.get("settings.retry_delay"),
+                pick_list(delays, selected_delay, |choice| {
+                    Message::TransferSetting(TransferSetting::RetryDelay(choice.value))
+                })
+                .width(PICKER_WIDTH)
+                .into(),
+            ),
+            checkbox_row(
+                checkbox(settings.auto_reconnect)
+                    .label(strings.get("settings.reconnect"))
+                    .on_toggle(|value| {
+                        Message::TransferSetting(TransferSetting::AutoReconnect(value))
+                    })
+                    .into(),
+            ),
+            hint(strings.get("settings.connections.hint")),
+        ],
+    )
+}
+
+fn passwords(app: &Hoplix) -> Element<'_, Message> {
+    let strings = &app.strings;
     let backends: Vec<Choice<SecretBackend>> = SecretBackend::ALL
         .into_iter()
         .map(|value| Choice {
@@ -79,10 +248,7 @@ pub fn view(app: &Hoplix) -> Element<'_, Message> {
                 .to_string(),
         })
         .collect();
-    let selected_backend = backends
-        .iter()
-        .find(|c| c.value == app.secret_backend)
-        .cloned();
+    let selected_backend = selected(&backends, &app.secret_backend);
     let mut secrets = row![
         pick_list(backends, selected_backend, |choice| {
             Message::SecretBackendSelected(choice.value)
@@ -98,73 +264,116 @@ pub fn view(app: &Hoplix) -> Element<'_, Message> {
                 .on_press(Message::ChangeMasterPassword),
         );
     }
+    section(
+        strings.get("settings.section.passwords"),
+        vec![
+            setting(strings.get("settings.secrets"), secrets.into()),
+            hint(strings.get("settings.secrets.hint")),
+        ],
+    )
+}
 
-    let content = column![
-        text(strings.get("settings.title")).size(24),
-        setting(
-            strings.get("settings.theme"),
-            pick_list(themes, selected_theme, |choice| Message::ThemeSelected(
-                choice.value
-            ))
-            .width(PICKER_WIDTH)
-            .into(),
-        ),
-        setting(
-            strings.get("settings.language"),
-            pick_list(languages, selected_language, |choice| {
-                Message::LanguageSelected(choice.value)
-            })
-            .width(PICKER_WIDTH)
-            .into(),
-        ),
-        setting(
-            strings.get("settings.layout"),
-            pick_list(layouts, selected_layout, |choice| Message::LayoutSelected(
-                choice.value
-            ))
-            .width(PICKER_WIDTH)
-            .into(),
-        ),
-        setting(
-            strings.get("settings.parallel_transfers"),
-            pick_list(
-                (1..=MAX_PARALLEL_TRANSFERS).collect::<Vec<usize>>(),
-                Some(app.settings.parallel_transfers),
-                Message::ParallelTransfersSelected
-            )
-            .width(PICKER_WIDTH)
-            .into(),
-        ),
-        setting(
-            strings.get("settings.editor"),
-            text_input(
-                strings.get("settings.editor.placeholder"),
-                &app.settings.editor
-            )
-            .on_input(|editor| Message::Edit(EditMessage::EditorEdited(editor)))
+fn editor(app: &Hoplix) -> Element<'_, Message> {
+    let strings = &app.strings;
+    section(
+        strings.get("settings.section.editor"),
+        vec![
+            setting(
+                strings.get("settings.editor"),
+                text_input(
+                    strings.get("settings.editor.placeholder"),
+                    &app.settings.editor,
+                )
+                .on_input(|editor| Message::Edit(EditMessage::EditorEdited(editor)))
+                .padding(6)
+                .width(PICKER_WIDTH)
+                .into(),
+            ),
+            checkbox_row(
+                checkbox(app.settings.upload_changes_automatically)
+                    .label(strings.get("settings.upload_changes"))
+                    .on_toggle(|value| {
+                        Message::Edit(EditMessage::UploadAutomaticallyToggled(value))
+                    })
+                    .into(),
+            ),
+            hint(strings.get("settings.editor.hint")),
+        ],
+    )
+}
+
+// Controls
+
+fn direction_picker<'a>(
+    strings: &'a Strings,
+    current: Option<usize>,
+    message: fn(Option<usize>) -> TransferSetting,
+) -> Element<'a, Message> {
+    let mut choices = vec![Choice {
+        value: None,
+        label: strings.get("settings.parallel.same").to_string(),
+    }];
+    choices.extend((1..=MAX_PARALLEL_TRANSFERS).map(|count| Choice {
+        value: Some(count),
+        label: count.to_string(),
+    }));
+    let current = selected(&choices, &current);
+    pick_list(choices, current, move |choice| {
+        Message::TransferSetting(message(choice.value))
+    })
+    .width(PICKER_WIDTH)
+    .into()
+}
+
+fn speed_limit<'a>(
+    strings: &'a Strings,
+    limit: SpeedLimit,
+    amount: fn(String) -> TransferSetting,
+    unit: fn(RateUnit) -> TransferSetting,
+) -> Element<'a, Message> {
+    let value = if limit.amount == 0 {
+        String::new()
+    } else {
+        limit.amount.to_string()
+    };
+    let units: Vec<Choice<RateUnit>> = RateUnit::ALL
+        .into_iter()
+        .map(|value| Choice {
+            value,
+            label: strings
+                .get(match value {
+                    RateUnit::KiB => "settings.unit.kib",
+                    RateUnit::MiB => "settings.unit.mib",
+                })
+                .to_string(),
+        })
+        .collect();
+    let current = selected(&units, &limit.unit);
+    row![
+        text_input(strings.get("settings.limit.unlimited"), &value)
+            .on_input(move |text| Message::TransferSetting(amount(text)))
             .padding(6)
-            .width(PICKER_WIDTH)
-            .into(),
-        ),
-        row![
-            Space::new().width(LABEL_WIDTH),
-            checkbox(app.settings.upload_changes_automatically)
-                .label(strings.get("settings.upload_changes"))
-                .on_toggle(|value| Message::Edit(EditMessage::UploadAutomaticallyToggled(value))),
-        ]
-        .spacing(12),
-        text(strings.get("settings.editor.hint")).size(13),
-        setting(strings.get("settings.secrets"), secrets.into()),
-        text(strings.get("settings.secrets.hint")).size(13),
+            .width(AMOUNT_WIDTH),
+        pick_list(units, current, move |choice| {
+            Message::TransferSetting(unit(choice.value))
+        })
+        .width(UNIT_WIDTH),
     ]
-    .spacing(16)
-    .max_width(780);
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
+}
 
-    container(content)
-        .padding(24)
-        .width(Length::Fill)
-        .center_x(Length::Fill)
-        .into()
+// Layout
+
+fn section<'a>(title: &'a str, rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    column![
+        text(title).size(18).style(text::primary),
+        rule::horizontal(1),
+        Column::with_children(rows).spacing(16),
+    ]
+    .spacing(12)
+    .into()
 }
 
 fn setting<'a>(label: &'a str, control: Element<'a, Message>) -> Element<'a, Message> {
@@ -172,4 +381,21 @@ fn setting<'a>(label: &'a str, control: Element<'a, Message>) -> Element<'a, Mes
         .spacing(12)
         .align_y(Alignment::Center)
         .into()
+}
+
+fn checkbox_row(control: Element<'_, Message>) -> Element<'_, Message> {
+    row![Space::new().width(LABEL_WIDTH), control]
+        .spacing(12)
+        .into()
+}
+
+fn hint(content: &str) -> Element<'_, Message> {
+    text(content).size(HINT_SIZE).into()
+}
+
+fn selected<T: Clone + PartialEq>(choices: &[Choice<T>], value: &T) -> Option<Choice<T>> {
+    choices
+        .iter()
+        .find(|choice| choice.value == *value)
+        .cloned()
 }

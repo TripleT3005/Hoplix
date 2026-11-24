@@ -2,6 +2,7 @@ use std::fmt;
 use std::future::Future;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -22,6 +23,18 @@ use crate::{BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Result};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(600);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+
+// Reconnecting
+
+static AUTO_RECONNECT: AtomicBool = AtomicBool::new(true);
+
+pub fn set_auto_reconnect(enabled: bool) {
+    AUTO_RECONNECT.store(enabled, Ordering::Relaxed);
+}
+
+pub fn auto_reconnect() -> bool {
+    AUTO_RECONNECT.load(Ordering::Relaxed)
+}
 
 // Types
 
@@ -132,6 +145,12 @@ impl SftpFileSystem {
     async fn current(&self) -> Result<Arc<Connection>> {
         let mut slot = self.connection.lock().await;
         if slot.handle.is_closed() {
+            if !auto_reconnect() {
+                return Err(Error::new(
+                    ErrorKind::ConnectionFailed,
+                    self.params.host.clone(),
+                ));
+            }
             *slot = Arc::new(self.reestablish().await?);
         }
         Ok(Arc::clone(&slot))
@@ -162,7 +181,7 @@ impl SftpFileSystem {
     {
         let connection = self.current().await?;
         match operation(Arc::clone(&connection)).await {
-            Err(error) if error.kind() == ErrorKind::ConnectionFailed => {
+            Err(error) if error.kind() == ErrorKind::ConnectionFailed && auto_reconnect() => {
                 let connection = self.reconnect(&connection).await?;
                 operation(connection).await
             }

@@ -233,7 +233,9 @@ fn job_row<'a>(app: &'a Hoplix, job: &'a JobSnapshot) -> Element<'a, Message> {
     }
     row![
         title,
-        text(details(strings, job)).size(12).width(DETAILS_WIDTH),
+        text(details(strings, job, app.transfers.retry_policy().attempts))
+            .size(12)
+            .width(DETAILS_WIDTH),
         container(buttons)
             .width(Length::Fixed(150.0))
             .align_x(Alignment::End),
@@ -243,7 +245,7 @@ fn job_row<'a>(app: &'a Hoplix, job: &'a JobSnapshot) -> Element<'a, Message> {
     .into()
 }
 
-fn details(strings: &Strings, job: &JobSnapshot) -> String {
+fn details(strings: &Strings, job: &JobSnapshot, retries: u32) -> String {
     let separator = strings.get("number.decimal_separator");
     let amount = match job.total {
         Some(total) => strings.format(
@@ -272,7 +274,7 @@ fn details(strings: &Strings, job: &JobSnapshot) -> String {
             "transfer.status.retrying",
             &[
                 ("attempt", &attempt.to_string()),
-                ("max", &hoplix_core::MAX_RETRIES.to_string()),
+                ("max", &retries.to_string()),
             ],
         ),
         JobStatus::WaitingForDecision => strings.get("transfer.status.waiting").to_string(),

@@ -23,6 +23,7 @@ use crate::session::{Offline, SavedTab, Session, TabOrigin, WindowState};
 use crate::settings::{Layout, Settings, ThemePreference};
 use crate::site_actions::PendingAction;
 use crate::site_form::{SiteField, SiteForm};
+use crate::transfer_settings::TransferSetting;
 use crate::transfers::{Drag, DropTarget, TransferAction, TransferTarget};
 use crate::{edits, opener, theme, title_bar, transfers, ui};
 
@@ -181,7 +182,7 @@ pub enum Message {
     },
     ConflictAnswered(ConflictDecision),
     ConflictApplyToAll(bool),
-    ParallelTransfersSelected(usize),
+    TransferSetting(TransferSetting),
     ModifiersChanged(Modifiers),
     DragEntered(DropTarget),
     DragLeft(DropTarget, Option<DropTarget>),
@@ -366,8 +367,7 @@ impl Hoplix {
         let strings = i18n::load(&i18n::resolve(settings.language.as_deref(), &languages));
         let mut app = Self::with_settings(settings, config_dir);
         app.services = services;
-        app.transfers
-            .set_parallelism(app.settings.parallel_transfers);
+        app.apply_transfer_settings();
         app.languages = languages;
         app.strings = strings;
         if let Some(directory) = &app.config_dir {
@@ -594,13 +594,13 @@ impl Hoplix {
             | Message::TransferTo { .. }
             | Message::ConflictAnswered(_)
             | Message::ConflictApplyToAll(_)
-            | Message::ParallelTransfersSelected(_)
             | Message::ModifiersChanged(_)
             | Message::DragEntered(_)
             | Message::DragLeft(..)
             | Message::CursorMoved(_)
             | Message::MouseReleased) => return self.update_transfers(message),
             Message::Edit(message) => return self.update_edits(message),
+            Message::TransferSetting(setting) => self.update_transfer_setting(setting),
             message => return self.update_sites(message),
         }
         Task::none()

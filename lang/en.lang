@@ -204,6 +204,26 @@ error.secret_storage = The system keyring is not available: {detail}
 
 # Transfers
 settings.parallel_transfers = Parallel transfers
+settings.section.general = General
+settings.section.transfers = Transfers
+settings.section.connections = Connections
+settings.section.passwords = Passwords
+settings.section.editor = Editing
+settings.parallel_downloads = Parallel downloads
+settings.parallel_uploads = Parallel uploads
+settings.parallel.same = Same as parallel transfers
+settings.download_limit = Download limit
+settings.upload_limit = Upload limit
+settings.limit.unlimited = Unlimited
+settings.unit.kib = KiB/s
+settings.unit.mib = MiB/s
+settings.transfers.hint = Parallel downloads and uploads never go beyond parallel transfers. A speed limit is shared by all running transfers of that direction; empty or 0 means no limit. A copy between two servers counts as a download and an upload, so both limits apply to it. Changes apply right away.
+settings.retries = Retries
+settings.retries.off = No retries
+settings.retry_delay = First retry after
+settings.seconds = {count} s
+settings.reconnect = Reconnect dropped SFTP sessions automatically
+settings.connections.hint = When a connection drops during a transfer, Hoplix waits and continues where it stopped; each wait is twice as long as the one before. Without automatic reconnecting, a dropped SFTP session stays closed until you connect again.
 operation.delete.many_title = Delete {count} items?
 transfer.title = Transfers
 transfer.copy_to = Copy to…

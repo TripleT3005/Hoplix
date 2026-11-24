@@ -73,7 +73,7 @@ fn a_master_password_moves_keyring_secrets_into_the_vault() {
     });
     harness.store_keyring_secret(&id, password());
     harness.click("Settings");
-    harness.pick("Saved passwords", 1);
+    harness.pick_of("Saved passwords", 1, 2);
     assert_eq!(master_mode(&harness), Some(MasterMode::Create));
     assert!(harness.has("Set a master password"));
 
@@ -180,7 +180,7 @@ fn the_master_password_can_be_changed() {
 fn switching_back_moves_secrets_into_the_keyring() {
     let (mut harness, id) = with_vault("vault-keyring");
     harness.click("Settings");
-    harness.pick("Saved passwords", 0);
+    harness.pick_of("Saved passwords", 0, 2);
     assert_eq!(master_mode(&harness), Some(MasterMode::Unlock));
     harness.type_text(master());
     harness.key(Named::Enter);

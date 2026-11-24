@@ -205,6 +205,26 @@ error.secret_storage = Der Schlüsselbund des Systems ist nicht verfügbar: {det
 
 # Transfers
 settings.parallel_transfers = Gleichzeitige Übertragungen
+settings.section.general = Allgemein
+settings.section.transfers = Übertragungen
+settings.section.connections = Verbindungen
+settings.section.passwords = Passwörter
+settings.section.editor = Bearbeiten
+settings.parallel_downloads = Gleichzeitige Downloads
+settings.parallel_uploads = Gleichzeitige Uploads
+settings.parallel.same = Wie gleichzeitige Übertragungen
+settings.download_limit = Download-Limit
+settings.upload_limit = Upload-Limit
+settings.limit.unlimited = Unbegrenzt
+settings.unit.kib = KiB/s
+settings.unit.mib = MiB/s
+settings.transfers.hint = Gleichzeitige Downloads und Uploads gehen nie über die gleichzeitigen Übertragungen hinaus. Ein Tempolimit gilt gemeinsam für alle laufenden Übertragungen dieser Richtung; leer oder 0 heißt unbegrenzt. Eine Kopie zwischen zwei Servern zählt als Download und als Upload, für sie gelten also beide Limits. Änderungen wirken sofort.
+settings.retries = Wiederholungen
+settings.retries.off = Keine Wiederholung
+settings.retry_delay = Erste Wiederholung nach
+settings.seconds = {count} s
+settings.reconnect = Abgebrochene SFTP-Sitzungen automatisch neu verbinden
+settings.connections.hint = Bricht eine Verbindung während einer Übertragung ab, wartet Hoplix und macht dort weiter, wo sie stehen geblieben ist; jede Wartezeit ist doppelt so lang wie die vorige. Ohne automatisches Neuverbinden bleibt eine abgebrochene SFTP-Sitzung geschlossen, bis du dich neu verbindest.
 operation.delete.many_title = {count} Einträge löschen?
 transfer.title = Übertragungen
 transfer.copy_to = Kopieren nach …
