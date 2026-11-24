@@ -346,6 +346,7 @@ fn damaged(path: &Path) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::test_password;
 
     const FAST: u32 = 1_000;
 
@@ -362,21 +363,23 @@ mod tests {
     #[test]
     fn secrets_survive_locking_and_unlocking() {
         let directory = temporary_directory("round-trip");
+        let password = test_password();
+        let secret: String = test_password().chars().chain(['ä', 'ö', '🔑']).collect();
         let mut vault =
-            Vault::create_with_iterations(&directory, "correct horse", FAST).expect("created");
-        vault.set("site/abc", "pässwörd 🔑").expect("stored");
+            Vault::create_with_iterations(&directory, &password, FAST).expect("created");
+        vault.set("site/abc", &secret).expect("stored");
         vault.set("site/def", "other").expect("stored");
         assert!(vault.delete("site/def").expect("deleted"));
         assert!(!vault.delete("site/def").expect("deleted twice"));
 
         let text = fs::read_to_string(Vault::path_in(&directory)).expect("file exists");
-        assert!(!text.contains("pässwörd") && !text.contains("correct horse"));
+        assert!(!text.contains(&secret) && !text.contains(&password));
         assert!(text.contains("iterations = 1000"));
 
-        let unlocked = Vault::unlock(&directory, "correct horse").expect("unlocked");
+        let unlocked = Vault::unlock(&directory, &password).expect("unlocked");
         assert_eq!(
             unlocked.get("site/abc").expect("readable").as_deref(),
-            Some("pässwörd 🔑")
+            Some(secret.as_str())
         );
         assert_eq!(unlocked.get("site/def").expect("readable"), None);
         assert_eq!(unlocked.names(), ["site/abc"]);
@@ -386,17 +389,30 @@ mod tests {
     #[test]
     fn wrong_passwords_are_refused() {
         let directory = temporary_directory("wrong");
-        Vault::create_with_iterations(&directory, "secret", FAST).expect("created");
-        let error = Vault::unlock(&directory, "Secret").expect_err("unlocked");
+        let password = test_password();
+        let mut characters = password.chars();
+        let variant: String = characters
+            .next()
+            .map(|first| first.to_ascii_uppercase())
+            .into_iter()
+            .chain(characters)
+            .collect();
+        assert_ne!(variant, password);
+        assert!(variant.eq_ignore_ascii_case(&password));
+        Vault::create_with_iterations(&directory, &password, FAST).expect("created");
+        let error = Vault::unlock(&directory, &variant).expect_err("unlocked");
         assert_eq!(error.kind(), ErrorKind::WrongMasterPassword);
-        assert!(Vault::create_with_iterations(&directory, "again", FAST).is_err());
+        assert!(Vault::create_with_iterations(&directory, &test_password(), FAST).is_err());
         assert_eq!(
-            Vault::unlock(&temporary_directory("missing"), "x")
+            Vault::unlock(&temporary_directory("missing"), &test_password())
                 .expect_err("opened")
                 .kind(),
             ErrorKind::NotFound
         );
-        assert!(Vault::create_with_iterations(&temporary_directory("empty"), "", FAST).is_err());
+        let empty = String::new();
+        assert!(
+            Vault::create_with_iterations(&temporary_directory("empty"), &empty, FAST).is_err()
+        );
         fs::remove_dir_all(directory).expect("cleaning up failed");
     }
 
@@ -405,7 +421,9 @@ mod tests {
     #[test]
     fn tampered_entries_are_detected() {
         let directory = temporary_directory("tamper");
-        let mut vault = Vault::create_with_iterations(&directory, "pw", FAST).expect("created");
+        let password = test_password();
+        let mut vault =
+            Vault::create_with_iterations(&directory, &password, FAST).expect("created");
         vault.set("site/a", "alpha").expect("stored");
         vault.set("site/b", "beta").expect("stored");
         let path = Vault::path_in(&directory);
@@ -433,7 +451,7 @@ mod tests {
             .replace(&value_b, &value_a)
             .replace("SWAP", &value_b);
         fs::write(&path, swapped).expect("writing failed");
-        let vault = Vault::unlock(&directory, "pw").expect("header intact");
+        let vault = Vault::unlock(&directory, &password).expect("header intact");
         assert!(vault.get("site/a").is_err());
 
         let mut flipped = value_a.clone().into_bytes();
@@ -441,7 +459,7 @@ mod tests {
         flipped[last] = if flipped[last] == b'0' { b'1' } else { b'0' };
         let flipped = String::from_utf8(flipped).expect("ascii");
         fs::write(&path, original.replace(&value_a, &flipped)).expect("writing failed");
-        let vault = Vault::unlock(&directory, "pw").expect("header intact");
+        let vault = Vault::unlock(&directory, &password).expect("header intact");
         assert!(vault.get("site/a").is_err());
         assert_eq!(
             vault.get("site/b").expect("intact").as_deref(),
@@ -454,12 +472,16 @@ mod tests {
         )
         .expect("writing failed");
         assert_eq!(
-            Vault::unlock(&directory, "pw").expect_err("opened").kind(),
+            Vault::unlock(&directory, &password)
+                .expect_err("opened")
+                .kind(),
             ErrorKind::WrongMasterPassword
         );
         fs::write(&path, "format = something-else\n").expect("writing failed");
         assert_eq!(
-            Vault::unlock(&directory, "pw").expect_err("opened").kind(),
+            Vault::unlock(&directory, &password)
+                .expect_err("opened")
+                .kind(),
             ErrorKind::Other
         );
         fs::remove_dir_all(directory).expect("cleaning up failed");
@@ -470,21 +492,24 @@ mod tests {
     #[test]
     fn changing_the_password_keeps_the_secrets() {
         let directory = temporary_directory("change");
-        let mut vault = Vault::create_with_iterations(&directory, "old", FAST).expect("created");
+        let old = test_password();
+        let new = test_password();
+        let mut vault = Vault::create_with_iterations(&directory, &old, FAST).expect("created");
         vault.set("site/a", "alpha").expect("stored");
-        vault.change_password("new").expect("changed");
+        vault.change_password(&new).expect("changed");
         assert_eq!(
-            Vault::unlock(&directory, "old")
+            Vault::unlock(&directory, &old)
                 .expect_err("old works")
                 .kind(),
             ErrorKind::WrongMasterPassword
         );
-        let mut vault = Vault::unlock(&directory, "new").expect("new works");
+        let mut vault = Vault::unlock(&directory, &new).expect("new works");
         assert_eq!(
             vault.get("site/a").expect("readable").as_deref(),
             Some("alpha")
         );
-        assert!(vault.change_password("").is_err());
+        let empty = String::new();
+        assert!(vault.change_password(&empty).is_err());
 
         vault.set("site/b", "beta").expect("stored");
         assert_eq!(vault.retain(|name| name == "site/b").expect("pruned"), 1);

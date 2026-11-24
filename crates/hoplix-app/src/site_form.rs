@@ -138,6 +138,7 @@ impl SiteForm {
 mod tests {
     use super::*;
     use crate::connect_form::AuthMethod;
+    use crate::ui_tests::test_password;
     use hoplix_core::{Protocol, SiteAuth};
 
     fn site() -> Site {
@@ -163,11 +164,12 @@ mod tests {
 
         form.apply(SiteField::Name("  Web 2 ".to_string()));
         form.apply(SiteField::Folder(" Work / Clients ".to_string()));
-        form.apply(SiteField::Connection(Field::Password("pw".to_string())));
+        let password = test_password();
+        form.apply(SiteField::Connection(Field::Password(password.clone())));
         let (saved, secret) = form.to_site().expect("valid");
         assert_eq!(saved.name, "Web 2");
         assert_eq!(saved.folder, "Work/Clients");
-        assert_eq!(secret.as_deref(), Some("pw"));
+        assert_eq!(secret, Some(password));
     }
 
     #[test]
@@ -182,13 +184,12 @@ mod tests {
         form.apply(SiteField::Connection(Field::KeyPath(
             "\"C:\\id\"".to_string(),
         )));
-        form.apply(SiteField::Connection(Field::Passphrase(
-            "phrase".to_string(),
-        )));
+        let passphrase = test_password();
+        form.apply(SiteField::Connection(Field::Passphrase(passphrase.clone())));
         let (saved, secret) = form.to_site().expect("valid");
         assert_eq!(saved.auth, SiteAuth::KeyFile);
         assert_eq!(saved.key_path, "C:\\id");
-        assert_eq!(secret.as_deref(), Some("phrase"));
+        assert_eq!(secret, Some(passphrase));
     }
 
     #[test]
@@ -210,7 +211,8 @@ mod tests {
         connection.apply(Field::Protocol(Protocol::FtpsExplicit));
         connection.apply(Field::Host("ftp.example.test".to_string()));
         connection.apply(Field::Username("demo".to_string()));
-        connection.apply(Field::Password("pw".to_string()));
+        let password = test_password();
+        connection.apply(Field::Password(password.clone()));
         connection.apply(Field::SavePassword(true));
         let target = Site::new("ftp.example.test");
         let form = SiteForm::from_connection(&target, &connection);
@@ -219,6 +221,6 @@ mod tests {
         assert_eq!(saved.protocol, Protocol::FtpsExplicit);
         assert_eq!(saved.port, 21);
         assert!(saved.save_secrets);
-        assert_eq!(secret.as_deref(), Some("pw"));
+        assert_eq!(secret, Some(password));
     }
 }

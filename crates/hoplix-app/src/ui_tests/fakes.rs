@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use hoplix_core::{
@@ -8,12 +8,16 @@ use hoplix_core::{
     LocalFileSystem, Protocol, Reader, Result, TrustStore, Writer,
 };
 
+use super::test_password;
 use crate::app::Connector;
 use crate::edits::Opener;
 
-// Constants
+// Credentials
 
-pub const PASSWORD: &str = "secret";
+pub fn password() -> &'static str {
+    static PASSWORD: OnceLock<String> = OnceLock::new();
+    PASSWORD.get_or_init(test_password)
+}
 
 // Local file system
 
@@ -168,7 +172,7 @@ fn connect(
         }
     }
     let accepted = match &params.authentication {
-        Authentication::Password(password) => password == PASSWORD,
+        Authentication::Password(offered) => offered == password(),
         Authentication::KeyFile { path, .. } => path.is_file(),
     };
     if !accepted {

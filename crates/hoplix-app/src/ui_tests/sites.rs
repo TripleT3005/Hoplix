@@ -1,7 +1,7 @@
 use hoplix_core::{Site, SiteList};
 use iced::keyboard::key::Named;
 
-use super::fakes::{PASSWORD, fingerprint};
+use super::fakes::{fingerprint, password};
 use super::*;
 use crate::app::{Dialog, LoadState, Page, SiteSelection};
 use crate::session::{SavedTab, Session, TabOrigin};
@@ -148,7 +148,7 @@ fn double_clicking_a_site_without_password_opens_the_connect_page() {
     assert!(harness.app.connect_form.password.is_empty());
     assert!(!harness.has("Save as site"));
     assert!(harness.has("Save password"));
-    harness.fill("Password", PASSWORD);
+    harness.fill("Password", password());
     harness.key(Named::Enter);
     assert_eq!(harness.app.page, Page::Browser);
     let tab = harness.tab();
@@ -161,13 +161,13 @@ fn double_clicking_a_site_without_password_opens_the_connect_page() {
 fn saved_passwords_connect_directly() {
     let mut harness = sites_page("save-connect", vec![site("Web", "")]);
     harness.click("Web");
-    harness.fill("Password", PASSWORD);
+    harness.fill("Password", password());
     harness.click("Save password");
     harness.click("Save and connect");
     assert_eq!(harness.app.page, Page::Browser);
     let id = stored(&harness)[0].id.clone();
     assert!(stored(&harness)[0].save_secrets);
-    assert_eq!(harness.keyring_secret(&id).as_deref(), Some(PASSWORD));
+    assert_eq!(harness.keyring_secret(&id).as_deref(), Some(password()));
 
     harness.click("Sites");
     harness.double_click("Web");
@@ -239,7 +239,7 @@ fn restored_site_tabs_reconnect_in_place() {
     assert!(harness.has("Not connected. Hoplix does not reconnect on its own after a restart."));
     harness.click_nth("Connect", 1);
     assert_eq!(harness.app.page, Page::Connect);
-    harness.fill("Password", PASSWORD);
+    harness.fill("Password", password());
     harness.key(Named::Enter);
     assert_eq!(harness.app.page, Page::Browser);
     assert_eq!(harness.app.panes[0].tabs.len(), 2);

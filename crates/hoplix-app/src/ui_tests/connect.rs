@@ -1,7 +1,7 @@
 use hoplix_core::Protocol;
 use iced::keyboard::key::Named;
 
-use super::fakes::{PASSWORD, fingerprint};
+use super::fakes::{fingerprint, password};
 use super::*;
 use crate::app::{Dialog, Page};
 use crate::connect_form::AuthMethod;
@@ -116,7 +116,7 @@ fn switching_protocols_changes_the_fields() {
 #[test]
 fn unknown_host_keys_can_be_trusted_once() {
     let mut harness = connect_page("trust-once");
-    fill_login(&mut harness, PASSWORD);
+    fill_login(&mut harness, password());
     harness.key(Named::Enter);
     assert_eq!(
         harness.app.dialog,
@@ -139,14 +139,14 @@ fn unknown_host_keys_can_be_trusted_once() {
 #[test]
 fn always_trusted_host_keys_are_remembered() {
     let mut harness = connect_page("trust-always");
-    fill_login(&mut harness, PASSWORD);
+    fill_login(&mut harness, password());
     harness.click("Connect");
     harness.click("Always trust");
     assert_eq!(remote_tabs(&harness), 1);
     assert!(known_hosts(&harness).contains(&fingerprint(HOST)));
 
     harness.click("Connect");
-    harness.fill("Password", PASSWORD);
+    harness.fill("Password", password());
     harness.click("Connect");
     assert!(harness.app.dialog.is_none());
     assert_eq!(remote_tabs(&harness), 2);
@@ -155,7 +155,7 @@ fn always_trusted_host_keys_are_remembered() {
 #[test]
 fn rejected_host_keys_do_not_connect() {
     let mut harness = connect_page("trust-reject");
-    fill_login(&mut harness, PASSWORD);
+    fill_login(&mut harness, password());
     harness.click("Connect");
     harness.click("Cancel");
     assert!(harness.app.dialog.is_none());
@@ -179,7 +179,7 @@ fn changed_host_keys_are_refused() {
         )
         .expect("writing failed");
     });
-    fill_login(&mut harness, PASSWORD);
+    fill_login(&mut harness, password());
     harness.click("Connect");
     assert!(harness.app.dialog.is_none());
     assert!(harness.contains("Warning: the server key has changed"));
@@ -191,7 +191,7 @@ fn changed_host_keys_are_refused() {
 fn untrusted_certificates_ask_before_connecting() {
     let mut harness = connect_page("certificate");
     harness.pick("Protocol", 2);
-    fill_login(&mut harness, PASSWORD);
+    fill_login(&mut harness, password());
     harness.click("Connect");
     assert!(harness.has("Untrusted certificate"));
     assert!(matches!(
@@ -217,11 +217,11 @@ fn wrong_passwords_show_an_error() {
         )
         .expect("writing failed");
     });
-    fill_login(&mut harness, "wrong");
+    fill_login(&mut harness, &test_password());
     harness.click("Connect");
     assert!(harness.contains("Sign-in failed for demo@files.example.test"));
     assert_eq!(remote_tabs(&harness), 0);
-    harness.fill("Password", PASSWORD);
+    harness.fill("Password", password());
     harness.click("Connect");
     assert_eq!(remote_tabs(&harness), 1);
     assert!(harness.app.connect_form.error.is_none());
@@ -231,7 +231,7 @@ fn wrong_passwords_show_an_error() {
 fn plain_ftp_connects_without_a_prompt() {
     let mut harness = connect_page("ftp");
     harness.pick("Protocol", 1);
-    fill_login(&mut harness, PASSWORD);
+    fill_login(&mut harness, password());
     harness.click("Connect");
     assert!(harness.app.dialog.is_none());
     assert_eq!(remote_tabs(&harness), 1);

@@ -14,6 +14,9 @@ mod sites;
 mod sync;
 mod transfer;
 
+#[cfg(test)]
+mod test_support;
+
 pub use certificates::certificate_fingerprint;
 pub use connection::{Authentication, ConnectionParams, HostKeyTrust, Protocol, connect};
 pub use entry::{Entry, EntryKind, SortKey, SortOrder, compare_names, sort_entries};

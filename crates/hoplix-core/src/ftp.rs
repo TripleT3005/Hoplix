@@ -717,6 +717,7 @@ fn ftp_error(error: &FtpError, path: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::test_password;
     use suppaftp::types::Response;
 
     fn names(
@@ -957,7 +958,7 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: server.port,
             username: "test".to_string(),
-            authentication: Authentication::Password("test".to_string()),
+            authentication: Authentication::Password(test_password()),
         };
         let certificates = std::env::temp_dir().join("hoplix-mock-certificates");
         let file_system = FtpFileSystem::connect(&params, &certificates, None)
