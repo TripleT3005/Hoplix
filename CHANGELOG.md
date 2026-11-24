@@ -2,6 +2,52 @@
 
 All notable changes are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.0] – 2026-11-24
+
+### English
+
+#### Added
+
+- Update check: Hoplix looks for a new version once a day in the background (can be switched off in *Settings → Updates*), or right away with *Check now*. Nothing is downloaded or installed.
+- When a new version is available, Hoplix tells you once and keeps a small link to the release page in the status bar until you have installed it.
+- Separate limits for parallel downloads and uploads next to the overall limit; a copy between two servers counts as both.
+- Download and upload speed limits in KiB/s or MiB/s, shared by all running transfers of that direction and applied right away.
+- Adjustable retries after a dropped connection (0 to 10, default 3) and first retry delay (1 to 60 seconds, doubling).
+- Option to switch off automatic reconnecting of dropped SFTP sessions.
+- `hoplix-cli`: `--retries`, `--retry-delay`, `--limit-download` and `--limit-upload` for `get`, `put`, `cp` and `sync`.
+
+#### Changed
+
+- The settings page is grouped into General, Transfers, Connections, Passwords, Editing and Updates and scrolls in small windows.
+- The editor setting accepts a command line with arguments, for example `code --wait %1`; `%1` stands for the file, otherwise the file is added at the end.
+- An active comparison follows the active tab: switching, opening or closing tabs compares the newly active tab, and the comparison ends when no second tab is left.
+
+#### Fixed
+
+- Temporary edit folders left behind after a crash are removed the next time Hoplix starts.
+
+### Deutsch
+
+#### Neu
+
+- Update-Prüfung: Hoplix sucht einmal am Tag im Hintergrund nach einer neuen Version (abschaltbar unter *Einstellungen → Updates*) oder sofort mit *Jetzt prüfen*. Es wird nichts heruntergeladen oder installiert.
+- Gibt es eine neue Version, weist Hoplix einmal darauf hin und zeigt danach einen kleinen Link zur Release-Seite in der Statusleiste, bis sie installiert ist.
+- Eigene Grenzen für gleichzeitige Downloads und Uploads neben der Gesamtgrenze; eine Kopie zwischen zwei Servern zählt für beide.
+- Tempolimits für Downloads und Uploads in KiB/s oder MiB/s, gemeinsam für alle laufenden Übertragungen einer Richtung und sofort wirksam.
+- Einstellbare Wiederholungen nach einem Verbindungsabbruch (0 bis 10, Standard 3) und erste Wartezeit (1 bis 60 Sekunden, jede weitere doppelt so lang).
+- Automatisches Neuverbinden abgebrochener SFTP-Sitzungen lässt sich abschalten.
+- `hoplix-cli`: `--retries`, `--retry-delay`, `--limit-download` und `--limit-upload` für `get`, `put`, `cp` und `sync`.
+
+#### Geändert
+
+- Die Einstellungsseite ist in Allgemein, Übertragungen, Verbindungen, Passwörter, Bearbeiten und Updates gegliedert und scrollt bei kleinen Fenstern.
+- Die Editor-Einstellung nimmt eine Befehlszeile mit Argumenten, zum Beispiel `code --wait %1`; `%1` steht für die Datei, sonst wird die Datei am Ende angehängt.
+- Ein laufender Vergleich folgt dem aktiven Tab: Wechseln, Öffnen oder Schließen von Tabs vergleicht den neu aktiven Tab, und der Vergleich endet, wenn kein zweiter Tab mehr übrig ist.
+
+#### Behoben
+
+- Nach einem Absturz zurückgebliebene temporäre Bearbeitungsordner werden beim nächsten Start gelöscht.
+
 ## [0.2.1] – 2026-11-24
 
 ### English
