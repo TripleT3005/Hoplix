@@ -395,6 +395,42 @@ impl Hoplix {
         Task::none()
     }
 
+    pub(crate) fn active_tabs(&self) -> Vec<Option<TabId>> {
+        self.panes
+            .iter()
+            .map(|pane| pane.active_tab().map(|tab| tab.id))
+            .collect()
+    }
+
+    pub(crate) fn follow_active_tabs(&mut self, before: &[Option<TabId>]) -> Task<Message> {
+        let Some(comparison) = &self.compare.comparison else {
+            return Task::none();
+        };
+        let original = (comparison.left, comparison.right);
+        let (mut left, mut right) = original;
+        for (previous, current) in before.iter().zip(self.active_tabs()) {
+            let (Some(previous), Some(current)) = (*previous, current) else {
+                continue;
+            };
+            if previous == current || current == left || current == right {
+                continue;
+            }
+            if previous == left {
+                left = current;
+            } else if previous == right {
+                right = current;
+            }
+        }
+        if left == right || self.tab_by_id(left).is_none() || self.tab_by_id(right).is_none() {
+            self.compare.comparison = None;
+            return Task::none();
+        }
+        if (left, right) == original {
+            return Task::none();
+        }
+        self.start_comparison(left, right)
+    }
+
     fn recompare(&mut self) -> Task<Message> {
         let Some(comparison) = &self.compare.comparison else {
             return Task::none();

@@ -472,6 +472,12 @@ impl Hoplix {
     // Update
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let active = self.active_tabs();
+        let task = self.handle(message);
+        Task::batch([task, self.follow_active_tabs(&active)])
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SystemThemeChanged(mode) => {
                 self.system_mode = mode;
