@@ -65,6 +65,7 @@ Source: "{#BinaryDir}\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinaryDir}\{#CliExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\lang\*.lang"; DestDir: "{app}\lang"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD-PARTY-LICENSES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 

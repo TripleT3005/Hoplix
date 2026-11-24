@@ -39,6 +39,9 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
       - name: Check formatting
         run: cargo fmt --all --check
 
