@@ -437,7 +437,8 @@ mod tests {
         use crate::route_form::{JumpField, ProxyField};
         use hoplix_core::ProxyKind;
 
-        let mut form = filled("");
+        let empty = String::new();
+        let mut form = filled(&empty);
         form.apply(Field::Method(AuthMethod::Agent));
         assert_eq!(
             form.to_params().map(|params| params.authentication),
