@@ -69,11 +69,18 @@ pub enum ConflictPolicy {
     Rename,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct JobOptions {
     pub policy: Option<ConflictPolicy>,
     pub keep_modified: bool,
     pub modified: Option<SystemTime>,
+    pub site_limits: Vec<SiteLimit>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteLimit {
+    pub site: String,
+    pub max: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,6 +267,15 @@ impl Parallelism {
     }
 }
 
+impl SiteLimit {
+    pub fn new(site: &str, max: usize) -> Self {
+        Self {
+            site: site.to_string(),
+            max: max.max(1),
+        }
+    }
+}
+
 impl Default for Parallelism {
     fn default() -> Self {
         Self::new(DEFAULT_PARALLELISM)
@@ -279,6 +295,22 @@ impl Default for RetryPolicy {
             attempts: DEFAULT_RETRIES,
             delay: DEFAULT_RETRY_DELAY,
         }
+    }
+}
+
+// Jobs
+
+impl Job {
+    fn sites(&self) -> Vec<&str> {
+        let mut sites: Vec<&str> = self
+            .options
+            .site_limits
+            .iter()
+            .map(|limit| limit.site.as_str())
+            .collect();
+        sites.sort_unstable();
+        sites.dedup();
+        sites
     }
 }
 
@@ -629,6 +661,12 @@ impl TransferQueue {
             downloads += usize::from(job.direction.downloads());
             uploads += usize::from(job.direction.uploads());
         }
+        let mut per_site: HashMap<String, usize> = HashMap::new();
+        for job in state.jobs.iter().filter(|job| job.active) {
+            for site in job.sites() {
+                *per_site.entry(site.to_string()).or_default() += 1;
+            }
+        }
         let mut started = Vec::new();
         for job in &mut state.jobs {
             if running >= parallelism.total {
@@ -642,6 +680,14 @@ impl TransferQueue {
                 || (direction.uploads() && uploads >= parallelism.upload_limit())
             {
                 continue;
+            }
+            if job.options.site_limits.iter().any(|limit| {
+                per_site.get(&limit.site).copied().unwrap_or_default() >= limit.max.max(1)
+            }) {
+                continue;
+            }
+            for site in job.sites() {
+                *per_site.entry(site.to_string()).or_default() += 1;
             }
             downloads += usize::from(direction.downloads());
             uploads += usize::from(direction.uploads());
@@ -839,7 +885,9 @@ impl TransferQueue {
             };
             match result {
                 Ok(Outcome::Completed) => {
-                    let options = self.with_job(id, |job| job.options).unwrap_or_default();
+                    let options = self
+                        .with_job(id, |job| job.options.clone())
+                        .unwrap_or_default();
                     if let Some(time) = modified
                         .or(options.modified)
                         .filter(|_| options.keep_modified)
@@ -1849,6 +1897,76 @@ mod tests {
                 .all(|status| *status == JobStatus::Completed)
         );
         std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn site_limits_cap_running_jobs_per_site() {
+        let directory = temporary_directory("site-limits");
+        let queue = TransferQueue::new(6);
+        let mut events = start(&queue);
+        let alpha = SiteLimit::new("alpha", 1);
+        let beta = SiteLimit::new("beta", 2);
+        let plans: Vec<(Pair, Vec<SiteLimit>)> = vec![
+            ((slow(true, 1), local()), vec![alpha.clone()]),
+            ((slow(true, 1), local()), vec![alpha.clone()]),
+            ((slow(true, 1), local()), vec![beta.clone()]),
+            ((slow(true, 1), local()), vec![beta.clone()]),
+            ((slow(true, 1), local()), vec![beta.clone()]),
+            ((slow(true, 1), remote()), vec![alpha.clone(), beta.clone()]),
+            ((slow(true, 1), local()), Vec::new()),
+        ];
+        let mut sites: HashMap<JobId, Vec<String>> = HashMap::new();
+        for (index, ((source, target), limits)) in plans.iter().enumerate() {
+            let file = directory.join(format!("file{index}.bin"));
+            std::fs::write(&file, content(40 * 1024)).expect("writing failed");
+            let folder = directory.join(format!("target{index}"));
+            std::fs::create_dir_all(&folder).expect("creating failed");
+            let id = queue.add_with(
+                request(Arc::clone(source), &file, Arc::clone(target), &folder),
+                JobOptions {
+                    site_limits: limits.clone(),
+                    ..JobOptions::default()
+                },
+            );
+            sites.insert(id, limits.iter().map(|limit| limit.site.clone()).collect());
+        }
+        let mut statuses: HashMap<JobId, JobStatus> = HashMap::new();
+        let mut peaks: HashMap<String, usize> = HashMap::new();
+        let mut total = 0;
+        while statuses.len() < plans.len() || !statuses.values().all(JobStatus::is_finished) {
+            if let TransferEvent::Updated(snapshot) = wait_until(&mut events, |_| true).await {
+                statuses.insert(snapshot.id, snapshot.status);
+                let active: Vec<JobId> = statuses
+                    .iter()
+                    .filter(|(_, status)| status.is_active())
+                    .map(|(id, _)| *id)
+                    .collect();
+                total = total.max(active.len());
+                for site in ["alpha", "beta"] {
+                    let count = active
+                        .iter()
+                        .filter(|id| sites[*id].iter().any(|name| name == site))
+                        .count();
+                    let peak = peaks.entry(site.to_string()).or_default();
+                    *peak = (*peak).max(count);
+                }
+            }
+        }
+        assert_eq!(peaks["alpha"], 1);
+        assert_eq!(peaks["beta"], 2);
+        assert!(total >= 3, "unlimited jobs should run next to limited ones");
+        assert!(
+            statuses
+                .values()
+                .all(|status| *status == JobStatus::Completed)
+        );
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[test]
+    fn site_limits_are_at_least_one() {
+        assert_eq!(SiteLimit::new("a", 0).max, 1);
+        assert_eq!(SiteLimit::new("a", 3).max, 3);
     }
 
     #[tokio::test(flavor = "multi_thread")]

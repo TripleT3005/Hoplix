@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use crate::{
-    ConflictPolicy, Entry, ErrorKind, FileSystem, JobId, JobOptions, Result, TransferQueue,
-    TransferRequest, compare_names,
+    ConflictPolicy, Entry, ErrorKind, FileSystem, JobId, JobOptions, Result, SiteLimit,
+    TransferQueue, TransferRequest, compare_names,
 };
 
 // Constants
@@ -625,6 +625,16 @@ pub async fn execute_plan(
     right: &SyncEndpoint,
     queue: &TransferQueue,
 ) -> Result<Vec<JobId>> {
+    execute_plan_with(plan, left, right, queue, &[]).await
+}
+
+pub async fn execute_plan_with(
+    plan: &SyncPlan,
+    left: &SyncEndpoint,
+    right: &SyncEndpoint,
+    queue: &TransferQueue,
+    site_limits: &[SiteLimit],
+) -> Result<Vec<JobId>> {
     let endpoint = |side: Side| match side {
         Side::Left => left,
         Side::Right => right,
@@ -691,6 +701,7 @@ pub async fn execute_plan(
                         policy: Some(ConflictPolicy::Overwrite),
                         keep_modified: true,
                         modified: *modified,
+                        site_limits: site_limits.to_vec(),
                     },
                 ));
             }

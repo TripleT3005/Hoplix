@@ -51,10 +51,10 @@ pub use sites::{
 pub use sync::{
     CompareOptions, CompareStatus, ComparedEntry, DEFAULT_TIME_TOLERANCE, Pattern, Side,
     SyncAction, SyncDirection, SyncEndpoint, SyncMode, SyncOptions, SyncPlan, SyncSummary,
-    build_plan, compare, compare_entries, execute_plan, plan, refine,
+    build_plan, compare, compare_entries, execute_plan, execute_plan_with, plan, refine,
 };
 pub use transfer::{
     Conflict, ConflictDecision, ConflictPolicy, DEFAULT_PARALLELISM, DEFAULT_RETRIES,
     DEFAULT_RETRY_DELAY, JobId, JobOptions, JobSnapshot, JobStatus, Parallelism, RetryPolicy,
-    SpeedLimits, TransferDirection, TransferEvent, TransferQueue, TransferRequest,
+    SiteLimit, SpeedLimits, TransferDirection, TransferEvent, TransferQueue, TransferRequest,
 };
