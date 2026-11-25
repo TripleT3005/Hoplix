@@ -301,7 +301,7 @@ where
     let status = http_status(&header)?;
     match status {
         200..=299 => Ok(()),
-        407 => Err(Error::new(
+        401 | 407 => Err(Error::new(
             ErrorKind::AuthenticationFailed,
             if credentials.is_some() {
                 "the proxy rejected the user name or password"
@@ -638,6 +638,7 @@ mod tests {
                 "407 Proxy Authentication Required",
                 ErrorKind::AuthenticationFailed,
             ),
+            ("401 Unauthorized", ErrorKind::AuthenticationFailed),
             ("403 Forbidden", ErrorKind::ConnectionFailed),
         ] {
             let (mut client, mut server) = duplex(4096);

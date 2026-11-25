@@ -54,16 +54,13 @@ pub(crate) async fn authenticate<H: Handler>(
     user: &str,
     label: &str,
 ) -> Result<()> {
-    let agents = agents().await;
-    if agents.is_empty() {
-        return Err(Error::new(
-            ErrorKind::AuthenticationFailed,
-            format!("{label}: no SSH agent is running"),
-        ));
-    }
+    let mut answered = 0;
     let mut offered = 0;
-    for mut agent in agents {
-        let identities = agent.request_identities().await.unwrap_or_default();
+    for mut agent in agents().await {
+        let Ok(identities) = agent.request_identities().await else {
+            continue;
+        };
+        answered += 1;
         for identity in identities {
             offered += 1;
             let hash = if identity.public_key().algorithm().is_rsa() {
@@ -102,7 +99,9 @@ pub(crate) async fn authenticate<H: Handler>(
             }
         }
     }
-    let detail = if offered == 0 {
+    let detail = if answered == 0 {
+        format!("{label}: no SSH agent is running")
+    } else if offered == 0 {
         format!("{label}: the SSH agent holds no keys")
     } else {
         format!("{label}: the server accepted none of the {offered} keys from the SSH agent")
