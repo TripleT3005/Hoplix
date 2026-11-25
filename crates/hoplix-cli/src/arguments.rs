@@ -482,7 +482,8 @@ Options:
   --trusted-certificates <file>
                             Use this certificate trust file instead of the Hoplix one
 
-Jump host and proxy (they apply to all servers of the command):
+Jump host and proxy (they apply to all servers of the command and replace
+the jump host and proxy saved with a site):
   --jump <user@host[:port]> Connect to the SFTP server through this SSH jump host
   --jump-key <file>         Sign in to the jump host with this private key file
   --jump-passphrase-env <name>
