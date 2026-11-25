@@ -91,7 +91,7 @@ pub(crate) async fn authenticate<H: Handler>(
                     return Err(Error::new(
                         ErrorKind::AuthenticationFailed,
                         format!(
-                            "{label}: the server closed the connection after {offered} keys from the SSH agent"
+                            "{label}: the server closed the connection ({offered} keys from the SSH agent tried)"
                         ),
                     ));
                 }
@@ -104,7 +104,7 @@ pub(crate) async fn authenticate<H: Handler>(
     } else if offered == 0 {
         format!("{label}: the SSH agent holds no keys")
     } else {
-        format!("{label}: the server accepted none of the {offered} keys from the SSH agent")
+        format!("{label}: the server accepted no key from the SSH agent ({offered} tried)")
     };
     Err(Error::new(ErrorKind::AuthenticationFailed, detail))
 }
