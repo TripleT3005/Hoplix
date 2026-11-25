@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use hoplix_core::{
-    Error, ErrorKind, FileSystem, SecretBackend, Site, change_master_password, create_vault,
-    move_to_keyring, move_to_vault, secret_name, site_id_of, unlock_vault,
+    Error, ErrorKind, FileSystem, SecretBackend, SecretSlot, Site, change_master_password,
+    create_vault, jump_secret_name, move_to_keyring, move_to_vault, proxy_secret_name, secret_name,
+    site_id_of, unlock_vault,
 };
 use iced::Task;
 
 use crate::app::{Dialog, Hoplix, MasterMode, Message, Page, SiteSelection};
-use crate::connect_form::AuthMethod;
 use crate::session::TabOrigin;
 use crate::site_exchange::ExportDialog;
 use crate::site_form::SiteForm;
@@ -17,12 +17,18 @@ use crate::ui;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
-    Connect(String),
-    StoreSecret { site: String, secret: String },
+    Connect { site: String, names: Vec<String> },
+    StoreSecret { name: String, secret: String },
     StoreSecrets(Vec<(String, String)>),
     Export(Box<ExportDialog>),
     SwitchToKeyring,
     ChangePassword,
+}
+
+struct SecretUse {
+    save: bool,
+    secret: String,
+    from_store: bool,
 }
 
 // Messages
@@ -100,7 +106,7 @@ impl Hoplix {
                 };
             }
             Message::SiteConnect(id) => return self.connect_site(&id),
-            Message::SecretLoaded(id, result) => return self.finish_secret_load(&id, result),
+            Message::SecretsLoaded(id, result) => return self.finish_secret_load(&id, result),
             Message::SecretSaved(Err(error)) => self.report_secret_error(&error),
             Message::ConnectSaveAsSite => {
                 let host = self.connect_form.host.trim();
@@ -281,16 +287,16 @@ impl Hoplix {
         if let Err(error) = vault.retain(|name| {
             site_id_of(name)
                 .and_then(|id| sites.get(id))
-                .is_some_and(|site| site.save_secrets)
+                .is_some_and(|site| site.saved_secret_names().iter().any(|saved| saved == name))
         }) {
             self.report_secret_error(&error);
         }
         self.vault = Some(vault);
         self.dialog = None;
         match self.pending.take() {
-            Some(PendingAction::Connect(id)) => self.load_secret(&id),
-            Some(PendingAction::StoreSecret { site, secret }) => {
-                self.store_secret(&site, Some(secret))
+            Some(PendingAction::Connect { site, names }) => self.load_secrets(&site, names),
+            Some(PendingAction::StoreSecret { name, secret }) => {
+                self.store_secret(name, Some(secret))
             }
             Some(PendingAction::StoreSecrets(secrets)) => self.store_secrets(secrets),
             Some(PendingAction::Export(mut dialog)) => {
@@ -341,15 +347,13 @@ impl Hoplix {
         self.sites
             .sites
             .iter()
-            .filter(|site| site.save_secrets)
-            .map(|site| secret_name(&site.id))
+            .flat_map(Site::saved_secret_names)
             .collect()
     }
 
     // Secrets
 
-    pub(crate) fn store_secret(&mut self, site: &str, secret: Option<String>) -> Task<Message> {
-        let name = secret_name(site);
+    pub(crate) fn store_secret(&mut self, name: String, secret: Option<String>) -> Task<Message> {
         let keyring = self.services.keyring.clone();
         match self.secret_backend {
             SecretBackend::Keyring => Task::perform(
@@ -374,10 +378,7 @@ impl Hoplix {
                 }
                 (None, None) => Task::none(),
                 (None, Some(secret)) => {
-                    self.pending = Some(PendingAction::StoreSecret {
-                        site: site.to_string(),
-                        secret,
-                    });
+                    self.pending = Some(PendingAction::StoreSecret { name, secret });
                     self.open_master_dialog(MasterMode::Unlock);
                     ui::focus_input()
                 }
@@ -385,23 +386,36 @@ impl Hoplix {
         }
     }
 
-    fn load_secret(&mut self, site: &str) -> Task<Message> {
-        let name = secret_name(site);
+    fn load_secrets(&mut self, site: &str, names: Vec<String>) -> Task<Message> {
         let id = site.to_string();
         let keyring = self.services.keyring.clone();
         match self.secret_backend {
-            SecretBackend::Keyring => {
-                Task::perform(async move { keyring.get(&name).await }, move |result| {
-                    Message::SecretLoaded(id.clone(), result)
-                })
-            }
+            SecretBackend::Keyring => Task::perform(
+                async move {
+                    let mut found = Vec::new();
+                    for name in names {
+                        if let Some(secret) = keyring.get(&name).await? {
+                            found.push((name, secret));
+                        }
+                    }
+                    Ok(found)
+                },
+                move |result| Message::SecretsLoaded(id.clone(), result),
+            ),
             SecretBackend::Vault => match &self.vault {
                 Some(vault) => {
-                    let result = vault.get(&name);
+                    let result = names
+                        .into_iter()
+                        .filter_map(|name| match vault.get(&name) {
+                            Ok(Some(secret)) => Some(Ok((name, secret))),
+                            Ok(None) => None,
+                            Err(error) => Some(Err(error)),
+                        })
+                        .collect();
                     self.finish_secret_load(&id, result)
                 }
                 None => {
-                    self.pending = Some(PendingAction::Connect(id));
+                    self.pending = Some(PendingAction::Connect { site: id, names });
                     self.open_master_dialog(MasterMode::Unlock);
                     ui::focus_input()
                 }
@@ -412,23 +426,26 @@ impl Hoplix {
     fn finish_secret_load(
         &mut self,
         id: &str,
-        result: Result<Option<String>, Error>,
+        result: Result<Vec<(String, String)>, Error>,
     ) -> Task<Message> {
         if self.connect_form.site.as_deref() != Some(id) {
             return Task::none();
         }
         match result {
-            Ok(Some(secret)) => {
-                self.connect_form.set_secret(secret);
-                self.connect_form.secret_from_store = true;
-                self.connect(None)
-            }
-            Ok(None) if self.connect_form.effective_method() == AuthMethod::KeyFile => {
-                self.connect(None)
-            }
-            Ok(None) => {
-                self.page = Page::Connect;
-                Task::none()
+            Ok(secrets) => {
+                let form = &mut self.connect_form;
+                for (name, secret) in secrets {
+                    match SecretSlot::parse(&name) {
+                        Some((_, SecretSlot::Site)) => {
+                            form.set_secret(secret);
+                            form.secret_from_store = true;
+                        }
+                        Some((_, SecretSlot::Jump(0))) => form.jump.set_secret(secret),
+                        Some((_, SecretSlot::Proxy)) => form.proxy.set_secret(secret),
+                        _ => {}
+                    }
+                }
+                self.connect_when_ready()
             }
             Err(error) => {
                 self.report_secret_error(&error);
@@ -438,11 +455,20 @@ impl Hoplix {
         }
     }
 
+    fn connect_when_ready(&mut self) -> Task<Message> {
+        if self.connect_form.ready_to_connect() {
+            self.connect(None)
+        } else {
+            self.page = Page::Connect;
+            Task::none()
+        }
+    }
+
     fn forget_secrets(&mut self, sites: &[Site]) -> Task<Message> {
-        let tasks: Vec<Task<Message>> = sites
-            .iter()
-            .filter(|site| site.save_secrets)
-            .map(|site| self.store_secret(&site.id, None))
+        let names: Vec<String> = sites.iter().flat_map(Site::saved_secret_names).collect();
+        let tasks: Vec<Task<Message>> = names
+            .into_iter()
+            .map(|name| self.store_secret(name, None))
             .collect();
         Task::batch(tasks)
     }
@@ -487,36 +513,63 @@ impl Hoplix {
         let Some(form) = &mut self.site_form else {
             return Task::none();
         };
-        let (site, secret) = match form.to_site() {
+        let (site, secrets) = match form.to_site() {
             Ok(result) => result,
             Err(invalid) => {
                 form.reveal_invalid(invalid);
                 return Task::none();
             }
         };
-        let had_secret = self
+        let old_names = self
             .sites
             .get(&site.id)
-            .is_some_and(|existing| existing.save_secrets);
+            .map(Site::saved_secret_names)
+            .unwrap_or_default();
         self.sites.upsert(site.clone());
         self.save_sites();
         self.site_form = Some(SiteForm::edit(&site));
         self.site_selection = Some(SiteSelection::Site(site.id.clone()));
 
+        let new_names = site.saved_secret_names();
+        let typed = [
+            (secret_name(&site.id), secrets.main.clone()),
+            (jump_secret_name(&site.id, 0), secrets.jump.clone()),
+            (proxy_secret_name(&site.id), secrets.proxy.clone()),
+        ];
         let mut tasks = Vec::new();
-        match (&secret, site.save_secrets) {
-            (Some(value), true) => tasks.push(self.store_secret(&site.id, Some(value.clone()))),
-            (_, false) if had_secret => tasks.push(self.store_secret(&site.id, None)),
-            _ => {}
+        for name in old_names.iter().filter(|name| !new_names.contains(name)) {
+            tasks.push(self.store_secret(name.clone(), None));
+        }
+        for (name, value) in &typed {
+            if let Some(value) = value
+                && new_names.contains(name)
+            {
+                tasks.push(self.store_secret(name.clone(), Some(value.clone())));
+            }
         }
         if connect {
             self.connect_form.fill_from_site(&site);
-            match secret {
-                Some(value) => {
-                    self.connect_form.set_secret(value);
-                    tasks.push(self.connect(None));
-                }
-                None => tasks.push(self.connect_site(&site.id)),
+            if let Some(value) = secrets.main {
+                self.connect_form.set_secret(value);
+            }
+            if let Some(value) = secrets.jump {
+                self.connect_form.jump.set_secret(value);
+            }
+            if let Some(value) = secrets.proxy {
+                self.connect_form.proxy.set_secret(value);
+            }
+            let missing: Vec<String> = new_names
+                .into_iter()
+                .filter(|name| {
+                    typed
+                        .iter()
+                        .any(|(typed_name, value)| typed_name == name && value.is_none())
+                })
+                .collect();
+            if missing.is_empty() {
+                tasks.push(self.connect_when_ready());
+            } else {
+                tasks.push(self.load_secrets(&site.id, missing));
             }
         }
         Task::batch(tasks)
@@ -527,14 +580,12 @@ impl Hoplix {
             return Task::none();
         };
         self.connect_form.fill_from_site(&site);
-        if site.save_secrets {
-            return self.load_secret(&site.id);
+        let names = site.saved_secret_names();
+        if names.is_empty() {
+            self.connect_when_ready()
+        } else {
+            self.load_secrets(&site.id, names)
         }
-        if site.uses_key_file() {
-            return self.connect(None);
-        }
-        self.page = Page::Connect;
-        Task::none()
     }
 
     pub(crate) fn open_connection(&mut self, file_system: Arc<dyn FileSystem>) -> Task<Message> {
@@ -545,27 +596,49 @@ impl Hoplix {
             .as_ref()
             .and_then(|id| self.sites.get(id))
             .cloned();
-        let secret = self.connect_form.secret().to_string();
-        let save = self.connect_form.save_password;
-        let from_store = self.connect_form.secret_from_store;
+        let form = &self.connect_form;
+        let main = SecretUse {
+            save: form.save_password && form.uses_secret(),
+            secret: form.secret().to_string(),
+            from_store: form.secret_from_store,
+        };
+        let jump = form.uses_jump().then(|| SecretUse {
+            save: form.jump.save_password && form.jump.uses_secret(),
+            secret: form.jump.secret().to_string(),
+            from_store: form.jump.secret_from_store,
+        });
+        let proxy = (form.proxy.kind.is_some() && form.proxy.uses_secret()).then(|| SecretUse {
+            save: form.proxy.save_password,
+            secret: form.proxy.password.clone(),
+            from_store: form.proxy.secret_from_store,
+        });
         self.connect_form.clear_secrets();
         self.page = Page::Browser;
         let pane = self.focused_pane.min(self.panes.len().saturating_sub(1));
         let mut tasks = Vec::new();
         let (title, start) = match site {
             Some(mut site) => {
-                if save && !secret.is_empty() && !from_store {
-                    if !site.save_secrets {
-                        site.save_secrets = true;
-                        self.sites.upsert(site.clone());
-                        self.save_sites();
-                    }
-                    tasks.push(self.store_secret(&site.id, Some(secret)));
-                } else if !save && site.save_secrets {
-                    site.save_secrets = false;
+                let before = site.clone();
+                let mut saved = site.save_secrets;
+                tasks.extend(self.sync_secret(secret_name(&site.id), &mut saved, &main));
+                site.save_secrets = saved;
+                if let (Some(usage), Some(settings)) = (&jump, &mut site.jump) {
+                    let mut saved = settings.save_secret;
+                    tasks.extend(self.sync_secret(
+                        jump_secret_name(&site.id, 0),
+                        &mut saved,
+                        usage,
+                    ));
+                    settings.save_secret = saved;
+                }
+                if let (Some(usage), Some(settings)) = (&proxy, &mut site.proxy) {
+                    let mut saved = settings.save_secret;
+                    tasks.extend(self.sync_secret(proxy_secret_name(&site.id), &mut saved, usage));
+                    settings.save_secret = saved;
+                }
+                if site != before {
                     self.sites.upsert(site.clone());
                     self.save_sites();
-                    tasks.push(self.store_secret(&site.id, None));
                 }
                 if !site.local_path.is_empty() {
                     tasks.push(self.show_local_path(pane, site.local_path.clone()));
@@ -588,6 +661,23 @@ impl Hoplix {
         tasks.push(self.open_tab(pane, file_system, title, start));
         self.set_origin(self.last_tab_id(), origin);
         Task::batch(tasks)
+    }
+
+    fn sync_secret(
+        &mut self,
+        name: String,
+        saved: &mut bool,
+        usage: &SecretUse,
+    ) -> Option<Task<Message>> {
+        if usage.save && !usage.secret.is_empty() && !usage.from_store {
+            *saved = true;
+            Some(self.store_secret(name, Some(usage.secret.clone())))
+        } else if !usage.save && *saved {
+            *saved = false;
+            Some(self.store_secret(name, None))
+        } else {
+            None
+        }
     }
 
     fn show_local_path(&mut self, remote_pane: usize, path: String) -> Task<Message> {
@@ -759,7 +849,13 @@ mod tests {
                 ..
             })
         ));
-        assert_eq!(app.pending, Some(PendingAction::Connect(saved.id.clone())));
+        assert_eq!(
+            app.pending,
+            Some(PendingAction::Connect {
+                site: saved.id.clone(),
+                names: vec![secret_name(&saved.id)],
+            })
+        );
 
         let error = Error::new(ErrorKind::WrongMasterPassword, "");
         let _ = app.update(Message::VaultUnlocked(Err(error.clone())));
@@ -796,7 +892,7 @@ mod tests {
         app.sites.upsert(saved.clone());
 
         let secret = test_password();
-        let _ = app.store_secret(&saved.id, Some(secret.clone()));
+        let _ = app.store_secret(secret_name(&saved.id), Some(secret.clone()));
         assert_eq!(
             Vault::unlock(&directory, &master)
                 .expect("unlocked")

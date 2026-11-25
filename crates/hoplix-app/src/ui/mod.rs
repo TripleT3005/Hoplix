@@ -11,7 +11,7 @@ mod transfers;
 
 use std::fmt;
 
-use hoplix_core::{Error, ErrorKind};
+use hoplix_core::{AGENT_EMPTY, AGENT_MISSING, AGENT_REJECTED, Error, ErrorKind};
 use iced::widget::{Space, button, column, container, row, stack, text};
 use iced::{Alignment, Element, Length};
 
@@ -190,6 +190,29 @@ pub fn error_text(strings: &Strings, error: &Error) -> String {
         ErrorKind::Other => "error.other",
     };
     strings.format(key, &[("detail", error.detail())])
+}
+
+pub fn connect_error_text(strings: &Strings, error: &Error) -> String {
+    let detail = error.detail();
+    if error.kind() == ErrorKind::AuthenticationFailed {
+        let agent = [
+            (AGENT_MISSING, "error.agent_missing"),
+            (AGENT_EMPTY, "error.agent_empty"),
+            (AGENT_REJECTED, "error.agent_rejected"),
+        ];
+        for (marker, key) in agent {
+            if let Some((target, _)) = detail.split_once(&format!(": {marker}")) {
+                return strings.format(key, &[("target", target)]);
+            }
+        }
+    }
+    let text = error_text(strings, error);
+    match error.hop() {
+        Some(hop) if !detail.contains(hop) => {
+            strings.format("error.at_hop", &[("hop", hop), ("detail", &text)])
+        }
+        _ => text,
+    }
 }
 
 pub fn notice<'a>(content: String) -> Element<'a, Message> {

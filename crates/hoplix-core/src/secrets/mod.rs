@@ -29,6 +29,13 @@ pub enum SecretStore {
     Vault(Vault),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SecretSlot {
+    Site,
+    Proxy,
+    Jump(usize),
+}
+
 #[derive(Debug, Clone)]
 pub struct Moved<T> {
     pub target: T,
@@ -52,28 +59,60 @@ impl SecretBackend {
 // Names
 
 pub fn secret_name(site_id: &str) -> String {
-    format!("{SITE_PREFIX}{site_id}")
+    SecretSlot::Site.name(site_id)
 }
 
 pub fn proxy_secret_name(site_id: &str) -> String {
-    format!("{PROXY_PREFIX}{site_id}")
+    SecretSlot::Proxy.name(site_id)
 }
 
 pub fn jump_secret_name(site_id: &str, hop: usize) -> String {
-    format!("{JUMP_PREFIX}{site_id}/{hop}")
+    SecretSlot::Jump(hop).name(site_id)
 }
 
 pub fn site_id_of(name: &str) -> Option<&str> {
-    if let Some(site_id) = name.strip_prefix(SITE_PREFIX) {
-        return Some(site_id);
+    SecretSlot::parse(name).map(|(site_id, _)| site_id)
+}
+
+impl SecretSlot {
+    pub fn name(self, site_id: &str) -> String {
+        match self {
+            Self::Site => format!("{SITE_PREFIX}{site_id}"),
+            Self::Proxy => format!("{PROXY_PREFIX}{site_id}"),
+            Self::Jump(hop) => format!("{JUMP_PREFIX}{site_id}/{hop}"),
+        }
     }
-    if let Some(site_id) = name.strip_prefix(PROXY_PREFIX) {
-        return Some(site_id);
+
+    pub fn parse(name: &str) -> Option<(&str, Self)> {
+        if let Some(site_id) = name.strip_prefix(SITE_PREFIX) {
+            return Some((site_id, Self::Site));
+        }
+        if let Some(site_id) = name.strip_prefix(PROXY_PREFIX) {
+            return Some((site_id, Self::Proxy));
+        }
+        name.strip_prefix(JUMP_PREFIX)
+            .and_then(|rest| rest.rsplit_once('/'))
+            .and_then(|(site_id, hop)| Some((site_id, Self::Jump(hop.parse().ok()?))))
     }
-    name.strip_prefix(JUMP_PREFIX)
-        .and_then(|rest| rest.rsplit_once('/'))
-        .filter(|(_, hop)| hop.parse::<usize>().is_ok())
-        .map(|(site_id, _)| site_id)
+
+    pub fn key(self) -> String {
+        match self {
+            Self::Site => "site".to_string(),
+            Self::Proxy => "proxy".to_string(),
+            Self::Jump(hop) => format!("jump/{hop}"),
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "site" => Some(Self::Site),
+            "proxy" => Some(Self::Proxy),
+            _ => key
+                .strip_prefix("jump/")
+                .and_then(|hop| hop.parse().ok())
+                .map(Self::Jump),
+        }
+    }
 }
 
 // Stores
@@ -188,6 +227,15 @@ mod tests {
         assert_eq!(site_id_of(&jump_secret_name("abc123", 1)), Some("abc123"));
         assert_eq!(site_id_of("jump/abc123"), None);
         assert_eq!(site_id_of("jump/abc123/x"), None);
+        assert_eq!(
+            SecretSlot::parse("jump/abc123/0"),
+            Some(("abc123", SecretSlot::Jump(0)))
+        );
+        for slot in [SecretSlot::Site, SecretSlot::Proxy, SecretSlot::Jump(2)] {
+            assert_eq!(SecretSlot::from_key(&slot.key()), Some(slot));
+            assert_eq!(SecretSlot::parse(&slot.name("s1")), Some(("s1", slot)));
+        }
+        assert_eq!(SecretSlot::from_key("jump/x"), None);
     }
 
     #[test]

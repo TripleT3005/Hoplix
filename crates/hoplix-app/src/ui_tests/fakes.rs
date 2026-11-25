@@ -5,8 +5,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use hoplix_core::{
-    Authentication, BoxFuture, ConnectionOptions, ConnectionParams, Entry, Error, ErrorKind,
-    FileSystem, HostKeyTrust, LocalFileSystem, Protocol, Reader, Result, TrustStore, Writer,
+    AGENT_MISSING, Authentication, BoxFuture, ConnectionOptions, ConnectionParams, Entry, Error,
+    ErrorKind, FileSystem, FtpMode, HostKeyTrust, LocalFileSystem, Protocol, Reader, Result, Route,
+    TrustStore, Writer, ensure_passive_mode,
 };
 
 use super::test_password;
@@ -177,8 +178,17 @@ pub fn update_source(updates: Arc<Updates>) -> UpdateSource {
 
 // Server
 
-pub fn connections() -> &'static Mutex<Vec<(String, ConnectionOptions)>> {
-    static CONNECTIONS: OnceLock<Mutex<Vec<(String, ConnectionOptions)>>> = OnceLock::new();
+pub const AGENT_USER: &str = "agent-user";
+
+pub struct Logged {
+    pub remote: PathBuf,
+    pub host: String,
+    pub options: ConnectionOptions,
+    pub route: Route,
+}
+
+pub fn connections() -> &'static Mutex<Vec<Logged>> {
+    static CONNECTIONS: OnceLock<Mutex<Vec<Logged>>> = OnceLock::new();
     CONNECTIONS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
@@ -188,8 +198,18 @@ pub fn options_used_for(host: &str) -> Option<ConnectionOptions> {
         .expect("the connection log is poisoned")
         .iter()
         .rev()
-        .find(|(name, _)| name == host)
-        .map(|(_, options)| options.clone())
+        .find(|logged| logged.host == host)
+        .map(|logged| logged.options.clone())
+}
+
+pub fn route_used_by(remote: &Path) -> Option<Route> {
+    connections()
+        .lock()
+        .expect("the connection log is poisoned")
+        .iter()
+        .rev()
+        .find(|logged| logged.remote == remote)
+        .map(|logged| logged.route.clone())
 }
 
 pub fn fingerprint(host: &str) -> String {
@@ -197,26 +217,66 @@ pub fn fingerprint(host: &str) -> String {
 }
 
 pub fn connector(remote: PathBuf) -> Connector {
-    Arc::new(move |params, options, trust_store, trust| {
+    Arc::new(move |params, route, options, trust_store, trusted| {
         let remote = remote.clone();
-        Box::pin(async move { connect(&remote, &params, &options, &trust_store, trust) })
+        Box::pin(async move { connect(&remote, &params, &route, &options, &trust_store, &trusted) })
     })
 }
 
 fn connect(
     remote: &Path,
     params: &ConnectionParams,
+    route: &Route,
     options: &ConnectionOptions,
     trust_store: &TrustStore,
-    trust: Option<HostKeyTrust>,
+    trusted: &[HostKeyTrust],
 ) -> Result<Arc<dyn FileSystem>> {
+    if let Some(proxy) = &route.proxy {
+        ensure_passive_mode(Some(proxy), options.ftp_mode == FtpMode::Active)?;
+        let failed = |kind: ErrorKind, detail: &str| {
+            Error::new(kind, format!("proxy {}: {detail}", proxy.label())).at_hop(proxy.label())
+        };
+        if proxy.host.starts_with("offline.") {
+            return Err(failed(ErrorKind::ConnectionFailed, "connection refused"));
+        }
+        if let Some(credentials) = &proxy.credentials
+            && credentials.password != password()
+        {
+            return Err(failed(
+                ErrorKind::AuthenticationFailed,
+                "the user name or password was rejected",
+            ));
+        }
+    }
+    for jump in &route.jump_hosts {
+        let label = jump.label();
+        if jump.host.starts_with("offline.") {
+            return Err(Error::new(ErrorKind::ConnectionFailed, jump.host.clone()).at_hop(label));
+        }
+        check_host_key(
+            &trust_store.known_hosts,
+            &jump.host,
+            jump.port,
+            trusted,
+            ErrorKind::UnknownHostKey,
+            ErrorKind::HostKeyChanged,
+        )
+        .map_err(|error| error.at_hop(label.clone()))?;
+        sign_in(&jump.authentication, &jump.username, &label)
+            .map_err(|error| error.at_hop(label.clone()))?;
+    }
     if params.host.starts_with("offline.") {
         return Err(Error::new(ErrorKind::ConnectionFailed, params.host.clone()));
     }
     connections()
         .lock()
         .expect("the connection log is poisoned")
-        .push((params.host.clone(), options.clone()));
+        .push(Logged {
+            remote: remote.to_path_buf(),
+            host: params.host.clone(),
+            options: options.clone(),
+            route: route.clone(),
+        });
     let known = match params.protocol {
         Protocol::Sftp => Some((
             &trust_store.known_hosts,
@@ -231,35 +291,62 @@ fn connect(
         Protocol::Ftp => None,
     };
     if let Some((file, unknown, changed)) = known {
-        let host = format!("{}:{}", params.host, params.port);
-        let offered = fingerprint(&params.host);
-        let saved = fs::read_to_string(file).unwrap_or_default();
-        let entry = saved.lines().find_map(|line| {
-            line.split_once(' ')
-                .filter(|(name, _)| *name == host)
-                .map(|(_, value)| value.to_string())
-        });
-        match entry {
-            Some(value) if value == offered => {}
-            Some(_) => return Err(Error::new(changed, host)),
-            None => match trust {
-                Some(trust) if trust.fingerprint == offered => {
-                    if trust.remember {
-                        fs::write(file, format!("{saved}{host} {offered}\n"))
-                            .map_err(|error| Error::from_io(&error, &host))?;
-                    }
-                }
-                _ => return Err(Error::new(unknown, offered)),
-            },
-        }
+        check_host_key(file, &params.host, params.port, trusted, unknown, changed)?;
     }
-    let accepted = match &params.authentication {
+    sign_in(&params.authentication, &params.username, &params.label())?;
+    Ok(Folder::remote(remote, params.label()))
+}
+
+fn check_host_key(
+    file: &Path,
+    host: &str,
+    port: u16,
+    trusted: &[HostKeyTrust],
+    unknown: ErrorKind,
+    changed: ErrorKind,
+) -> Result<()> {
+    let address = format!("{host}:{port}");
+    let offered = fingerprint(host);
+    let saved = fs::read_to_string(file).unwrap_or_default();
+    let entry = saved.lines().find_map(|line| {
+        line.split_once(' ')
+            .filter(|(name, _)| *name == address)
+            .map(|(_, value)| value.to_string())
+    });
+    match entry {
+        Some(value) if value == offered => Ok(()),
+        Some(_) => Err(Error::new(changed, address)),
+        None => match trusted.iter().find(|trust| trust.fingerprint == offered) {
+            Some(trust) => {
+                if trust.remember {
+                    fs::write(file, format!("{saved}{address} {offered}\n"))
+                        .map_err(|error| Error::from_io(&error, &address))?;
+                }
+                Ok(())
+            }
+            None => Err(Error::new(unknown, offered)),
+        },
+    }
+}
+
+fn sign_in(authentication: &Authentication, username: &str, label: &str) -> Result<()> {
+    let accepted = match authentication {
         Authentication::Password(offered) => offered == password(),
         Authentication::KeyFile { path, .. } => path.is_file(),
-        Authentication::Agent => false,
+        Authentication::Agent if username == AGENT_USER => true,
+        Authentication::Agent => {
+            return Err(Error::new(
+                ErrorKind::AuthenticationFailed,
+                format!("{label}: {AGENT_MISSING}"),
+            ));
+        }
     };
-    if !accepted {
-        return Err(Error::new(ErrorKind::AuthenticationFailed, params.label()));
+    if accepted {
+        Ok(())
+    } else {
+        Err(Error::new(
+            ErrorKind::AuthenticationFailed,
+            label.to_string(),
+        ))
     }
-    Ok(Folder::remote(remote, params.label()))
 }

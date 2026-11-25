@@ -54,22 +54,24 @@ pub fn view<'a>(app: &'a Hoplix, dialog: &'a Dialog) -> Element<'a, Message> {
         Dialog::HostKey {
             fingerprint,
             certificate,
+            host,
+            jump,
         } => (
             strings
-                .get(if *certificate {
-                    "certificate.title"
-                } else {
-                    "hostkey.title"
+                .get(match (*certificate, *jump) {
+                    (true, _) => "certificate.title",
+                    (false, true) => "hostkey.jump_title",
+                    (false, false) => "hostkey.title",
                 })
                 .to_string(),
             column![
                 text(strings.format(
-                    if *certificate {
-                        "certificate.text"
-                    } else {
-                        "hostkey.text"
+                    match (*certificate, *jump) {
+                        (true, _) => "certificate.text",
+                        (false, true) => "hostkey.jump_text",
+                        (false, false) => "hostkey.text",
                     },
-                    &[("host", app.connect_form.host.trim())]
+                    &[("host", host)]
                 )),
                 container(
                     text(fingerprint)

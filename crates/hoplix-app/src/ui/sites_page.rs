@@ -11,7 +11,9 @@ use crate::i18n::Strings;
 use crate::site_exchange::ExchangeMessage;
 use crate::site_form::{OptionField, SiteField, SiteForm};
 use crate::theme;
-use crate::ui::connect_page::{LABEL_WIDTH, connection_fields, save_secret_checkbox, setting};
+use crate::ui::connect_page::{
+    LABEL_WIDTH, RouteSaving, connection_fields, hint, route_fields, save_secret_checkbox, setting,
+};
 use crate::ui::{self, Choice};
 
 // Constants
@@ -21,7 +23,6 @@ const INDENT: f32 = 16.0;
 const NOTES_HEIGHT: f32 = 90.0;
 const ROW_PADDING: [u16; 2] = [4, 8];
 const NUMBER_WIDTH: f32 = 120.0;
-const HINT_SIZE: u32 = 13;
 const DEFAULT_TIMEOUT: u32 = 20;
 const DEFAULT_SFTP_KEEPALIVE: u32 = 30;
 pub const EDITOR_SCROLL_ID: &str = "site-editor";
@@ -199,8 +200,10 @@ fn editor(app: &Hoplix) -> Element<'_, Message> {
     for element in connection_fields(strings, &form.connection, wrap, true, None, form.had_secret) {
         content = content.push(element);
     }
+    if let Some(checkbox) = save_secret_checkbox(strings, &form.connection, wrap, true) {
+        content = content.push(checkbox);
+    }
     content = content
-        .push(save_secret_checkbox(strings, &form.connection, wrap, true))
         .push(setting(
             strings.get("sites.remote_path"),
             text_input(strings.get("sites.remote_path.hint"), &form.remote_path)
@@ -260,7 +263,7 @@ fn advanced<'a>(app: &'a Hoplix, form: &'a SiteForm) -> Element<'a, Message> {
     let options = &form.options;
     let arrow = if options.open { "▾" } else { "▸" };
     let mut title = strings.get("sites.advanced").to_string();
-    if !options.open && !options.is_default() {
+    if !options.open && (!options.is_default() || form.connection.has_route()) {
         title = format!("{title} {}", strings.get("sites.advanced.changed"));
     }
     let header = button(text(format!("{arrow} {title}")))
@@ -273,6 +276,15 @@ fn advanced<'a>(app: &'a Hoplix, form: &'a SiteForm) -> Element<'a, Message> {
     }
     content = content.push(subheading(strings.get("sites.advanced.connection")));
     for element in connection_options(strings, form) {
+        content = content.push(element);
+    }
+    let wrap: fn(Field) -> Message = |field| Message::SiteField(SiteField::Connection(field));
+    let saving = RouteSaving {
+        show: true,
+        keep_jump: form.had_jump_secret,
+        keep_proxy: form.had_proxy_secret,
+    };
+    for element in route_fields(strings, &form.connection, wrap, true, None, saving) {
         content = content.push(element);
     }
     if form.connection.protocol != Protocol::Sftp {
@@ -383,6 +395,11 @@ fn ftp_options<'a>(strings: &'a Strings, form: &'a SiteForm) -> Vec<Element<'a, 
         );
     } else {
         rows.push(hint(strings.get("sites.advanced.mode.active.hint")));
+        if form.connection.proxy.kind.is_some() {
+            rows.push(ui::warning(
+                strings.get("sites.invalid.active_proxy").to_string(),
+            ));
+        }
     }
     rows.push(setting(
         strings.get("sites.advanced.encoding"),
@@ -412,15 +429,6 @@ fn number_input<'a>(
 
 fn subheading(label: &str) -> Element<'_, Message> {
     text(label).size(15).style(text::primary).into()
-}
-
-fn hint(content: &str) -> Element<'_, Message> {
-    row![
-        Space::new().width(LABEL_WIDTH),
-        text(content).size(HINT_SIZE).width(Length::Fill),
-    ]
-    .spacing(12)
-    .into()
 }
 
 fn folder_picker<'a>(

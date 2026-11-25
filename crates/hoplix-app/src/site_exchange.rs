@@ -7,7 +7,7 @@ use std::time::SystemTime;
 
 use hoplix_core::{
     EXPORT_FILE_NAME, Error, ExportError, ExportFile, ExportScope, SealedExport, SecretBackend,
-    SiteExport, decrypt_export, encrypt_export, secret_name,
+    Site, SiteExport, decrypt_export, encrypt_export,
 };
 use iced::Task;
 
@@ -238,8 +238,7 @@ impl Hoplix {
         let saved: Vec<String> = list
             .sites
             .iter()
-            .filter(|site| site.save_secrets)
-            .map(|site| site.id.clone())
+            .flat_map(Site::saved_secret_names)
             .collect();
         let done = |result| Message::SiteExchange(ExchangeMessage::Exported(result));
         match (self.secret_backend, &self.vault) {
@@ -250,13 +249,11 @@ impl Hoplix {
                 Task::perform(
                     async move {
                         let mut secrets = BTreeMap::new();
-                        for id in saved {
-                            let secret = keyring
-                                .get(&secret_name(&id))
-                                .await
-                                .map_err(ExchangeError::Secrets)?;
+                        for name in saved {
+                            let secret =
+                                keyring.get(&name).await.map_err(ExchangeError::Secrets)?;
                             if let Some(secret) = secret.filter(|secret| !secret.is_empty()) {
-                                secrets.insert(id, secret);
+                                secrets.insert(name, secret);
                             }
                         }
                         write_encrypted(SiteExport { list, secrets }, password, path).await
@@ -266,10 +263,10 @@ impl Hoplix {
             }
             (SecretBackend::Vault, Some(vault)) => {
                 let mut secrets = BTreeMap::new();
-                for id in saved {
-                    match vault.get(&secret_name(&id)) {
+                for name in saved {
+                    match vault.get(&name) {
                         Ok(Some(secret)) if !secret.is_empty() => {
-                            secrets.insert(id, secret);
+                            secrets.insert(name, secret);
                         }
                         Ok(_) => {}
                         Err(error) => {
@@ -402,8 +399,8 @@ impl Hoplix {
             return ui::focus_input();
         }
         let mut tasks = Vec::new();
-        for (site, secret) in secrets {
-            tasks.push(self.store_secret(&site, Some(secret)));
+        for (name, secret) in secrets {
+            tasks.push(self.store_secret(name, Some(secret)));
         }
         Task::batch(tasks)
     }

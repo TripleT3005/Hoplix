@@ -36,7 +36,7 @@ impl Hoplix {
             return Task::none();
         };
         self.connect_form.fill_from_recent(&entry);
-        if connect && entry.uses_key_file() {
+        if connect && self.connect_form.ready_to_connect() {
             return self.connect(None);
         }
         self.page = Page::Connect;
@@ -50,7 +50,12 @@ impl Hoplix {
         let Ok(params) = self.connect_form.to_params() else {
             return;
         };
-        self.recent.record(RecentConnection::from_params(&params));
+        let form = &self.connect_form;
+        let entry = RecentConnection::from_params(&params).with_route(
+            form.jump_settings().ok().flatten(),
+            form.proxy_settings().ok().flatten(),
+        );
+        self.recent.record(entry);
         self.save_recent();
     }
 

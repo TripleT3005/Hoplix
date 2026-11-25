@@ -5,6 +5,7 @@ mod edit;
 mod fakes;
 mod palette;
 mod queue;
+mod routes;
 mod secrets;
 mod settings;
 mod site_manager;
@@ -628,16 +629,24 @@ impl Harness {
     }
 
     pub fn keyring_secret(&self, site: &str) -> Option<String> {
+        self.keyring_named(&hoplix_core::secret_name(site))
+    }
+
+    pub fn keyring_named(&self, name: &str) -> Option<String> {
         let keyring = self.app.services.keyring.clone();
-        let name = hoplix_core::secret_name(site);
+        let name = name.to_string();
         self.runtime
             .block_on(async move { keyring.get(&name).await })
             .expect("reading the test keyring failed")
     }
 
     pub fn store_keyring_secret(&self, site: &str, secret: &str) {
+        self.store_keyring_named(&hoplix_core::secret_name(site), secret);
+    }
+
+    pub fn store_keyring_named(&self, name: &str, secret: &str) {
         let keyring = self.app.services.keyring.clone();
-        let name = hoplix_core::secret_name(site);
+        let name = name.to_string();
         let secret = secret.to_string();
         self.runtime
             .block_on(async move { keyring.set(&name, &secret).await })

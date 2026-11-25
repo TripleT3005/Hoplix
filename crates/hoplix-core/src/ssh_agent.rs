@@ -6,6 +6,10 @@ use crate::{Error, ErrorKind, Result};
 
 // Constants
 
+pub const AGENT_MISSING: &str = "no SSH agent is running";
+pub const AGENT_EMPTY: &str = "the SSH agent holds no keys";
+pub const AGENT_REJECTED: &str = "the server accepted no key from the SSH agent";
+
 #[cfg(windows)]
 const OPENSSH_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
 
@@ -100,11 +104,11 @@ pub(crate) async fn authenticate<H: Handler>(
         }
     }
     let detail = if answered == 0 {
-        format!("{label}: no SSH agent is running")
+        format!("{label}: {AGENT_MISSING}")
     } else if offered == 0 {
-        format!("{label}: the SSH agent holds no keys")
+        format!("{label}: {AGENT_EMPTY}")
     } else {
-        format!("{label}: the server accepted no key from the SSH agent ({offered} tried)")
+        format!("{label}: {AGENT_REJECTED} ({offered} tried)")
     };
     Err(Error::new(ErrorKind::AuthenticationFailed, detail))
 }
