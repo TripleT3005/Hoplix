@@ -236,6 +236,7 @@ fn connect(
     let accepted = match &params.authentication {
         Authentication::Password(offered) => offered == password(),
         Authentication::KeyFile { path, .. } => path.is_file(),
+        Authentication::Agent => false,
     };
     if !accepted {
         return Err(Error::new(ErrorKind::AuthenticationFailed, params.label()));

@@ -125,7 +125,7 @@ impl RemoteTarget {
 
 // Helpers
 
-fn split_host_port(address: &str, default_port: u16) -> Result<(String, u16), String> {
+pub(crate) fn split_host_port(address: &str, default_port: u16) -> Result<(String, u16), String> {
     let parse_port = |port: &str| {
         port.parse::<u16>()
             .ok()

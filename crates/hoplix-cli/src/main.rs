@@ -10,10 +10,10 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use hoplix_core::{
     Authentication, CompareOptions, CompareStatus, ComparedEntry, ConflictPolicy, ConnectionParams,
     DEFAULT_PARALLELISM, Error, ErrorKind, FileSystem, HostKeyTrust, JobId, JobSnapshot, JobStatus,
-    Keyring, LocalFileSystem, Pattern, RetryPolicy, SecretBackend, Site, SiteList, SortKey,
-    SortOrder, SpeedLimits, SyncAction, SyncDirection, SyncEndpoint, SyncMode, SyncOptions,
-    SyncPlan, TransferEvent, TransferQueue, TransferRequest, TrustStore, config_dir,
-    remove_recursive, secret_name, sort_entries, unlock_vault,
+    JumpHost, Keyring, LocalFileSystem, Pattern, ProxyCredentials, RetryPolicy, Route,
+    SecretBackend, Site, SiteList, SortKey, SortOrder, SpeedLimits, SyncAction, SyncDirection,
+    SyncEndpoint, SyncMode, SyncOptions, SyncPlan, TransferEvent, TransferQueue, TransferRequest,
+    TrustStore, config_dir, remove_recursive, secret_name, sort_entries, unlock_vault,
 };
 
 use arguments::{Command, Invocation, Options, USAGE};
@@ -636,40 +636,96 @@ async fn connect(
     if let Some(path) = &options.trusted_certificates {
         trust_store.certificates.clone_from(path);
     }
-    match hoplix_core::connect(params, &trust_store, None).await {
-        Ok(file_system) => Ok(file_system),
-        Err(error)
-            if matches!(
-                error.kind(),
-                ErrorKind::UnknownHostKey | ErrorKind::UntrustedCertificate
-            ) =>
+    let route = route(options)?;
+    let mut trusted: Vec<HostKeyTrust> = Vec::new();
+    loop {
+        let error = match hoplix_core::connect_via(params, &route, &trust_store, &trusted).await {
+            Ok(file_system) => return Ok(file_system),
+            Err(error) => error,
+        };
+        let untrusted = matches!(
+            error.kind(),
+            ErrorKind::UnknownHostKey | ErrorKind::UntrustedCertificate
+        );
+        let fingerprint = error.detail().to_string();
+        if !untrusted
+            || trusted.len() > route.jump_hosts.len()
+            || trusted.iter().any(|trust| trust.fingerprint == fingerprint)
         {
-            let fingerprint = error.detail().to_string();
-            let what = if error.kind() == ErrorKind::UnknownHostKey {
-                "server key"
-            } else {
-                "certificate"
-            };
-            if !options.accept_host_key && !options.remember_host_key {
-                return Err(format!(
-                    "the {what} of {} is not trusted ({fingerprint}). Check it and run again with --accept-host-key or --remember-host-key",
-                    params.host
-                ));
-            }
-            eprintln!("Trusting {what} {fingerprint}");
-            let trust = HostKeyTrust {
-                fingerprint,
-                remember: options.remember_host_key,
-            };
-            hoplix_core::connect(params, &trust_store, Some(trust))
-                .await
-                .map_err(describe)
+            return Err(describe(error));
         }
-        Err(error) => Err(describe(error)),
+        let what = if error.kind() == ErrorKind::UnknownHostKey {
+            "server key"
+        } else {
+            "certificate"
+        };
+        let host = error.hop().unwrap_or(&params.host);
+        if !options.accept_host_key && !options.remember_host_key {
+            return Err(format!(
+                "the {what} of {host} is not trusted ({fingerprint}). Check it and run again with --accept-host-key or --remember-host-key"
+            ));
+        }
+        eprintln!("Trusting {what} {fingerprint} of {host}");
+        trusted.push(HostKeyTrust {
+            fingerprint,
+            remember: options.remember_host_key,
+        });
+    }
+}
+
+fn route(options: &Options) -> Result<Route, String> {
+    let proxy = match &options.proxy {
+        Some(proxy) => {
+            let mut proxy = proxy.clone();
+            if let (Some(username), Some(variable)) =
+                (&options.proxy_user, &options.proxy_password_env)
+            {
+                proxy.credentials = Some(ProxyCredentials {
+                    username: username.clone(),
+                    password: secret(variable)?,
+                });
+            }
+            Some(proxy)
+        }
+        None => None,
+    };
+    let jump_hosts = match &options.jump {
+        Some(jump) => vec![JumpHost {
+            host: jump.host.clone(),
+            port: jump.port,
+            username: jump.username.clone(),
+            authentication: jump_authentication(options)?,
+        }],
+        None => Vec::new(),
+    };
+    Ok(Route { proxy, jump_hosts })
+}
+
+fn jump_authentication(options: &Options) -> Result<Authentication, String> {
+    if let Some(key) = &options.jump_key {
+        let passphrase = options
+            .jump_passphrase_env
+            .as_deref()
+            .map(secret)
+            .transpose()?;
+        return Ok(Authentication::KeyFile {
+            path: key.clone(),
+            passphrase,
+        });
+    }
+    match &options.jump_password_env {
+        Some(name) => Ok(Authentication::Password(secret(name)?)),
+        None => Ok(Authentication::Agent),
     }
 }
 
 fn authentication(remote: &RemoteTarget, options: &Options) -> Result<Authentication, String> {
+    if options.agent {
+        if !remote.protocol.supports_key_files() {
+            return Err("--agent only works with SFTP".to_string());
+        }
+        return Ok(Authentication::Agent);
+    }
     if let Some(key) = &options.key {
         let passphrase = options.passphrase_env.as_deref().map(secret).transpose()?;
         return Ok(Authentication::KeyFile {
@@ -713,6 +769,10 @@ fn find_site<'a>(sites: &'a SiteList, target: &SiteTarget) -> Result<&'a Site, S
 
 async fn site_params(site: &Site, options: &Options) -> Result<ConnectionParams, String> {
     let mut params = site.to_params(None);
+    if options.agent {
+        params.authentication = Authentication::Agent;
+        return Ok(params);
+    }
     if let Some(key) = &options.key {
         let passphrase = options.passphrase_env.as_deref().map(secret).transpose()?;
         params.authentication = Authentication::KeyFile {
@@ -764,6 +824,14 @@ fn secret(name: &str) -> Result<String, String> {
 // Errors
 
 fn describe(error: hoplix_core::Error) -> String {
+    let text = describe_kind(&error);
+    match error.hop() {
+        Some(hop) if !text.contains(hop) => format!("{text} (at {hop})"),
+        _ => text,
+    }
+}
+
+fn describe_kind(error: &hoplix_core::Error) -> String {
     let detail = error.detail();
     match error.kind() {
         ErrorKind::NotFound => format!("not found: {detail}"),

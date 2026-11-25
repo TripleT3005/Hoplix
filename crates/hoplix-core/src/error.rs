@@ -29,6 +29,7 @@ pub enum ErrorKind {
 pub struct Error {
     kind: ErrorKind,
     detail: String,
+    hop: Option<String>,
 }
 
 // Construction
@@ -38,7 +39,13 @@ impl Error {
         Self {
             kind,
             detail: detail.into(),
+            hop: None,
         }
+    }
+
+    pub fn at_hop(mut self, hop: impl Into<String>) -> Self {
+        self.hop = Some(hop.into());
+        self
     }
 
     pub fn from_io(error: &io::Error, path: &str) -> Self {
@@ -66,6 +73,10 @@ impl Error {
 
     pub fn detail(&self) -> &str {
         &self.detail
+    }
+
+    pub fn hop(&self) -> Option<&str> {
+        self.hop.as_deref()
     }
 }
 
@@ -95,5 +106,14 @@ mod tests {
         let error = Error::from_io(&io::Error::other("disk on fire"), "/data");
         assert_eq!(error.kind(), ErrorKind::Other);
         assert_eq!(error.detail(), "/data: disk on fire");
+    }
+
+    #[test]
+    fn errors_can_name_the_hop_that_failed() {
+        let error = Error::new(ErrorKind::UnknownHostKey, "SHA256:abc");
+        assert_eq!(error.hop(), None);
+        let error = error.at_hop("jump@bastion.test");
+        assert_eq!(error.hop(), Some("jump@bastion.test"));
+        assert_eq!(error.detail(), "SHA256:abc");
     }
 }
