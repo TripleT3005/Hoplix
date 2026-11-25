@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use crate::target::Target;
+use hoplix_core::{JumpHost, Proxy, ProxyKind};
+
+use crate::target::{Target, split_host_port};
 
 // Constants
 
@@ -45,9 +47,25 @@ pub enum Command {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JumpTarget {
+    pub username: String,
+    pub host: String,
+    pub port: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Options {
     pub key: Option<PathBuf>,
+    pub agent: bool,
+    pub jump: Option<JumpTarget>,
+    pub jump_key: Option<PathBuf>,
+    pub jump_passphrase_env: Option<String>,
+    pub jump_password_env: Option<String>,
+    pub jump_agent: bool,
+    pub proxy: Option<Proxy>,
+    pub proxy_user: Option<String>,
+    pub proxy_password_env: Option<String>,
     pub passphrase_env: Option<String>,
     pub password_env: Option<String>,
     pub master_password_env: Option<String>,
@@ -92,6 +110,21 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
         };
         match argument.as_str() {
             "--key" => options.key = Some(PathBuf::from(value("--key")?)),
+            "--agent" => options.agent = true,
+            "--jump" => options.jump = Some(jump_target(&value("--jump")?)?),
+            "--jump-key" => options.jump_key = Some(PathBuf::from(value("--jump-key")?)),
+            "--jump-passphrase-env" => {
+                options.jump_passphrase_env = Some(value("--jump-passphrase-env")?);
+            }
+            "--jump-password-env" => {
+                options.jump_password_env = Some(value("--jump-password-env")?);
+            }
+            "--jump-agent" => options.jump_agent = true,
+            "--proxy" => options.proxy = Some(proxy_url(&value("--proxy")?)?),
+            "--proxy-user" => options.proxy_user = Some(value("--proxy-user")?),
+            "--proxy-password-env" => {
+                options.proxy_password_env = Some(value("--proxy-password-env")?);
+            }
             "--passphrase-env" => options.passphrase_env = Some(value("--passphrase-env")?),
             "--password-env" => options.password_env = Some(value("--password-env")?),
             "--master-password-env" => {
@@ -134,7 +167,8 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
             "-r" | "--recursive" => recursive = true,
             "-h" | "--help" => positional.insert(0, "help".to_string()),
             "-V" | "--version" => positional.insert(0, "version".to_string()),
-            "--password" | "--passphrase" | "--master-password" => {
+            "--password" | "--passphrase" | "--master-password" | "--jump-password"
+            | "--jump-passphrase" | "--proxy-password" => {
                 return Err(format!(
                     "{argument} is not supported, pass the name of an environment variable with {argument}-env"
                 ));
@@ -146,6 +180,7 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
         }
     }
     let command = command_from(&positional, recursive)?;
+    check_route(&options)?;
     if recursive
         && !matches!(
             command,
@@ -188,6 +223,95 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
         return Err("use only one of --resume, --skip-existing and --keep-both".to_string());
     }
     Ok(Invocation { command, options })
+}
+
+fn check_route(options: &Options) -> Result<(), String> {
+    if options.agent && (options.key.is_some() || options.password_env.is_some()) {
+        return Err("use only one of --agent, --key and --password-env".to_string());
+    }
+    let jump_methods = [
+        options.jump_key.is_some(),
+        options.jump_password_env.is_some(),
+        options.jump_agent,
+    ]
+    .iter()
+    .filter(|flag| **flag)
+    .count();
+    match (&options.jump, jump_methods) {
+        (None, 0) if options.jump_passphrase_env.is_none() => {}
+        (None, _) => {
+            return Err(
+                "--jump-key, --jump-passphrase-env, --jump-password-env and --jump-agent only work with --jump"
+                    .to_string(),
+            );
+        }
+        (Some(_), 1) => {}
+        (Some(_), _) => {
+            return Err(
+                "--jump needs exactly one of --jump-key, --jump-password-env and --jump-agent"
+                    .to_string(),
+            );
+        }
+    }
+    if options.jump_passphrase_env.is_some() && options.jump_key.is_none() {
+        return Err("--jump-passphrase-env only works with --jump-key".to_string());
+    }
+    let proxy_user = options.proxy_user.is_some();
+    let proxy_password = options.proxy_password_env.is_some();
+    if (proxy_user || proxy_password) && options.proxy.is_none() {
+        return Err("--proxy-user and --proxy-password-env only work with --proxy".to_string());
+    }
+    if proxy_user != proxy_password {
+        return Err("--proxy-user and --proxy-password-env belong together".to_string());
+    }
+    Ok(())
+}
+
+fn jump_target(text: &str) -> Result<JumpTarget, String> {
+    let (username, address) = text
+        .rsplit_once('@')
+        .filter(|(username, _)| !username.is_empty())
+        .ok_or_else(|| format!("--jump needs user@host[:port], got {text}"))?;
+    let (host, port) = split_host_port(address, JumpHost::DEFAULT_PORT)?;
+    if host.is_empty() {
+        return Err(format!("missing host in --jump {text}"));
+    }
+    Ok(JumpTarget {
+        username: username.to_string(),
+        host,
+        port,
+    })
+}
+
+fn proxy_url(text: &str) -> Result<Proxy, String> {
+    let (scheme, rest) = text.split_once("://").ok_or_else(|| {
+        format!("--proxy needs socks5://host:port or http://host:port, got {text}")
+    })?;
+    let kind = match scheme.to_ascii_lowercase().as_str() {
+        "socks5" | "socks5h" => ProxyKind::Socks5,
+        "http" => ProxyKind::Http,
+        _ => return Err(format!("unsupported proxy type: {scheme}")),
+    };
+    let authority = rest.strip_suffix('/').unwrap_or(rest);
+    if authority.contains('@') {
+        return Err(
+            "do not put credentials into --proxy, use --proxy-user and --proxy-password-env"
+                .to_string(),
+        );
+    }
+    if authority.contains('/') {
+        return Err(format!("invalid proxy address: {text}"));
+    }
+    let (host, port) = split_host_port(authority, kind.default_port())?;
+    if host.is_empty() {
+        return Err(format!("missing host in --proxy {text}"));
+    }
+    Ok(Proxy {
+        kind,
+        host,
+        port,
+        credentials: None,
+    })
 }
 
 fn number(name: &str, text: &str, low: u32, high: u32) -> Result<u32, String> {
@@ -313,6 +437,8 @@ They use the saved password or passphrase unless you pass --password-env or --ke
 
 Options:
   --key <file>              Sign in with this private key file
+  --agent                   Sign in with the keys of the running SSH agent (SFTP;
+                            Windows: OpenSSH agent or Pageant, else SSH_AUTH_SOCK)
   --passphrase-env <name>   Read the key passphrase from this environment variable
   --password-env <name>     Read the password from this environment variable
   --master-password-env <name>
@@ -323,6 +449,24 @@ Options:
   --known-hosts <file>      Use this known hosts file instead of the Hoplix one
   --trusted-certificates <file>
                             Use this certificate trust file instead of the Hoplix one
+
+Jump host and proxy (they apply to all servers of the command):
+  --jump <user@host[:port]> Connect to the SFTP server through this SSH jump host
+  --jump-key <file>         Sign in to the jump host with this private key file
+  --jump-passphrase-env <name>
+                            Read the passphrase of --jump-key from this variable
+  --jump-password-env <name>
+                            Read the jump host password from this variable
+  --jump-agent              Sign in to the jump host with the SSH agent
+  --proxy <url>             Connect through a proxy: socks5://host[:port] (default
+                            port 1080, host names are resolved by the proxy) or
+                            http://host[:port] (HTTP CONNECT, default port 8080).
+                            FTP works through the proxy in passive mode only
+  --proxy-user <name>       Sign in to the proxy with this user name
+  --proxy-password-env <name>
+                            Read the proxy password from this environment variable
+
+Transfers:
   --resume                  Continue interrupted files (existing smaller files are
                             completed, equal ones skipped); default: overwrite
   --skip-existing           Leave files that already exist untouched
@@ -418,6 +562,7 @@ mod tests {
         assert!(run(&["ls", "x", "--key", "--resume"]).is_err());
         assert!(run(&["ls", "-r", "x"]).is_err());
         assert!(run(&["get", "a", "b", "--resume", "--keep-both"]).is_err());
+        assert!(run(&["ls", "x", "--agent", "--key", "id"]).is_err());
         assert!(run(&["ls", "sftp://host/x"]).is_err());
     }
 
@@ -579,5 +724,143 @@ mod tests {
             invocation.options.master_password_env.as_deref(),
             Some("HOPLIX_MASTER")
         );
+    }
+
+    #[test]
+    fn agent_jump_and_proxy_options_parse() {
+        let invocation = run(&[
+            "ls",
+            "sftp://demo@target/",
+            "--agent",
+            "--jump",
+            "hop@[fe80::1]:2222",
+            "--jump-key",
+            "jump_key",
+            "--jump-passphrase-env",
+            "JUMP_PASS",
+            "--proxy",
+            "socks5h://proxy.test/",
+            "--proxy-user",
+            "tester",
+            "--proxy-password-env",
+            "PROXY_PASS",
+        ])
+        .expect("valid invocation");
+        let options = invocation.options;
+        assert!(options.agent);
+        assert_eq!(
+            options.jump,
+            Some(JumpTarget {
+                username: "hop".to_string(),
+                host: "fe80::1".to_string(),
+                port: 2222,
+            })
+        );
+        assert_eq!(options.jump_key, Some(PathBuf::from("jump_key")));
+        assert_eq!(options.jump_passphrase_env.as_deref(), Some("JUMP_PASS"));
+        assert_eq!(
+            options.proxy,
+            Some(Proxy {
+                kind: ProxyKind::Socks5,
+                host: "proxy.test".to_string(),
+                port: 1080,
+                credentials: None,
+            })
+        );
+        assert_eq!(options.proxy_user.as_deref(), Some("tester"));
+        assert_eq!(options.proxy_password_env.as_deref(), Some("PROXY_PASS"));
+
+        let options = run(&[
+            "ls",
+            "ftp://demo@target/",
+            "--proxy",
+            "HTTP://[::1]:3128",
+            "--jump",
+            "user@bastion",
+            "--jump-agent",
+        ])
+        .expect("valid")
+        .options;
+        let proxy = options.proxy.expect("proxy");
+        assert_eq!(
+            (proxy.kind, proxy.host.as_str(), proxy.port),
+            (ProxyKind::Http, "::1", 3128)
+        );
+        let jump = options.jump.expect("jump");
+        assert_eq!((jump.host.as_str(), jump.port), ("bastion", 22));
+        assert!(options.jump_agent);
+    }
+
+    #[test]
+    fn route_mistakes_are_reported() {
+        for arguments in [
+            &["ls", "x", "--jump", "bastion", "--jump-agent"][..],
+            &["ls", "x", "--jump", "@bastion", "--jump-agent"],
+            &["ls", "x", "--jump", "hop@bastion:0", "--jump-agent"],
+            &["ls", "x", "--jump", "hop@bastion"],
+            &[
+                "ls",
+                "x",
+                "--jump",
+                "hop@bastion",
+                "--jump-agent",
+                "--jump-password-env",
+                "P",
+            ],
+            &["ls", "x", "--jump-agent"],
+            &["ls", "x", "--jump-passphrase-env", "P"],
+            &[
+                "ls",
+                "x",
+                "--jump",
+                "hop@bastion",
+                "--jump-agent",
+                "--jump-passphrase-env",
+                "P",
+            ],
+            &["ls", "x", "--jump-password", "secret"],
+            &["ls", "x", "--proxy", "proxy.test:1080"],
+            &["ls", "x", "--proxy", "socks4://proxy.test"],
+            &["ls", "x", "--proxy", "socks5://user:pw@proxy.test"],
+            &["ls", "x", "--proxy", "http://proxy.test/path"],
+            &["ls", "x", "--proxy", "http://:8080"],
+            &["ls", "x", "--proxy-user", "tester"],
+            &[
+                "ls",
+                "x",
+                "--proxy",
+                "socks5://proxy.test",
+                "--proxy-user",
+                "tester",
+            ],
+            &[
+                "ls",
+                "x",
+                "--proxy",
+                "socks5://proxy.test",
+                "--proxy-password-env",
+                "P",
+            ],
+            &["ls", "x", "--proxy-password", "secret"],
+        ] {
+            assert!(run(arguments).is_err(), "{arguments:?}");
+        }
+    }
+
+    #[test]
+    fn usage_mentions_the_route_options() {
+        for option in [
+            "--agent",
+            "--jump ",
+            "--jump-key",
+            "--jump-passphrase-env",
+            "--jump-password-env",
+            "--jump-agent",
+            "--proxy ",
+            "--proxy-user",
+            "--proxy-password-env",
+        ] {
+            assert!(USAGE.contains(option), "{option}");
+        }
     }
 }
