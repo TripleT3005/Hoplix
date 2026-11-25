@@ -16,7 +16,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::connection::{Authentication, ConnectionParams, HostKeyTrust};
 use crate::file_system::{Reader, Writer};
-use crate::{BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Result};
+use crate::{BoxFuture, ConnectionOptions, Entry, EntryKind, Error, ErrorKind, FileSystem, Result};
 
 // Constants
 
@@ -40,6 +40,7 @@ pub fn auto_reconnect() -> bool {
 
 pub struct SftpFileSystem {
     params: ConnectionParams,
+    options: ConnectionOptions,
     known_hosts: PathBuf,
     host_fingerprint: String,
     connection: AsyncMutex<Arc<Connection>>,
@@ -132,9 +133,19 @@ impl SftpFileSystem {
         known_hosts: &Path,
         trust: Option<HostKeyTrust>,
     ) -> Result<Self> {
-        let (connection, host_fingerprint) = establish(params, known_hosts, trust).await?;
+        Self::connect_with(params, &ConnectionOptions::default(), known_hosts, trust).await
+    }
+
+    pub async fn connect_with(
+        params: &ConnectionParams,
+        options: &ConnectionOptions,
+        known_hosts: &Path,
+        trust: Option<HostKeyTrust>,
+    ) -> Result<Self> {
+        let (connection, host_fingerprint) = establish(params, options, known_hosts, trust).await?;
         Ok(Self {
             params: params.clone(),
+            options: options.clone(),
             known_hosts: known_hosts.to_path_buf(),
             host_fingerprint,
             connection: AsyncMutex::new(Arc::new(connection)),
@@ -169,7 +180,7 @@ impl SftpFileSystem {
             fingerprint: self.host_fingerprint.clone(),
             remember: false,
         };
-        establish(&self.params, &self.known_hosts, Some(trust))
+        establish(&self.params, &self.options, &self.known_hosts, Some(trust))
             .await
             .map(|(connection, _)| connection)
     }
@@ -192,16 +203,22 @@ impl SftpFileSystem {
 
 async fn establish(
     params: &ConnectionParams,
+    options: &ConnectionOptions,
     known_hosts: &Path,
     trust: Option<HostKeyTrust>,
 ) -> Result<(Connection, String)> {
-    tokio::time::timeout(CONNECT_TIMEOUT, open_connection(params, known_hosts, trust))
-        .await
-        .map_err(|_| Error::new(ErrorKind::ConnectionFailed, params.host.clone()))?
+    let timeout = options.timeout_or(CONNECT_TIMEOUT);
+    tokio::time::timeout(
+        timeout,
+        open_connection(params, options, known_hosts, trust),
+    )
+    .await
+    .map_err(|_| Error::new(ErrorKind::ConnectionFailed, params.host.clone()))?
 }
 
 async fn open_connection(
     params: &ConnectionParams,
+    options: &ConnectionOptions,
     known_hosts: &Path,
     trust: Option<HostKeyTrust>,
 ) -> Result<(Connection, String)> {
@@ -217,7 +234,7 @@ async fn open_connection(
     };
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(INACTIVITY_TIMEOUT),
-        keepalive_interval: Some(KEEPALIVE_INTERVAL),
+        keepalive_interval: Some(options.keepalive().unwrap_or(KEEPALIVE_INTERVAL)),
         ..client::Config::default()
     });
     let connected = client::connect(config, (params.host.as_str(), params.port), check).await;

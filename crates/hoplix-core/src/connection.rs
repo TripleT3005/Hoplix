@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::{FileSystem, FtpFileSystem, Result, SftpFileSystem, TrustStore};
+use crate::{ConnectionOptions, FileSystem, FtpFileSystem, Result, SftpFileSystem, TrustStore};
 
 // Types
 
@@ -107,15 +107,26 @@ pub async fn connect(
     trust_store: &TrustStore,
     trust: Option<HostKeyTrust>,
 ) -> Result<Arc<dyn FileSystem>> {
+    connect_with(params, &ConnectionOptions::default(), trust_store, trust).await
+}
+
+pub async fn connect_with(
+    params: &ConnectionParams,
+    options: &ConnectionOptions,
+    trust_store: &TrustStore,
+    trust: Option<HostKeyTrust>,
+) -> Result<Arc<dyn FileSystem>> {
     match params.protocol {
         Protocol::Sftp => {
             let file_system =
-                SftpFileSystem::connect(params, &trust_store.known_hosts, trust).await?;
+                SftpFileSystem::connect_with(params, options, &trust_store.known_hosts, trust)
+                    .await?;
             Ok(Arc::new(file_system))
         }
         Protocol::Ftp | Protocol::FtpsExplicit | Protocol::FtpsImplicit => {
             let file_system =
-                FtpFileSystem::connect(params, &trust_store.certificates, trust).await?;
+                FtpFileSystem::connect_with(params, options, &trust_store.certificates, trust)
+                    .await?;
             Ok(Arc::new(file_system))
         }
     }

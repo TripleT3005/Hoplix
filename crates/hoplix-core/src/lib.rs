@@ -1,5 +1,6 @@
 mod certificates;
 mod connection;
+mod encoding;
 mod entry;
 mod error;
 mod file_system;
@@ -7,6 +8,7 @@ mod ftp;
 pub mod key_value;
 pub mod language;
 mod local;
+mod options;
 mod paths;
 mod rate;
 mod secrets;
@@ -20,7 +22,10 @@ pub mod update;
 mod test_support;
 
 pub use certificates::certificate_fingerprint;
-pub use connection::{Authentication, ConnectionParams, HostKeyTrust, Protocol, connect};
+pub use connection::{
+    Authentication, ConnectionParams, HostKeyTrust, Protocol, connect, connect_with,
+};
+pub use encoding::{decode_windows_1252, encode_windows_1252};
 pub use entry::{Entry, EntryKind, SortKey, SortOrder, compare_names, sort_entries};
 pub use error::{Error, ErrorKind, Result};
 pub use file_system::{
@@ -28,6 +33,10 @@ pub use file_system::{
 };
 pub use ftp::FtpFileSystem;
 pub use local::LocalFileSystem;
+pub use options::{
+    ConnectionOptions, FileNameEncoding, FtpMode, MAX_TIMEOUT_SECONDS, seconds_from_text,
+    seconds_text,
+};
 pub use paths::{TrustStore, config_dir};
 pub use rate::RateLimiter;
 pub use secrets::{
@@ -36,7 +45,9 @@ pub use secrets::{
     unlock_vault,
 };
 pub use sftp::{SftpFileSystem, auto_reconnect, fingerprint, set_auto_reconnect};
-pub use sites::{SITES_FILE, Site, SiteAuth, SiteList, new_id, normalize_folder};
+pub use sites::{
+    MAX_SITE_TRANSFERS, SITES_FILE, Site, SiteAuth, SiteList, new_id, normalize_folder,
+};
 pub use sync::{
     CompareOptions, CompareStatus, ComparedEntry, DEFAULT_TIME_TOLERANCE, Pattern, Side,
     SyncAction, SyncDirection, SyncEndpoint, SyncMode, SyncOptions, SyncPlan, SyncSummary,

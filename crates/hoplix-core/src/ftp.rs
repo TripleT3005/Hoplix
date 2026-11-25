@@ -3,7 +3,7 @@ use std::future::Future;
 use std::io;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, Weak};
 use std::task::{Context, Poll, ready};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -13,15 +13,19 @@ use suppaftp::tokio::{
     AsyncRustlsConnector, AsyncRustlsFtpStream, AsyncRustlsStream, TransferStream,
 };
 use suppaftp::types::FileType;
-use suppaftp::{FtpError, Mode, Status};
+use suppaftp::{Encoding, FtpError, Mode, Status};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{Mutex, MutexGuard};
 use tokio_rustls::TlsConnector;
 
 use crate::connection::{Authentication, ConnectionParams, HostKeyTrust, Protocol};
 use crate::file_system::{Reader, Writer};
+use crate::options::{ConnectionOptions, FileNameEncoding, FtpMode};
 use crate::sftp::{join_posix, parent_posix};
-use crate::{BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Result, certificates};
+use crate::{
+    BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Result, certificates,
+    decode_windows_1252, encode_windows_1252,
+};
 
 // Constants
 
@@ -48,6 +52,7 @@ struct Capabilities {
 
 struct Session {
     params: ConnectionParams,
+    options: ConnectionOptions,
     tls: Option<Arc<ClientConfig>>,
     rejection: Arc<StdMutex<Option<Error>>>,
 }
@@ -61,10 +66,13 @@ struct Control {
 pub struct FtpFileSystem {
     session: Session,
     capabilities: Capabilities,
-    control: Mutex<Control>,
+    control: Arc<Mutex<Control>>,
     idle: Arc<StdMutex<Vec<Client>>>,
     label: String,
 }
+
+#[derive(Debug, Clone, Copy)]
+struct Windows1252;
 
 enum TransferState {
     Open {
@@ -88,6 +96,15 @@ impl FtpFileSystem {
         certificates: &Path,
         trust: Option<HostKeyTrust>,
     ) -> Result<Self> {
+        Self::connect_with(params, &ConnectionOptions::default(), certificates, trust).await
+    }
+
+    pub async fn connect_with(
+        params: &ConnectionParams,
+        options: &ConnectionOptions,
+        certificates: &Path,
+        trust: Option<HostKeyTrust>,
+    ) -> Result<Self> {
         let rejection = Arc::new(StdMutex::new(None));
         let tls = if params.protocol.uses_tls() {
             Some(certificates::client_config(
@@ -102,18 +119,23 @@ impl FtpFileSystem {
         };
         let session = Session {
             params: params.clone(),
+            options: options.clone(),
             tls,
             rejection,
         };
         let (client, capabilities) = session.open().await?;
+        let control = Arc::new(Mutex::new(Control {
+            client,
+            last_used: Instant::now(),
+            broken: false,
+        }));
+        if let Some(interval) = options.keepalive() {
+            keep_alive(Arc::downgrade(&control), interval);
+        }
         Ok(Self {
             session,
             capabilities,
-            control: Mutex::new(Control {
-                client,
-                last_used: Instant::now(),
-                broken: false,
-            }),
+            control,
             idle: Arc::new(StdMutex::new(Vec::new())),
             label: params.label(),
         })
@@ -147,7 +169,7 @@ impl FtpFileSystem {
 
 impl Session {
     async fn open(&self) -> Result<(Client, Capabilities)> {
-        tokio::time::timeout(CONNECT_TIMEOUT, self.establish())
+        tokio::time::timeout(self.options.timeout_or(CONNECT_TIMEOUT), self.establish())
             .await
             .map_err(|_| Error::new(ErrorKind::ConnectionFailed, self.params.host.clone()))?
     }
@@ -180,6 +202,10 @@ impl Session {
             _ => Client::connect(address).await,
         };
         let mut client = connected.map_err(|error| self.connect_error(&error))?;
+        let encoding = self.options.ftp_encoding;
+        if encoding == FileNameEncoding::Windows1252 {
+            client.set_encoding(Windows1252).await;
+        }
         match client
             .login(params.username.as_str(), password.as_str())
             .await
@@ -201,19 +227,21 @@ impl Session {
                 .iter()
                 .map(String::as_str),
         );
-        if capabilities.utf8 {
+        if capabilities.utf8 && encoding == FileNameEncoding::Utf8 {
             let _ = client.opts("UTF8", Some("ON")).await;
         }
         client
             .transfer_type(FileType::Binary)
             .await
             .map_err(|error| ftp_error(&error, &params.host))?;
-        if capabilities.epsv {
-            client.set_mode(Mode::ExtendedPassive);
-        } else {
-            client.set_mode(Mode::Passive);
-            client.set_passive_nat_workaround(true);
-        }
+        let client = match data_mode(&self.options, capabilities) {
+            Mode::Active => client.active_mode(self.options.timeout_or(CONNECT_TIMEOUT)),
+            mode => {
+                client.set_mode(mode);
+                client.set_passive_nat_workaround(self.options.ftp_external_ip);
+                client
+            }
+        };
         Ok((client, capabilities))
     }
 
@@ -226,6 +254,39 @@ impl Session {
             )
         })
     }
+}
+
+fn data_mode(options: &ConnectionOptions, capabilities: Capabilities) -> Mode {
+    match options.ftp_mode {
+        FtpMode::Active => Mode::Active,
+        FtpMode::Passive if capabilities.epsv && options.ftp_external_ip => Mode::ExtendedPassive,
+        FtpMode::Passive => Mode::Passive,
+    }
+}
+
+fn keep_alive(control: Weak<Mutex<Control>>, interval: Duration) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            let Some(control) = control.upgrade() else {
+                break;
+            };
+            let Ok(mut control) = control.try_lock() else {
+                continue;
+            };
+            if control.broken || control.last_used.elapsed() < interval {
+                continue;
+            }
+            if control.client.noop().await.is_ok() {
+                control.last_used = Instant::now();
+            } else {
+                control.broken = true;
+            }
+        }
+    });
 }
 
 async fn protect_data(client: &mut Client) -> std::result::Result<(), FtpError> {
@@ -473,6 +534,21 @@ impl FileSystem for FtpFileSystem {
     }
 }
 
+impl Encoding for Windows1252 {
+    fn decode(&self, bytes: &[u8]) -> String {
+        decode_windows_1252(bytes)
+    }
+
+    fn encode(&self, text: &str) -> io::Result<Vec<u8>> {
+        encode_windows_1252(text).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "not representable in Windows-1252",
+            )
+        })
+    }
+}
+
 impl fmt::Debug for FtpFileSystem {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -488,7 +564,9 @@ impl fmt::Debug for FtpFileSystem {
 impl Control {
     fn check<T>(&mut self, result: std::result::Result<T, FtpError>, path: &str) -> Result<T> {
         result.map_err(|error| {
-            if matches!(error, FtpError::ConnectionError(_) | FtpError::BadResponse) {
+            if matches!(error, FtpError::ConnectionError(_) | FtpError::BadResponse)
+                && !is_unencodable(&error)
+            {
                 self.broken = true;
             }
             ftp_error(&error, path)
@@ -677,7 +755,17 @@ fn timestamp(time: SystemTime) -> Option<String> {
 
 // Errors
 
+fn is_unencodable(error: &FtpError) -> bool {
+    matches!(error, FtpError::ConnectionError(io) if io.kind() == io::ErrorKind::InvalidInput)
+}
+
 fn ftp_error(error: &FtpError, path: &str) -> Error {
+    if is_unencodable(error) {
+        return Error::new(
+            ErrorKind::Other,
+            format!("{path}: the name cannot be written in the file name encoding of this site"),
+        );
+    }
     match error {
         FtpError::ConnectionError(_) | FtpError::BadResponse => {
             Error::new(ErrorKind::ConnectionFailed, format!("{path}: {error}"))
@@ -1013,5 +1101,313 @@ mod tests {
         );
         let results = upload(&server, 1).await;
         assert!(results[0].is_err(), "{results:?}");
+    }
+
+    // Connection options
+
+    struct OptionServer {
+        port: u16,
+        commands: Arc<StdMutex<Vec<Vec<u8>>>>,
+    }
+
+    impl OptionServer {
+        fn commands(&self) -> Vec<String> {
+            self.commands
+                .lock()
+                .expect("poisoned")
+                .iter()
+                .map(|line| String::from_utf8_lossy(line).trim_end().to_string())
+                .collect()
+        }
+
+        fn raw(&self, prefix: &str) -> Option<Vec<u8>> {
+            self.commands
+                .lock()
+                .expect("poisoned")
+                .iter()
+                .find(|line| line.starts_with(prefix.as_bytes()))
+                .cloned()
+        }
+    }
+
+    fn option_server(
+        listing: &'static [u8],
+        epsv: bool,
+        reported: [u8; 4],
+        bind: [u8; 4],
+    ) -> OptionServer {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("binding failed");
+        let port = listener.local_addr().expect("no address").port();
+        let commands = Arc::new(StdMutex::new(Vec::new()));
+        let log = Arc::clone(&commands);
+        std::thread::spawn(move || {
+            for socket in listener.incoming().filter_map(std::result::Result::ok) {
+                let log = Arc::clone(&log);
+                std::thread::spawn(move || {
+                    let mut writer = socket.try_clone().expect("cloning failed");
+                    let mut reader = BufReader::new(socket);
+                    let mut passive: Option<TcpListener> = None;
+                    let mut active: Option<SocketAddr> = None;
+                    let _ = writer.write_all(b"220 ready\r\n");
+                    let mut line = Vec::new();
+                    while reader
+                        .read_until(b'\n', &mut line)
+                        .is_ok_and(|read| read > 0)
+                    {
+                        log.lock().expect("poisoned").push(line.clone());
+                        let text = String::from_utf8_lossy(&line).trim_end().to_string();
+                        let verb = text
+                            .split(' ')
+                            .next()
+                            .unwrap_or_default()
+                            .to_ascii_uppercase();
+                        let argument = text
+                            .split_once(' ')
+                            .map(|(_, rest)| rest.to_string())
+                            .unwrap_or_default();
+                        let reply = match verb.as_str() {
+                            "USER" => "331 password\r\n".to_string(),
+                            "PASS" => "230 logged in\r\n".to_string(),
+                            "FEAT" if epsv => {
+                                "211-Features:\r\n EPSV\r\n UTF8\r\n211 End\r\n".to_string()
+                            }
+                            "FEAT" => "211-Features:\r\n UTF8\r\n211 End\r\n".to_string(),
+                            "PWD" => "257 \"/\"\r\n".to_string(),
+                            "CWD" => "250 ok\r\n".to_string(),
+                            "EPSV" => {
+                                let data = TcpListener::bind("127.0.0.1:0").expect("binding");
+                                let data_port = data.local_addr().expect("address").port();
+                                passive = Some(data);
+                                format!("229 passive (|||{data_port}|)\r\n")
+                            }
+                            "PASV" => {
+                                let data =
+                                    TcpListener::bind((Ipv4Addr::from(bind), 0)).expect("binding");
+                                let data_port = data.local_addr().expect("address").port();
+                                passive = Some(data);
+                                let [a, b, c, d] = reported;
+                                format!(
+                                    "227 passive ({a},{b},{c},{d},{},{})\r\n",
+                                    data_port / 256,
+                                    data_port % 256
+                                )
+                            }
+                            "PORT" => {
+                                let numbers: Vec<u8> = argument
+                                    .split(',')
+                                    .filter_map(|part| part.trim().parse().ok())
+                                    .collect();
+                                if let [a, b, c, d, high, low] = numbers[..] {
+                                    let data_port = u16::from(high) * 256 + u16::from(low);
+                                    active = Some(SocketAddr::from((
+                                        Ipv4Addr::new(a, b, c, d),
+                                        data_port,
+                                    )));
+                                }
+                                "200 port ok\r\n".to_string()
+                            }
+                            "LIST" | "NLST" => {
+                                let _ = writer.write_all(b"150 listing\r\n");
+                                let data = match passive.take() {
+                                    Some(listener) => listener.accept().ok().map(|(data, _)| data),
+                                    None => active
+                                        .take()
+                                        .and_then(|address| TcpStream::connect(address).ok()),
+                                };
+                                if let Some(mut data) = data {
+                                    let _ = data.write_all(listing);
+                                }
+                                "226 done\r\n".to_string()
+                            }
+                            "DELE" => "250 deleted\r\n".to_string(),
+                            "QUIT" => {
+                                let _ = writer.write_all(b"221 bye\r\n");
+                                break;
+                            }
+                            _ => "200 ok\r\n".to_string(),
+                        };
+                        let _ = writer.write_all(reply.as_bytes());
+                        line.clear();
+                    }
+                });
+            }
+        });
+        OptionServer { port, commands }
+    }
+
+    async fn connect_to(server: &OptionServer, options: &ConnectionOptions) -> FtpFileSystem {
+        let params = ConnectionParams {
+            protocol: Protocol::Ftp,
+            host: "127.0.0.1".to_string(),
+            port: server.port,
+            username: "test".to_string(),
+            authentication: Authentication::Password(test_password()),
+        };
+        let certificates = std::env::temp_dir().join("hoplix-mock-certificates");
+        FtpFileSystem::connect_with(&params, options, &certificates, None)
+            .await
+            .expect("connecting failed")
+    }
+
+    const LOOPBACK: [u8; 4] = [127, 0, 0, 1];
+    const LISTING: &[u8] =
+        b"-rw-r--r--    1 1000     1000            5 Nov 24 09:15 caf\xe9 \x80.txt\r\n";
+
+    #[tokio::test]
+    async fn active_mode_sends_port_and_receives_the_listing() {
+        let server = option_server(LISTING, true, LOOPBACK, LOOPBACK);
+        let options = ConnectionOptions {
+            ftp_mode: FtpMode::Active,
+            ..ConnectionOptions::default()
+        };
+        let file_system = connect_to(&server, &options).await;
+        let entries = file_system.list("/").await.expect("listing failed");
+        assert_eq!(entries.len(), 1);
+        file_system.close().await;
+        let commands = server.commands();
+        assert!(
+            commands
+                .iter()
+                .any(|line| line.starts_with("PORT 127,0,0,1,")),
+            "{commands:?}"
+        );
+        assert!(!commands.iter().any(|line| line == "EPSV" || line == "PASV"));
+    }
+
+    #[tokio::test]
+    async fn passive_mode_uses_the_server_address_unless_told_otherwise() {
+        let private = [10, 255, 255, 1];
+        let server = option_server(LISTING, true, private, LOOPBACK);
+        let file_system = connect_to(&server, &ConnectionOptions::default()).await;
+        assert_eq!(
+            file_system.list("/").await.expect("listing failed").len(),
+            1
+        );
+        file_system.close().await;
+        assert!(server.commands().iter().any(|line| line == "EPSV"));
+
+        let server = option_server(LISTING, false, private, LOOPBACK);
+        let file_system = connect_to(&server, &ConnectionOptions::default()).await;
+        assert_eq!(
+            file_system.list("/").await.expect("listing failed").len(),
+            1
+        );
+        file_system.close().await;
+        assert!(server.commands().iter().any(|line| line == "PASV"));
+
+        let options = ConnectionOptions {
+            ftp_external_ip: false,
+            ..ConnectionOptions::default()
+        };
+        let other = [127, 0, 0, 2];
+        let server = option_server(LISTING, true, other, other);
+        let file_system = connect_to(&server, &options).await;
+        assert_eq!(
+            file_system.list("/").await.expect("listing failed").len(),
+            1
+        );
+        file_system.close().await;
+        let commands = server.commands();
+        assert!(commands.iter().any(|line| line == "PASV"), "{commands:?}");
+        assert!(!commands.iter().any(|line| line == "EPSV"));
+    }
+
+    #[test]
+    fn data_modes_follow_the_options() {
+        let with_epsv = Capabilities {
+            epsv: true,
+            ..Capabilities::default()
+        };
+        let default = ConnectionOptions::default();
+        assert_eq!(data_mode(&default, with_epsv), Mode::ExtendedPassive);
+        assert_eq!(data_mode(&default, Capabilities::default()), Mode::Passive);
+        let reported = ConnectionOptions {
+            ftp_external_ip: false,
+            ..ConnectionOptions::default()
+        };
+        assert_eq!(data_mode(&reported, with_epsv), Mode::Passive);
+        let active = ConnectionOptions {
+            ftp_mode: FtpMode::Active,
+            ..ConnectionOptions::default()
+        };
+        assert_eq!(data_mode(&active, with_epsv), Mode::Active);
+    }
+
+    #[tokio::test]
+    async fn windows_1252_names_are_decoded_and_sent_as_bytes() {
+        let server = option_server(LISTING, true, LOOPBACK, LOOPBACK);
+        let options = ConnectionOptions {
+            ftp_encoding: FileNameEncoding::Windows1252,
+            ..ConnectionOptions::default()
+        };
+        let file_system = connect_to(&server, &options).await;
+        let entries = file_system.list("/").await.expect("listing failed");
+        assert_eq!(entries[0].name, "café €.txt");
+        file_system
+            .remove_file("/café €.txt")
+            .await
+            .expect("deleting failed");
+        let error = file_system
+            .remove_file("/日本.txt")
+            .await
+            .expect_err("unencodable names must fail");
+        assert_eq!(error.kind(), ErrorKind::Other);
+        assert!(file_system.home().await.is_ok());
+        file_system.close().await;
+        assert_eq!(
+            server.raw("DELE").as_deref(),
+            Some(&b"DELE /caf\xe9 \x80.txt\r\n"[..])
+        );
+        let commands = server.commands();
+        assert!(!commands.iter().any(|line| line.starts_with("OPTS UTF8")));
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|line| line.starts_with("DELE"))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn utf8_stays_the_default() {
+        let server = option_server(
+            "-rw-r--r--    1 1000     1000            5 Nov 24 09:15 café.txt\r\n".as_bytes(),
+            true,
+            LOOPBACK,
+            LOOPBACK,
+        );
+        let file_system = connect_to(&server, &ConnectionOptions::default()).await;
+        let entries = file_system.list("/").await.expect("listing failed");
+        assert_eq!(entries[0].name, "café.txt");
+        file_system.close().await;
+        assert!(server.commands().iter().any(|line| line == "OPTS UTF8 ON"));
+    }
+
+    #[tokio::test]
+    async fn idle_connections_send_noop_keepalives() {
+        let server = option_server(LISTING, true, LOOPBACK, LOOPBACK);
+        let options = ConnectionOptions {
+            keepalive_interval: Some(Duration::from_millis(200)),
+            ..ConnectionOptions::default()
+        };
+        let file_system = connect_to(&server, &options).await;
+        tokio::time::sleep(Duration::from_millis(900)).await;
+        let noops = server
+            .commands()
+            .iter()
+            .filter(|line| *line == "NOOP")
+            .count();
+        assert!(noops >= 2, "{:?}", server.commands());
+        file_system.close().await;
+
+        let server = option_server(LISTING, true, LOOPBACK, LOOPBACK);
+        let file_system = connect_to(&server, &ConnectionOptions::default()).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(!server.commands().iter().any(|line| line == "NOOP"));
+        file_system.close().await;
     }
 }
