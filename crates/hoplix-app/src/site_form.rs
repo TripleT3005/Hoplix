@@ -1,4 +1,7 @@
-use hoplix_core::{Site, normalize_folder};
+use hoplix_core::{
+    ConnectionOptions, FileNameEncoding, FtpMode, MAX_SITE_TRANSFERS, Site, normalize_folder,
+    seconds_from_text, seconds_text,
+};
 use iced::widget::text_editor;
 
 use crate::connect_form::{ConnectForm, Field, FormError};
@@ -9,6 +12,9 @@ use crate::connect_form::{ConnectForm, Field, FormError};
 pub enum SiteFormError {
     MissingName,
     Connection(FormError),
+    InvalidTimeout,
+    InvalidKeepalive,
+    InvalidMaxTransfers,
 }
 
 #[derive(Debug, Clone)]
@@ -19,6 +25,29 @@ pub enum SiteField {
     LocalPath(String),
     Notes(text_editor::Action),
     Connection(Field),
+    Option(OptionField),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OptionField {
+    Toggle,
+    ConnectTimeout(String),
+    Keepalive(String),
+    FtpMode(FtpMode),
+    ExternalIp(bool),
+    Encoding(FileNameEncoding),
+    MaxTransfers(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OptionsForm {
+    pub open: bool,
+    pub connect_timeout: String,
+    pub keepalive: String,
+    pub ftp_mode: FtpMode,
+    pub ftp_external_ip: bool,
+    pub ftp_encoding: FileNameEncoding,
+    pub max_transfers: String,
 }
 
 #[derive(Debug, Default)]
@@ -32,6 +61,7 @@ pub struct SiteForm {
     pub local_path: String,
     pub notes: text_editor::Content,
     pub had_secret: bool,
+    pub options: OptionsForm,
     pub invalid: Option<SiteFormError>,
 }
 
@@ -40,7 +70,79 @@ impl SiteFormError {
         match self {
             Self::MissingName => "sites.invalid.name",
             Self::Connection(error) => error.key(),
+            Self::InvalidTimeout => "sites.invalid.timeout",
+            Self::InvalidKeepalive => "sites.invalid.keepalive",
+            Self::InvalidMaxTransfers => "sites.invalid.max_transfers",
         }
+    }
+}
+
+// Options
+
+impl Default for OptionsForm {
+    fn default() -> Self {
+        Self::from_options(&ConnectionOptions::default(), None)
+    }
+}
+
+impl OptionsForm {
+    pub fn from_options(options: &ConnectionOptions, max_transfers: Option<usize>) -> Self {
+        Self {
+            open: false,
+            connect_timeout: seconds_text(options.connect_timeout),
+            keepalive: seconds_text(options.keepalive_interval),
+            ftp_mode: options.ftp_mode,
+            ftp_external_ip: options.ftp_external_ip,
+            ftp_encoding: options.ftp_encoding,
+            max_transfers: max_transfers
+                .map(|count| count.to_string())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn apply(&mut self, field: OptionField) {
+        let digits = |text: &str| text.chars().all(|c| c.is_ascii_digit());
+        match field {
+            OptionField::Toggle => self.open = !self.open,
+            OptionField::ConnectTimeout(text) if digits(&text) => self.connect_timeout = text,
+            OptionField::Keepalive(text) if digits(&text) => self.keepalive = text,
+            OptionField::MaxTransfers(text) if digits(&text) => self.max_transfers = text,
+            OptionField::ConnectTimeout(_)
+            | OptionField::Keepalive(_)
+            | OptionField::MaxTransfers(_) => {}
+            OptionField::FtpMode(mode) => self.ftp_mode = mode,
+            OptionField::ExternalIp(enabled) => self.ftp_external_ip = enabled,
+            OptionField::Encoding(encoding) => self.ftp_encoding = encoding,
+        }
+    }
+
+    pub fn to_options(&self) -> Result<(ConnectionOptions, Option<usize>), SiteFormError> {
+        let connect_timeout =
+            seconds_from_text(&self.connect_timeout).ok_or(SiteFormError::InvalidTimeout)?;
+        let keepalive_interval =
+            seconds_from_text(&self.keepalive).ok_or(SiteFormError::InvalidKeepalive)?;
+        let max_transfers = match self.max_transfers.trim() {
+            "" => None,
+            text => Some(
+                text.parse::<usize>()
+                    .ok()
+                    .filter(|count| (1..=MAX_SITE_TRANSFERS).contains(count))
+                    .ok_or(SiteFormError::InvalidMaxTransfers)?,
+            ),
+        };
+        let options = ConnectionOptions {
+            connect_timeout,
+            keepalive_interval,
+            ftp_mode: self.ftp_mode,
+            ftp_external_ip: self.ftp_external_ip,
+            ftp_encoding: self.ftp_encoding,
+        };
+        Ok((options, max_transfers))
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.to_options()
+            .is_ok_and(|(options, max)| options == ConnectionOptions::default() && max.is_none())
     }
 }
 
@@ -60,6 +162,7 @@ impl SiteForm {
             local_path: site.local_path.clone(),
             notes: text_editor::Content::with_text(&site.notes),
             had_secret: site.save_secrets,
+            options: OptionsForm::from_options(&site.options, site.max_transfers),
             invalid: None,
         }
     }
@@ -93,8 +196,21 @@ impl SiteForm {
             SiteField::LocalPath(path) => self.local_path = path,
             SiteField::Notes(action) => self.notes.perform(action),
             SiteField::Connection(field) => self.connection.apply(field),
+            SiteField::Option(field) => self.options.apply(field),
         }
         self.invalid = None;
+    }
+
+    pub fn reveal_invalid(&mut self, invalid: SiteFormError) {
+        if matches!(
+            invalid,
+            SiteFormError::InvalidTimeout
+                | SiteFormError::InvalidKeepalive
+                | SiteFormError::InvalidMaxTransfers
+        ) {
+            self.options.open = true;
+        }
+        self.invalid = Some(invalid);
     }
 
     // Validation
@@ -108,6 +224,7 @@ impl SiteForm {
             .connection
             .to_params()
             .map_err(SiteFormError::Connection)?;
+        let (options, max_transfers) = self.options.to_options()?;
         let notes = self.notes.text();
         let site = Site {
             id: self.id.clone(),
@@ -128,6 +245,8 @@ impl SiteForm {
             local_path: self.local_path.trim().trim_matches('"').to_string(),
             notes: notes.trim_end().to_string(),
             save_secrets: self.connection.save_password,
+            options,
+            max_transfers,
         };
         let secret = Some(self.connection.secret().to_string()).filter(|secret| !secret.is_empty());
         Ok((site, secret))
@@ -139,6 +258,7 @@ mod tests {
     use super::*;
     use crate::connect_form::AuthMethod;
     use crate::ui_tests::test_password;
+    use hoplix_core::{FileNameEncoding, FtpMode};
     use hoplix_core::{Protocol, SiteAuth};
 
     fn site() -> Site {
@@ -203,6 +323,67 @@ mod tests {
             form.to_site().map(|_| ()),
             Err(SiteFormError::Connection(FormError::MissingHost))
         );
+    }
+
+    #[test]
+    fn advanced_options_are_validated_and_saved() {
+        let original = site();
+        let mut form = SiteForm::edit(&original);
+        assert!(form.options.is_default());
+        assert!(form.options.ftp_external_ip);
+        form.apply(SiteField::Option(OptionField::ConnectTimeout(
+            "45".to_string(),
+        )));
+        form.apply(SiteField::Option(OptionField::Keepalive("x".to_string())));
+        assert_eq!(form.options.keepalive, "");
+        form.apply(SiteField::Option(OptionField::Keepalive("15".to_string())));
+        form.apply(SiteField::Option(OptionField::FtpMode(FtpMode::Active)));
+        form.apply(SiteField::Option(OptionField::ExternalIp(false)));
+        form.apply(SiteField::Option(OptionField::Encoding(
+            FileNameEncoding::Windows1252,
+        )));
+        form.apply(SiteField::Option(OptionField::MaxTransfers(
+            "3".to_string(),
+        )));
+        let (saved, _) = form.to_site().expect("valid");
+        assert_eq!(
+            saved.options.connect_timeout,
+            Some(std::time::Duration::from_secs(45))
+        );
+        assert_eq!(
+            saved.options.keepalive_interval,
+            Some(std::time::Duration::from_secs(15))
+        );
+        assert_eq!(saved.options.ftp_mode, FtpMode::Active);
+        assert!(!saved.options.ftp_external_ip);
+        assert_eq!(saved.options.ftp_encoding, FileNameEncoding::Windows1252);
+        assert_eq!(saved.max_transfers, Some(3));
+        assert_eq!(SiteForm::edit(&saved).options.max_transfers, "3");
+
+        form.apply(SiteField::Option(OptionField::MaxTransfers(
+            "9".to_string(),
+        )));
+        assert_eq!(
+            form.to_site().map(|_| ()),
+            Err(SiteFormError::InvalidMaxTransfers)
+        );
+        form.apply(SiteField::Option(OptionField::MaxTransfers(String::new())));
+        form.apply(SiteField::Option(OptionField::ConnectTimeout(
+            "4000".to_string(),
+        )));
+        assert_eq!(
+            form.to_site().map(|_| ()),
+            Err(SiteFormError::InvalidTimeout)
+        );
+        form.options.open = false;
+        form.reveal_invalid(SiteFormError::InvalidTimeout);
+        assert!(form.options.open);
+        form.apply(SiteField::Option(OptionField::ConnectTimeout(
+            "0".to_string(),
+        )));
+        let (saved, _) = form.to_site().expect("valid");
+        assert_eq!(saved.options.connect_timeout, None);
+        assert_eq!(saved.max_transfers, None);
     }
 
     #[test]

@@ -42,6 +42,7 @@ pub enum Action {
     Compare,
     Synchronise,
     ConnectSite(String),
+    ConnectRecent(usize),
     MoveSelection { delta: isize, extend: bool },
     SelectEdge { last: bool, extend: bool },
 }
@@ -209,6 +210,18 @@ impl Hoplix {
                 strings.format("command.connect_site", &[("name", &site.display_path())]),
             )
         }));
+        actions.extend(
+            self.recent
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| {
+                    (
+                        Action::ConnectRecent(index),
+                        strings.format("command.connect_recent", &[("name", &entry.label())]),
+                    )
+                }),
+        );
         let mut scored: Vec<(u32, usize, PaletteItem)> = actions
             .into_iter()
             .enumerate()
@@ -389,6 +402,7 @@ impl Hoplix {
             Action::Compare => return self.update(Message::Compare(CompareMessage::Toggle)),
             Action::Synchronise => return self.update(Message::Compare(CompareMessage::OpenSync)),
             Action::ConnectSite(id) => return self.update(Message::SiteConnect(id)),
+            Action::ConnectRecent(index) => return self.use_recent(index, true),
             Action::MoveSelection { delta, extend } => return self.move_selection(delta, extend),
             Action::SelectEdge { last, extend } => {
                 let delta = if last { isize::MAX } else { isize::MIN };

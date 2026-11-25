@@ -10,6 +10,7 @@ mod i18n;
 mod icon;
 mod local_time;
 mod opener;
+mod recent_actions;
 mod session;
 mod settings;
 mod site_actions;

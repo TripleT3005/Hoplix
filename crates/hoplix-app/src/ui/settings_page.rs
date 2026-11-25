@@ -235,6 +235,13 @@ fn connections(app: &Hoplix) -> Element<'_, Message> {
                     .into(),
             ),
             hint(strings.get("settings.connections.hint")),
+            checkbox_row(
+                checkbox(settings.remember_recent)
+                    .label(strings.get("settings.remember_recent"))
+                    .on_toggle(Message::RememberRecent)
+                    .into(),
+            ),
+            hint(strings.get("settings.remember_recent.hint")),
         ],
     )
 }

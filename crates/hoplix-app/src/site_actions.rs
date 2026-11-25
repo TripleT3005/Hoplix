@@ -481,7 +481,7 @@ impl Hoplix {
         let (site, secret) = match form.to_site() {
             Ok(result) => result,
             Err(invalid) => {
-                form.invalid = Some(invalid);
+                form.reveal_invalid(invalid);
                 return Task::none();
             }
         };
@@ -529,6 +529,7 @@ impl Hoplix {
     }
 
     pub(crate) fn open_connection(&mut self, file_system: Arc<dyn FileSystem>) -> Task<Message> {
+        self.remember_connection();
         let site = self
             .connect_form
             .site

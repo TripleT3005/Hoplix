@@ -5,10 +5,10 @@ use std::time::Duration;
 use std::collections::{HashMap, VecDeque};
 
 use hoplix_core::{
-    BoxFuture, Conflict, ConflictDecision, ConnectionParams, Entry, Error, ErrorKind, FileSystem,
-    HostKeyTrust, JobId, JobSnapshot, Keyring, LocalFileSystem, Moved, SecretBackend, SiteList,
-    SortKey, SortOrder, TransferEvent, TransferQueue, TrustStore, Vault, config_dir, is_valid_name,
-    remove_recursive, sort_entries,
+    BoxFuture, Conflict, ConflictDecision, ConnectionOptions, ConnectionParams, Entry, Error,
+    ErrorKind, FileSystem, HostKeyTrust, JobId, JobSnapshot, Keyring, LocalFileSystem, Moved,
+    RecentList, SecretBackend, SiteList, SortKey, SortOrder, TransferEvent, TransferQueue,
+    TrustStore, Vault, config_dir, is_valid_name, remove_recursive, sort_entries,
 };
 use iced::keyboard::{Key, Modifiers};
 use iced::theme::Mode;
@@ -210,6 +210,10 @@ pub enum Message {
     WindowClosing(window::Id, bool),
     Edit(EditMessage),
     Update(UpdateMessage),
+    RecentSelected(usize),
+    RecentRemoved(usize),
+    RecentCleared,
+    RememberRecent(bool),
 }
 
 #[derive(Debug, Clone)]
@@ -239,6 +243,7 @@ pub struct Hoplix {
     pub page: Page,
     pub notice: Option<String>,
     pub connect_form: ConnectForm,
+    pub recent: RecentList,
     pub dialog: Option<Dialog>,
     pub sites: SiteList,
     pub site_selection: Option<SiteSelection>,
@@ -269,6 +274,7 @@ pub struct Hoplix {
 pub(crate) type Connector = Arc<
     dyn Fn(
             ConnectionParams,
+            ConnectionOptions,
             TrustStore,
             Option<HostKeyTrust>,
         ) -> BoxFuture<'static, Result<Arc<dyn FileSystem>, Error>>
@@ -291,8 +297,10 @@ impl Default for Services {
     fn default() -> Self {
         Self {
             keyring: Keyring::default(),
-            connector: Arc::new(|params, trust_store, trust| {
-                Box::pin(async move { hoplix_core::connect(&params, &trust_store, trust).await })
+            connector: Arc::new(|params, options, trust_store, trust| {
+                Box::pin(async move {
+                    hoplix_core::connect_with(&params, &options, &trust_store, trust).await
+                })
             }),
             local: Arc::new(LocalFileSystem),
             opener: Arc::new(opener::open),
@@ -394,6 +402,7 @@ impl Hoplix {
                 }
             }
         }
+        app.load_recent();
         let session = app
             .config_dir
             .as_deref()
@@ -420,6 +429,7 @@ impl Hoplix {
             page: Page::Browser,
             notice: None,
             connect_form: ConnectForm::default(),
+            recent: RecentList::default(),
             dialog: None,
             sites: SiteList::default(),
             site_selection: None,
@@ -616,6 +626,10 @@ impl Hoplix {
             | Message::CursorMoved(_)
             | Message::MouseReleased) => return self.update_transfers(message),
             Message::Edit(message) => return self.update_edits(message),
+            message @ (Message::RecentSelected(_)
+            | Message::RecentRemoved(_)
+            | Message::RecentCleared
+            | Message::RememberRecent(_)) => return self.update_recent(message),
             Message::Update(message) => return self.update_updates(message),
             Message::TransferSetting(setting) => self.update_transfer_setting(setting),
             message => return self.update_sites(message),
@@ -877,10 +891,17 @@ impl Hoplix {
             self.connect_form.error = Some(Error::new(ErrorKind::Other, "known_hosts"));
             return Task::none();
         };
+        let options = self
+            .connect_form
+            .site
+            .as_ref()
+            .and_then(|id| self.sites.get(id))
+            .map(|site| site.options.clone())
+            .unwrap_or_default();
         self.connect_form.connecting = true;
         self.connect_form.error = None;
         Task::perform(
-            (self.services.connector)(params, trust_store, trust),
+            (self.services.connector)(params, options, trust_store, trust),
             Message::Connected,
         )
     }

@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use hoplix_core::{
-    Authentication, BoxFuture, ConnectionParams, Entry, Error, ErrorKind, FileSystem, HostKeyTrust,
-    LocalFileSystem, Protocol, Reader, Result, TrustStore, Writer,
+    Authentication, BoxFuture, ConnectionOptions, ConnectionParams, Entry, Error, ErrorKind,
+    FileSystem, HostKeyTrust, LocalFileSystem, Protocol, Reader, Result, TrustStore, Writer,
 };
 
 use super::test_password;
@@ -177,26 +177,46 @@ pub fn update_source(updates: Arc<Updates>) -> UpdateSource {
 
 // Server
 
+pub fn connections() -> &'static Mutex<Vec<(String, ConnectionOptions)>> {
+    static CONNECTIONS: OnceLock<Mutex<Vec<(String, ConnectionOptions)>>> = OnceLock::new();
+    CONNECTIONS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub fn options_used_for(host: &str) -> Option<ConnectionOptions> {
+    connections()
+        .lock()
+        .expect("the connection log is poisoned")
+        .iter()
+        .rev()
+        .find(|(name, _)| name == host)
+        .map(|(_, options)| options.clone())
+}
+
 pub fn fingerprint(host: &str) -> String {
     format!("SHA256:fake-{host}")
 }
 
 pub fn connector(remote: PathBuf) -> Connector {
-    Arc::new(move |params, trust_store, trust| {
+    Arc::new(move |params, options, trust_store, trust| {
         let remote = remote.clone();
-        Box::pin(async move { connect(&remote, &params, &trust_store, trust) })
+        Box::pin(async move { connect(&remote, &params, &options, &trust_store, trust) })
     })
 }
 
 fn connect(
     remote: &Path,
     params: &ConnectionParams,
+    options: &ConnectionOptions,
     trust_store: &TrustStore,
     trust: Option<HostKeyTrust>,
 ) -> Result<Arc<dyn FileSystem>> {
     if params.host.starts_with("offline.") {
         return Err(Error::new(ErrorKind::ConnectionFailed, params.host.clone()));
     }
+    connections()
+        .lock()
+        .expect("the connection log is poisoned")
+        .push((params.host.clone(), options.clone()));
     let known = match params.protocol {
         Protocol::Sftp => Some((
             &trust_store.known_hosts,
