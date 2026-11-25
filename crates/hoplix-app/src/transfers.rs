@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use hoplix_core::{
-    ConflictDecision, ConflictPolicy, FileSystem, JobId, JobStatus, TransferEvent, TransferQueue,
-    TransferRequest,
+    ConflictDecision, ConflictPolicy, FileSystem, JobId, JobOptions, JobStatus, SiteLimit,
+    TransferEvent, TransferQueue, TransferRequest,
 };
 use iced::futures::SinkExt;
 use iced::keyboard::Modifiers;
 use iced::{Point, Subscription, Task, event, keyboard, mouse};
 
 use crate::app::{Dialog, Hoplix, Message, Tab, TabId};
+use crate::session::TabOrigin;
 
 // Constants
 
@@ -58,6 +59,7 @@ pub struct TransferTarget {
     pub file_system: Arc<dyn FileSystem>,
     pub directory: String,
     pub direction: Direction,
+    pub site_limits: Vec<SiteLimit>,
 }
 
 impl Drag {
@@ -227,6 +229,7 @@ impl Hoplix {
             (false, true) => Direction::Upload,
             _ => Direction::Copy,
         };
+        let site_limits = self.site_limits(&[source, target]);
         let source_file_system = Arc::clone(&source.file_system);
         let source_path = source.path.clone();
         let target_file_system = Arc::clone(&target.file_system);
@@ -239,19 +242,59 @@ impl Hoplix {
                 target_directory: target_path.clone(),
                 target_name: None,
             };
-            let id = self.transfers.add(request);
+            let id = self.transfers.add_with(
+                request,
+                JobOptions {
+                    site_limits: site_limits.clone(),
+                    ..JobOptions::default()
+                },
+            );
             self.transfer_targets.insert(
                 id,
                 TransferTarget {
                     file_system: Arc::clone(&target_file_system),
                     directory: target_path.clone(),
                     direction,
+                    site_limits: site_limits.clone(),
                 },
             );
         }
         self.notice = None;
         self.transfer_panel_open = true;
         Task::none()
+    }
+
+    pub(crate) fn site_limits(&self, tabs: &[&Tab]) -> Vec<SiteLimit> {
+        let mut limits: Vec<SiteLimit> = Vec::new();
+        for tab in tabs {
+            let TabOrigin::Site(id) = &tab.origin else {
+                continue;
+            };
+            if let Some(site) = self.sites.get(id)
+                && let Some(max) = site.max_transfers
+                && !limits.iter().any(|limit| limit.site == site.id)
+            {
+                limits.push(SiteLimit::new(&site.id, max));
+            }
+        }
+        limits
+    }
+
+    pub fn held_by_site_limit(&self, job: JobId) -> Option<usize> {
+        let limits = &self.transfer_targets.get(&job)?.site_limits;
+        limits
+            .iter()
+            .find(|limit| {
+                let running = self
+                    .transfer_jobs
+                    .iter()
+                    .filter(|other| other.id != job && other.status.is_active())
+                    .filter_map(|other| self.transfer_targets.get(&other.id))
+                    .filter(|other| other.site_limits.iter().any(|item| item.site == limit.site))
+                    .count();
+                running >= limit.max
+            })
+            .map(|limit| limit.max)
     }
 
     pub(crate) fn other_pane_tab(&self, id: TabId) -> Option<TabId> {

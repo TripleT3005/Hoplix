@@ -560,6 +560,7 @@ impl Hoplix {
             self.dialog = None;
             return Task::none();
         };
+        let site_limits = self.site_limits(&[left, right]);
         let (left, right) = (endpoint(left), endpoint(right));
         self.dialog = None;
         self.compare.running = Some(RunningSync {
@@ -570,7 +571,9 @@ impl Hoplix {
         self.notice = Some(self.strings.get("sync.running").to_string());
         let queue = self.transfers.clone();
         Task::perform(
-            async move { hoplix_core::execute_plan(&plan, &left, &right, &queue).await },
+            async move {
+                hoplix_core::execute_plan_with(&plan, &left, &right, &queue, &site_limits).await
+            },
             |result| Message::Compare(CompareMessage::SyncStarted(result)),
         )
     }
