@@ -295,10 +295,7 @@ fn advanced<'a>(app: &'a Hoplix, form: &'a SiteForm) -> Element<'a, Message> {
     content.into()
 }
 
-fn connection_options<'a>(
-    strings: &'a Strings,
-    form: &'a SiteForm,
-) -> Vec<Element<'a, Message>> {
+fn connection_options<'a>(strings: &'a Strings, form: &'a SiteForm) -> Vec<Element<'a, Message>> {
     let options = &form.options;
     let keepalive_placeholder = if form.connection.protocol == Protocol::Sftp {
         strings.format(

@@ -23,9 +23,7 @@ pub fn export_body<'a>(
 ) -> (String, Element<'a, Message>, &'static str, bool) {
     let strings = &app.strings;
     let enabled = !dialog.busy;
-    let submit = dialog
-        .can_confirm()
-        .then_some(Message::DialogConfirmed);
+    let submit = dialog.can_confirm().then_some(Message::DialogConfirmed);
     let scopes = scope_choices(app, &dialog.scope);
     let selected = scopes
         .iter()
@@ -59,12 +57,15 @@ pub fn export_body<'a>(
                     .padding(8),
             )
             .push(
-                text_input(strings.get("master.confirm"), &dialog.confirm)
-                    .id(CONFIRM_INPUT)
-                    .secure(true)
-                    .on_input_maybe(enabled.then_some(|value| wrap(ExchangeMessage::Confirm(value))))
-                    .on_submit_maybe(submit)
-                    .padding(8),
+                text_input(
+                    strings.get("sites.export.confirm_password"),
+                    &dialog.confirm,
+                )
+                .id(CONFIRM_INPUT)
+                .secure(true)
+                .on_input_maybe(enabled.then_some(|value| wrap(ExchangeMessage::Confirm(value))))
+                .on_submit_maybe(submit)
+                .padding(8),
             );
         if !dialog.confirm.is_empty() && dialog.password != dialog.confirm {
             body = body.push(text(strings.get("master.mismatch")).size(HINT_SIZE));
@@ -142,9 +143,7 @@ pub fn import_body<'a>(
 ) -> (String, Element<'a, Message>, &'static str, bool) {
     let strings = &app.strings;
     let enabled = !dialog.busy;
-    let submit = dialog
-        .can_confirm()
-        .then_some(Message::DialogConfirmed);
+    let submit = dialog.can_confirm().then_some(Message::DialogConfirmed);
     let mut folders = vec![
         Choice {
             value: dialog.new_folder.clone(),

@@ -144,10 +144,9 @@ impl Hoplix {
                 return ui::focus_id(PATH_INPUT);
             }
             ExchangeMessage::OpenImport => {
-                let new_folder = self.strings.format(
-                    "sites.import.folder_name",
-                    &[("date", &today())],
-                );
+                let new_folder = self
+                    .strings
+                    .format("sites.import.folder_name", &[("date", &today())]);
                 self.dialog = Some(Dialog::ImportSites(Box::new(ImportDialog {
                     path: default_path(),
                     folder: new_folder.clone(),
@@ -375,8 +374,8 @@ impl Hoplix {
         let summary = export.import_into(&mut self.sites, &dialog.folder);
         self.save_sites();
         self.site_form = None;
-        self.site_selection = (!summary.folder.is_empty())
-            .then(|| SiteSelection::Folder(summary.folder.clone()));
+        self.site_selection =
+            (!summary.folder.is_empty()).then(|| SiteSelection::Folder(summary.folder.clone()));
         let place = if summary.folder.is_empty() {
             self.strings.get("sites.folder.root").to_string()
         } else {
@@ -427,9 +426,7 @@ pub fn error_text(strings: &Strings, error: &ExchangeError) -> String {
                 ExportError::NewerVersion => "sites.exchange.newer",
                 ExportError::WrongPassword => "sites.exchange.wrong_password",
                 ExportError::Damaged => "sites.exchange.damaged",
-                ExportError::EmptyPassword | ExportError::Encryption => {
-                    "sites.exchange.encryption"
-                }
+                ExportError::EmptyPassword | ExportError::Encryption => "sites.exchange.encryption",
             })
             .to_string(),
         ExchangeError::Secrets(error) => strings.format(
@@ -453,7 +450,9 @@ pub fn default_path() -> String {
 }
 
 fn missing_folder(path: &Path) -> Option<ExchangeError> {
-    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())?;
     (!parent.is_dir()).then(|| ExchangeError::MissingFolder(parent.to_string_lossy().into_owned()))
 }
 
@@ -511,7 +510,9 @@ fn known_documents_folder() -> Option<PathBuf> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::System::Com::CoTaskMemFree;
-    use windows_sys::Win32::UI::Shell::{FOLDERID_Documents, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
+    use windows_sys::Win32::UI::Shell::{
+        FOLDERID_Documents, KF_FLAG_DEFAULT, SHGetKnownFolderPath,
+    };
 
     let mut raw: windows_sys::core::PWSTR = std::ptr::null_mut();
     let result = unsafe {
@@ -526,7 +527,9 @@ fn known_documents_folder() -> Option<PathBuf> {
         return None;
     }
     let path = (result >= 0).then(|| {
-        let length = (0..).take_while(|&index| unsafe { *raw.add(index) } != 0).count();
+        let length = (0..)
+            .take_while(|&index| unsafe { *raw.add(index) } != 0)
+            .count();
         let wide = unsafe { std::slice::from_raw_parts(raw, length) };
         PathBuf::from(OsString::from_wide(wide))
     });
@@ -546,7 +549,10 @@ mod tests {
     #[test]
     fn default_paths_end_with_the_export_file_name() {
         assert!(default_path().ends_with(EXPORT_FILE_NAME));
-        assert_eq!(clean_path("  \"C:\\Data\\list.hoplix-sites\" "), "C:\\Data\\list.hoplix-sites");
+        assert_eq!(
+            clean_path("  \"C:\\Data\\list.hoplix-sites\" "),
+            "C:\\Data\\list.hoplix-sites"
+        );
         assert_eq!(today().len(), 10);
     }
 
@@ -578,7 +584,9 @@ mod tests {
 
     #[test]
     fn missing_folders_are_reported() {
-        let missing = std::env::temp_dir().join("hoplix-no-such-folder").join("list");
+        let missing = std::env::temp_dir()
+            .join("hoplix-no-such-folder")
+            .join("list");
         assert!(matches!(
             missing_folder(&missing),
             Some(ExchangeError::MissingFolder(_))
