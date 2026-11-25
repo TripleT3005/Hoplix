@@ -22,6 +22,7 @@ pub enum Authentication {
         path: PathBuf,
         passphrase: Option<String>,
     },
+    Agent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +97,7 @@ impl fmt::Debug for Authentication {
                 .field("path", path)
                 .field("passphrase", &passphrase.as_ref().map(|_| "***"))
                 .finish(),
+            Self::Agent => formatter.write_str("Agent"),
         }
     }
 }
