@@ -1,5 +1,5 @@
 mod keyring;
-mod vault;
+pub(crate) mod vault;
 
 use std::path::{Path, PathBuf};
 

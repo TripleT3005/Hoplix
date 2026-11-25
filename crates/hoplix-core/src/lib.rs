@@ -11,8 +11,10 @@ mod local;
 mod options;
 mod paths;
 mod rate;
+mod recent;
 mod secrets;
 mod sftp;
+mod site_export;
 mod sites;
 mod sync;
 mod transfer;
@@ -39,12 +41,17 @@ pub use options::{
 };
 pub use paths::{TrustStore, config_dir};
 pub use rate::RateLimiter;
+pub use recent::{MAX_RECENT, RECENT_FILE, RecentConnection, RecentList};
 pub use secrets::{
     DEFAULT_ITERATIONS, Keyring, Moved, SecretBackend, SecretStore, VAULT_FILE, Vault,
     change_master_password, create_vault, move_to_keyring, move_to_vault, secret_name, site_id_of,
     unlock_vault,
 };
 pub use sftp::{SftpFileSystem, auto_reconnect, fingerprint, set_auto_reconnect};
+pub use site_export::{
+    EXPORT_EXTENSION, EXPORT_FILE_NAME, ExportError, ExportFile, ExportScope, ImportSummary,
+    SealedExport, SiteExport, decrypt_export, encrypt_export, utc_date,
+};
 pub use sites::{
     MAX_SITE_TRANSFERS, SITES_FILE, Site, SiteAuth, SiteList, new_id, normalize_folder,
 };

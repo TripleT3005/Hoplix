@@ -18,10 +18,10 @@ use crate::{Error, ErrorKind, Result};
 pub const VAULT_FILE: &str = "secrets.vault";
 pub const DEFAULT_ITERATIONS: u32 = 600_000;
 const FORMAT: &str = "hoplix-vault-1";
-const KDF: &str = "pbkdf2-hmac-sha256";
-const CIPHER: &str = "aes-256-gcm";
-const SALT_LENGTH: usize = 32;
-const KEY_LENGTH: usize = 32;
+pub(crate) const KDF: &str = "pbkdf2-hmac-sha256";
+pub(crate) const CIPHER: &str = "aes-256-gcm";
+pub(crate) const SALT_LENGTH: usize = 32;
+pub(crate) const KEY_LENGTH: usize = 32;
 const CHECK_NAME: &str = "check";
 const CHECK_TEXT: &[u8] = b"hoplix";
 const ENTRY_PREFIX: &str = "entry.";
@@ -272,7 +272,7 @@ impl VaultFile {
 
 // Cryptography
 
-fn derive_key(password: &str, salt: &[u8], iterations: NonZeroU32) -> [u8; KEY_LENGTH] {
+pub(crate) fn derive_key(password: &str, salt: &[u8], iterations: NonZeroU32) -> [u8; KEY_LENGTH] {
     let mut key = [0u8; KEY_LENGTH];
     pbkdf2::derive(
         pbkdf2::PBKDF2_HMAC_SHA256,
@@ -294,7 +294,7 @@ fn associated_data(name: &str) -> Vec<u8> {
     format!("{FORMAT}:{name}").into_bytes()
 }
 
-fn seal(key: &[u8; KEY_LENGTH], name: &str, plain: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn seal(key: &[u8; KEY_LENGTH], name: &str, plain: &[u8]) -> Result<Vec<u8>> {
     let nonce_bytes = random_bytes::<NONCE_LEN>()?;
     let mut data = plain.to_vec();
     cipher(key)?
@@ -309,7 +309,7 @@ fn seal(key: &[u8; KEY_LENGTH], name: &str, plain: &[u8]) -> Result<Vec<u8>> {
     Ok(sealed)
 }
 
-fn open(key: &[u8; KEY_LENGTH], name: &str, sealed: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn open(key: &[u8; KEY_LENGTH], name: &str, sealed: &[u8]) -> Option<Vec<u8>> {
     let (nonce, data) = sealed.split_at_checked(NONCE_LEN)?;
     let nonce = Nonce::try_assume_unique_for_key(nonce).ok()?;
     let mut data = data.to_vec();
@@ -320,7 +320,7 @@ fn open(key: &[u8; KEY_LENGTH], name: &str, sealed: &[u8]) -> Option<Vec<u8>> {
     Some(plain.to_vec())
 }
 
-fn random_bytes<const N: usize>() -> Result<[u8; N]> {
+pub(crate) fn random_bytes<const N: usize>() -> Result<[u8; N]> {
     rand::generate::<[u8; N]>(&SystemRandom::new())
         .map(|random| random.expose())
         .map_err(|_| Error::new(ErrorKind::Other, "no random numbers available"))
