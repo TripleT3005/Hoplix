@@ -908,13 +908,8 @@ async fn export_sites(file: &Path, options: &Options) -> Result<(), String> {
     };
     std::fs::write(file, text).map_err(|error| format!("{}: {error}", file.display()))?;
     println!(
-        "{} site(s) exported{} to {}",
+        "{} site(s) exported to {}",
         export.site_count(),
-        if options.include_passwords {
-            format!(" with {} password(s), encrypted,", export.secrets.len())
-        } else {
-            " without passwords".to_string()
-        },
         file.display()
     );
     Ok(())
@@ -962,10 +957,7 @@ async fn import_sites(file: &Path, options: &Options) -> Result<(), String> {
     } else {
         format!("the folder {}", summary.folder)
     };
-    println!(
-        "{} site(s) and {} password(s) imported into {place}",
-        summary.sites, summary.secrets
-    );
+    println!("{} site(s) imported into {place}", summary.sites);
     Ok(())
 }
 

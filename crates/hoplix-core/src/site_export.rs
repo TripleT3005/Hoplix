@@ -497,8 +497,9 @@ mod tests {
             sealed.open(&test_password()).map(|_| ()),
             Err(ExportError::WrongPassword)
         );
+        let empty = String::new();
         assert_eq!(
-            export.to_encrypted_text("", FAST).map(|_| ()),
+            export.to_encrypted_text(&empty, FAST).map(|_| ()),
             Err(ExportError::EmptyPassword)
         );
         let again = export
