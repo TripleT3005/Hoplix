@@ -1,19 +1,22 @@
 mod arguments;
 mod target;
 
+use std::collections::BTreeMap;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use hoplix_core::{
-    Authentication, CompareOptions, CompareStatus, ComparedEntry, ConflictPolicy, ConnectionParams,
-    DEFAULT_PARALLELISM, Error, ErrorKind, FileSystem, HostKeyTrust, JobId, JobSnapshot, JobStatus,
-    Keyring, LocalFileSystem, Pattern, RetryPolicy, SecretBackend, Site, SiteList, SortKey,
+    Authentication, CompareOptions, CompareStatus, ComparedEntry, ConflictPolicy,
+    ConnectionOptions, ConnectionParams, DEFAULT_PARALLELISM, Error, ErrorKind, ExportError,
+    ExportFile, ExportScope, FileSystem, HostKeyTrust, JobId, JobSnapshot, JobStatus, Keyring,
+    LocalFileSystem, Pattern, RetryPolicy, SecretBackend, Site, SiteExport, SiteList, SortKey,
     SortOrder, SpeedLimits, SyncAction, SyncDirection, SyncEndpoint, SyncMode, SyncOptions,
-    SyncPlan, TransferEvent, TransferQueue, TransferRequest, TrustStore, config_dir,
-    remove_recursive, secret_name, sort_entries, unlock_vault,
+    SyncPlan, TransferEvent, TransferQueue, TransferRequest, TrustStore, Vault, config_dir,
+    decrypt_export, encrypt_export, remove_recursive, secret_name, sort_entries, unlock_vault,
+    utc_date,
 };
 
 use arguments::{Command, Invocation, Options, USAGE};
@@ -30,6 +33,7 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 struct Opened {
     file_system: Arc<dyn FileSystem>,
     path: String,
+    max_transfers: Option<usize>,
 }
 
 // Entry point
@@ -80,6 +84,8 @@ async fn run(invocation: Invocation) -> Result<(), String> {
                 println!("{:<width$}  {}", site.display_path(), site.address());
             }
         }
+        Command::ExportSites(file) => export_sites(&file, options).await?,
+        Command::ImportSites(file) => import_sites(&file, options).await?,
         Command::List(target) => {
             let opened = open(&target, options).await?;
             let mut entries = opened
@@ -437,7 +443,11 @@ async fn synchronise(
     if options.dry_run || plan.is_empty() {
         return Ok(());
     }
-    let queue = queue_for(DEFAULT_PARALLELISM, options);
+    let parallelism = [source.max_transfers, target.max_transfers]
+        .into_iter()
+        .flatten()
+        .fold(DEFAULT_PARALLELISM, usize::min);
+    let queue = queue_for(parallelism, options);
     let mut events = queue.subscribe();
     let driver = tokio::spawn(queue.clone().drive());
     let result = match hoplix_core::execute_plan(&plan, &left, &right, &queue).await {
@@ -579,6 +589,7 @@ async fn open(target: &Target, options: &Options) -> Result<Opened, String> {
         Target::Local(path) => Ok(Opened {
             file_system: Arc::new(LocalFileSystem),
             path: path.clone(),
+            max_transfers: None,
         }),
         Target::Remote(remote) => {
             let params = ConnectionParams {
@@ -588,21 +599,29 @@ async fn open(target: &Target, options: &Options) -> Result<Opened, String> {
                 username: remote.username.clone(),
                 authentication: authentication(remote, options)?,
             };
-            let file_system = connect(&params, options).await?;
+            let file_system = connect(&params, &ConnectionOptions::default(), options).await?;
             let path = locate(file_system.as_ref(), &remote.path).await?;
-            Ok(Opened { file_system, path })
+            Ok(Opened {
+                file_system,
+                path,
+                max_transfers: None,
+            })
         }
         Target::Site(target) => {
             let sites = load_sites()?;
             let site = find_site(&sites, target)?;
             let params = site_params(site, options).await?;
-            let file_system = connect(&params, options).await?;
+            let file_system = connect(&params, &site.options, options).await?;
             let path = target
                 .path
                 .clone()
                 .unwrap_or_else(|| RemotePath::from_site(&site.remote_path));
             let path = locate(file_system.as_ref(), &path).await?;
-            Ok(Opened { file_system, path })
+            Ok(Opened {
+                file_system,
+                path,
+                max_transfers: site.max_transfers,
+            })
         }
     }
 }
@@ -627,6 +646,7 @@ async fn resolve(opened: &Opened, path: &RemotePath) -> Result<String, String> {
 
 async fn connect(
     params: &ConnectionParams,
+    connection: &ConnectionOptions,
     options: &Options,
 ) -> Result<Arc<dyn FileSystem>, String> {
     let mut trust_store = TrustStore::default_location().ok_or("no folder for the trust files")?;
@@ -636,7 +656,7 @@ async fn connect(
     if let Some(path) = &options.trusted_certificates {
         trust_store.certificates.clone_from(path);
     }
-    match hoplix_core::connect(params, &trust_store, None).await {
+    match hoplix_core::connect_with(params, connection, &trust_store, None).await {
         Ok(file_system) => Ok(file_system),
         Err(error)
             if matches!(
@@ -661,7 +681,7 @@ async fn connect(
                 fingerprint,
                 remember: options.remember_host_key,
             };
-            hoplix_core::connect(params, &trust_store, Some(trust))
+            hoplix_core::connect_with(params, connection, &trust_store, Some(trust))
                 .await
                 .map_err(describe)
         }
@@ -754,6 +774,154 @@ async fn saved_secret(site: &Site, options: &Options) -> Result<Option<String>, 
                 .map_err(describe)?;
             vault.get(&name).map_err(describe)
         }
+    }
+}
+
+// Site lists
+
+async fn export_sites(file: &Path, options: &Options) -> Result<(), String> {
+    let sites = load_sites()?;
+    let scope = match &options.folder {
+        Some(folder) => {
+            let folder = hoplix_core::normalize_folder(folder);
+            if !sites.all_folders().contains(&folder) {
+                return Err(format!("there is no site folder called {folder}"));
+            }
+            ExportScope::Folder(folder)
+        }
+        None => ExportScope::All,
+    };
+    let list = SiteExport::select(&sites, &scope);
+    let mut export = SiteExport {
+        list,
+        secrets: BTreeMap::new(),
+    };
+    let text = if options.include_passwords {
+        let password = options
+            .password_env
+            .as_deref()
+            .map(secret)
+            .transpose()?
+            .unwrap_or_default();
+        export.secrets = read_secrets(&export.list, options).await?;
+        encrypt_export(export.clone(), password)
+            .await
+            .map_err(describe_export)?
+    } else {
+        export.to_plain_text()
+    };
+    std::fs::write(file, text).map_err(|error| format!("{}: {error}", file.display()))?;
+    println!(
+        "{} site(s) exported{} to {}",
+        export.site_count(),
+        if options.include_passwords {
+            format!(" with {} password(s), encrypted,", export.secrets.len())
+        } else {
+            " without passwords".to_string()
+        },
+        file.display()
+    );
+    Ok(())
+}
+
+async fn import_sites(file: &Path, options: &Options) -> Result<(), String> {
+    let text =
+        std::fs::read_to_string(file).map_err(|error| format!("{}: {error}", file.display()))?;
+    let export = match ExportFile::parse(&text).map_err(describe_export)? {
+        ExportFile::Plain(export) => export,
+        ExportFile::Encrypted(sealed) => {
+            let variable = options.password_env.as_deref().ok_or(
+                "the site list is encrypted: pass its password with --password-env <name>",
+            )?;
+            decrypt_export(sealed, secret(variable)?)
+                .await
+                .map_err(describe_export)?
+        }
+    };
+    let directory = config_dir().ok_or("no Hoplix configuration folder")?;
+    let mut sites = load_sites()?;
+    let folder = options
+        .folder
+        .clone()
+        .unwrap_or_else(|| format!("Imported {}", utc_date(std::time::SystemTime::now())));
+    let summary = export.import_into(&mut sites, &folder);
+    let mut vault = None;
+    if !summary.stored.is_empty() && SecretBackend::detect(&directory) == SecretBackend::Vault {
+        vault = Some(open_vault(&directory, options).await?);
+    }
+    sites
+        .save(&directory)
+        .map_err(|error| format!("the sites could not be saved: {error}"))?;
+    for (site, value) in &summary.stored {
+        let name = secret_name(site);
+        match &mut vault {
+            Some(vault) => vault.set(&name, value).map_err(describe)?,
+            None => Keyring::default()
+                .set(&name, value)
+                .await
+                .map_err(describe)?,
+        }
+    }
+    let place = if summary.folder.is_empty() {
+        "the top level".to_string()
+    } else {
+        format!("the folder {}", summary.folder)
+    };
+    println!(
+        "{} site(s) and {} password(s) imported into {place}",
+        summary.sites, summary.secrets
+    );
+    Ok(())
+}
+
+async fn read_secrets(
+    list: &SiteList,
+    options: &Options,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut secrets = BTreeMap::new();
+    let saved: Vec<&Site> = list.sites.iter().filter(|site| site.save_secrets).collect();
+    if saved.is_empty() {
+        return Ok(secrets);
+    }
+    let directory = config_dir().ok_or("no Hoplix configuration folder")?;
+    let vault = match SecretBackend::detect(&directory) {
+        SecretBackend::Vault => Some(open_vault(&directory, options).await?),
+        SecretBackend::Keyring => None,
+    };
+    let keyring = Keyring::default();
+    for site in saved {
+        let name = secret_name(&site.id);
+        let value = match &vault {
+            Some(vault) => vault.get(&name).map_err(describe)?,
+            None => keyring.get(&name).await.map_err(describe)?,
+        };
+        if let Some(value) = value.filter(|value| !value.is_empty()) {
+            secrets.insert(site.id.clone(), value);
+        }
+    }
+    Ok(secrets)
+}
+
+async fn open_vault(directory: &Path, options: &Options) -> Result<Vault, String> {
+    let variable = options
+        .master_password_env
+        .as_deref()
+        .ok_or_else(|| describe(Error::new(ErrorKind::VaultLocked, "")))?;
+    unlock_vault(directory.to_path_buf(), secret(variable)?)
+        .await
+        .map_err(describe)
+}
+
+fn describe_export(error: ExportError) -> String {
+    match error {
+        ExportError::NotASiteList => "the file is not a Hoplix site list".to_string(),
+        ExportError::NewerVersion => {
+            "the site list was made by a newer Hoplix version; update Hoplix first".to_string()
+        }
+        ExportError::WrongPassword => "the password of the site list is wrong".to_string(),
+        ExportError::Damaged => "the site list is damaged or was changed".to_string(),
+        ExportError::EmptyPassword => "the export password must not be empty".to_string(),
+        ExportError::Encryption => "the site list could not be encrypted".to_string(),
     }
 }
 

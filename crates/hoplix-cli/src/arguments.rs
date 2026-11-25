@@ -17,6 +17,8 @@ pub enum Command {
     Help,
     Version,
     Sites,
+    ExportSites(PathBuf),
+    ImportSites(PathBuf),
     List(Target),
     Stat(Target),
     Copy {
@@ -68,6 +70,8 @@ pub struct Options {
     pub retry_delay: Option<u32>,
     pub limit_download: Option<u64>,
     pub limit_upload: Option<u64>,
+    pub include_passwords: bool,
+    pub folder: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +135,8 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
             "--limit-upload" => {
                 options.limit_upload = Some(rate("--limit-upload", &value("--limit-upload")?)?);
             }
+            "--include-passwords" => options.include_passwords = true,
+            "--folder" => options.folder = Some(value("--folder")?),
             "-r" | "--recursive" => recursive = true,
             "-h" | "--help" => positional.insert(0, "help".to_string()),
             "-V" | "--version" => positional.insert(0, "version".to_string()),
@@ -178,6 +184,21 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
             "--retries, --retry-delay, --limit-download and --limit-upload only work with get, put, cp and sync"
                 .to_string(),
         );
+    }
+    let exchanging = matches!(command, Command::ExportSites(_) | Command::ImportSites(_));
+    if options.folder.is_some() && !exchanging {
+        return Err("--folder only works with sites export and sites import".to_string());
+    }
+    if options.include_passwords {
+        if !matches!(command, Command::ExportSites(_)) {
+            return Err("--include-passwords only works with sites export".to_string());
+        }
+        if options.password_env.is_none() {
+            return Err(
+                "--include-passwords needs --password-env <name> with the export password"
+                    .to_string(),
+            );
+        }
     }
     if [options.resume, options.skip_existing, options.keep_both]
         .iter()
@@ -242,7 +263,15 @@ fn command_from(positional: &[String], recursive: bool) -> Result<Command, Strin
     match name.as_str() {
         "help" => Ok(Command::Help),
         "version" => Ok(Command::Version),
-        "sites" => expect(0).map(|()| Command::Sites),
+        "sites" => match rest {
+            [] => Ok(Command::Sites),
+            [action, file] if action == "export" => Ok(Command::ExportSites(PathBuf::from(file))),
+            [action, file] if action == "import" => Ok(Command::ImportSites(PathBuf::from(file))),
+            [action] if action == "export" || action == "import" => {
+                Err(format!("sites {action}: missing file name"))
+            }
+            _ => Err("sites: expected nothing, export <file> or import <file>".to_string()),
+        },
         "ls" => expect(1).and_then(|()| Ok(Command::List(target(0)?))),
         "stat" => expect(1).and_then(|()| Ok(Command::Stat(target(0)?))),
         "mkdir" => expect(1).and_then(|()| Ok(Command::MakeDirectory(target(0)?))),
@@ -302,6 +331,9 @@ Commands:
   compare [-r] <a> <b>    Show the differences between two folders
   sync [-r] <from> <to>   Copy new and newer files so that <to> matches <from>
   sites                   List the sites saved in Hoplix
+  sites export <file>     Save the site list to a file (without passwords unless
+                          --include-passwords is given)
+  sites import <file>     Add the sites from an exported file to the site list
   help, version
 
 Targets are local paths or URLs like sftp://user@host:port/path
@@ -335,6 +367,16 @@ Options:
                             without unit means KiB/s, 0 means no limit
   --limit-upload <rate>     Limit the upload speed in the same way
                             (a copy between two servers is limited by both)
+
+Site lists:
+  --folder <name>           sites export: only export this folder;
+                            sites import: put the sites into this folder
+                            (default: Imported <date>)
+  --include-passwords       sites export: also export the saved passwords; the file
+                            is then encrypted with the password from --password-env
+  --password-env <name>     sites export and import: the password of an encrypted
+                            site list (sites with saved passwords in a master
+                            password vault also need --master-password-env)
 
 Compare and sync:
   --size-only               Compare only the size, ignore modification times
@@ -567,6 +609,53 @@ mod tests {
         assert!(!error.contains("hunter2"));
         let error = run(&["ls", "x", "--master-password", "hunter2"]).expect_err("accepted");
         assert!(error.contains("--master-password-env"));
+    }
+
+    #[test]
+    fn site_lists_export_and_import() {
+        let invocation = run(&[
+            "sites",
+            "export",
+            "list.hoplix-sites",
+            "--include-passwords",
+            "--password-env",
+            "EXPORT_PASSWORD",
+            "--folder",
+            "Work",
+        ])
+        .expect("valid");
+        assert_eq!(
+            invocation.command,
+            Command::ExportSites(PathBuf::from("list.hoplix-sites"))
+        );
+        assert!(invocation.options.include_passwords);
+        assert_eq!(invocation.options.folder.as_deref(), Some("Work"));
+        assert_eq!(
+            invocation.options.password_env.as_deref(),
+            Some("EXPORT_PASSWORD")
+        );
+        let invocation = run(&["sites", "import", "list.hoplix-sites"]).expect("valid");
+        assert_eq!(
+            invocation.command,
+            Command::ImportSites(PathBuf::from("list.hoplix-sites"))
+        );
+        for arguments in [
+            &["sites", "export"][..],
+            &["sites", "import", "a", "b"],
+            &["sites", "export", "a", "--include-passwords"],
+            &[
+                "sites",
+                "import",
+                "a",
+                "--include-passwords",
+                "--password-env",
+                "X",
+            ],
+            &["ls", "a", "--folder", "Work"],
+            &["sites", "--folder", "Work"],
+        ] {
+            assert!(run(arguments).is_err(), "{arguments:?}");
+        }
     }
 
     #[test]
