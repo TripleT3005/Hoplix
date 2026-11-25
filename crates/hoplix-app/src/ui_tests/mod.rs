@@ -7,6 +7,7 @@ mod palette;
 mod queue;
 mod secrets;
 mod settings;
+mod site_manager;
 mod sites;
 mod updates;
 
@@ -563,8 +564,12 @@ impl Harness {
     }
 
     pub fn scroll_settings(&mut self, offset: f32) {
+        self.scroll(SETTINGS_SCROLL_ID, offset);
+    }
+
+    pub fn scroll(&mut self, id: &'static str, offset: f32) {
         self.run(iced::widget::operation::scroll_to(
-            SETTINGS_SCROLL_ID,
+            id,
             AbsoluteOffset { x: 0.0, y: offset },
         ));
     }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hoplix_core::{
-    ConflictPolicy, Error, ErrorKind, FileSystem, JobId, JobStatus, TransferRequest,
+    ConflictPolicy, Error, ErrorKind, FileSystem, JobId, JobOptions, JobStatus, TransferRequest,
 };
 use iced::futures::channel::oneshot;
 use iced::{Subscription, Task};
@@ -411,6 +411,7 @@ impl Hoplix {
         }
         let name = entry.name.clone();
         let remote_directory = tab.path.clone();
+        let site_limits = self.site_limits(&[tab]);
         let (edit, folder) = match self.edits.next_folder(&self.services.temp_dir) {
             Ok(created) => created,
             Err(error) => {
@@ -423,7 +424,7 @@ impl Hoplix {
         };
         let local_name = local_file_name(&name);
         let local_path = folder.join(&local_name);
-        let job = self.transfers.add_with_policy(
+        let job = self.transfers.add_with(
             TransferRequest {
                 source: Arc::clone(&file_system),
                 source_path: remote_path.clone(),
@@ -431,7 +432,11 @@ impl Hoplix {
                 target_directory: folder.to_string_lossy().into_owned(),
                 target_name: Some(local_name),
             },
-            ConflictPolicy::Overwrite,
+            JobOptions {
+                policy: Some(ConflictPolicy::Overwrite),
+                site_limits,
+                ..JobOptions::default()
+            },
         );
         self.edits.files.push(EditedFile {
             id: edit,
@@ -489,6 +494,14 @@ impl Hoplix {
 
     fn upload_edit(&mut self, id: EditId) {
         let local = Arc::clone(&self.services.local);
+        let site_limits = self
+            .edits
+            .files
+            .iter()
+            .find(|file| file.id == id)
+            .and_then(|file| self.tab_by_id(file.tab))
+            .map(|tab| self.site_limits(&[tab]))
+            .unwrap_or_default();
         let Some(file) = self
             .edits
             .get_mut(id)
@@ -497,7 +510,7 @@ impl Hoplix {
             return;
         };
         file.stamp = FileStamp::read(&file.local_path);
-        let job = self.transfers.add_with_policy(
+        let job = self.transfers.add_with(
             TransferRequest {
                 source: local,
                 source_path: file.local_path.to_string_lossy().into_owned(),
@@ -505,7 +518,11 @@ impl Hoplix {
                 target_directory: file.remote_directory.clone(),
                 target_name: Some(file.name.clone()),
             },
-            ConflictPolicy::Overwrite,
+            JobOptions {
+                policy: Some(ConflictPolicy::Overwrite),
+                site_limits: site_limits.clone(),
+                ..JobOptions::default()
+            },
         );
         file.job = Some(job);
         file.state = EditState::Uploading;
@@ -515,6 +532,7 @@ impl Hoplix {
                 file_system: Arc::clone(&file.file_system),
                 directory: file.remote_directory.clone(),
                 direction: Direction::Upload,
+                site_limits,
             },
         );
     }

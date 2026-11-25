@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use crate::connection::{Authentication, ConnectionParams, HostKeyTrust, Protocol};
 use crate::proxy::Proxy;
-use crate::{Error, ErrorKind, FileSystem, FtpFileSystem, Result, SftpFileSystem, TrustStore};
+use crate::{
+    ConnectionOptions, Error, ErrorKind, FileSystem, FtpFileSystem, Result, SftpFileSystem,
+    TrustStore,
+};
 
 // Types
 
@@ -55,11 +58,33 @@ pub async fn connect_via(
     trust_store: &TrustStore,
     trusted: &[HostKeyTrust],
 ) -> Result<Arc<dyn FileSystem>> {
+    connect_via_with(
+        params,
+        route,
+        &ConnectionOptions::default(),
+        trust_store,
+        trusted,
+    )
+    .await
+}
+
+pub async fn connect_via_with(
+    params: &ConnectionParams,
+    route: &Route,
+    options: &ConnectionOptions,
+    trust_store: &TrustStore,
+    trusted: &[HostKeyTrust],
+) -> Result<Arc<dyn FileSystem>> {
     match params.protocol {
         Protocol::Sftp => {
-            let file_system =
-                SftpFileSystem::connect_via(params, route, &trust_store.known_hosts, trusted)
-                    .await?;
+            let file_system = SftpFileSystem::connect_via_with(
+                params,
+                route,
+                options,
+                &trust_store.known_hosts,
+                trusted,
+            )
+            .await?;
             Ok(Arc::new(file_system))
         }
         Protocol::Ftp | Protocol::FtpsExplicit | Protocol::FtpsImplicit => {
@@ -69,9 +94,10 @@ pub async fn connect_via(
                     "jump hosts only work with SFTP",
                 ));
             }
-            let file_system = FtpFileSystem::connect_via(
+            let file_system = FtpFileSystem::connect_via_with(
                 params,
                 route.proxy.as_ref(),
+                options,
                 &trust_store.certificates,
                 trusted.last().cloned(),
             )

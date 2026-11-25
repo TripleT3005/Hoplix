@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::key_value::{self, Section};
+use crate::options::{self, ConnectionOptions, FileNameEncoding, FtpMode};
 use crate::{Authentication, ConnectionParams, Protocol};
 
 // Constants
@@ -12,6 +13,7 @@ use crate::{Authentication, ConnectionParams, Protocol};
 pub const SITES_FILE: &str = "sites.conf";
 const SITE_SECTION: &str = "site";
 const ID_BYTES: usize = 8;
+pub const MAX_SITE_TRANSFERS: usize = 8;
 
 // Types
 
@@ -37,6 +39,8 @@ pub struct Site {
     pub local_path: String,
     pub notes: String,
     pub save_secrets: bool,
+    pub options: ConnectionOptions,
+    pub max_transfers: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -112,6 +116,24 @@ impl Site {
             .and_then(|scheme| Protocol::ALL.into_iter().find(|p| p.scheme() == scheme))
             .unwrap_or_default();
         let text = |key: &str| section.get(key).unwrap_or_default().to_string();
+        let seconds = |key: &str| options::seconds_from_text(section.get(key).unwrap_or_default());
+        let defaults = ConnectionOptions::default();
+        let options = ConnectionOptions {
+            connect_timeout: seconds("connect_timeout").unwrap_or_default(),
+            keepalive_interval: seconds("keepalive_interval").unwrap_or_default(),
+            ftp_mode: section
+                .get("ftp_mode")
+                .and_then(FtpMode::from_key)
+                .unwrap_or_default(),
+            ftp_external_ip: section
+                .get("ftp_external_ip")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(defaults.ftp_external_ip),
+            ftp_encoding: section
+                .get("ftp_encoding")
+                .and_then(FileNameEncoding::from_key)
+                .unwrap_or_default(),
+        };
         Some(Self {
             id,
             name: text("name"),
@@ -134,6 +156,11 @@ impl Site {
             local_path: text("local_path"),
             notes: text("notes"),
             save_secrets: section.get("save_secrets") == Some("true"),
+            options,
+            max_transfers: section
+                .get("max_transfers")
+                .and_then(|value| value.parse().ok())
+                .filter(|count| (1..=MAX_SITE_TRANSFERS).contains(count)),
         })
     }
 
@@ -158,6 +185,23 @@ impl Site {
                 ("local_path", self.local_path.clone()),
                 ("notes", self.notes.clone()),
                 ("save_secrets", self.save_secrets.to_string()),
+                (
+                    "connect_timeout",
+                    options::seconds_text(self.options.connect_timeout),
+                ),
+                (
+                    "keepalive_interval",
+                    options::seconds_text(self.options.keepalive_interval),
+                ),
+                ("ftp_mode", self.options.ftp_mode.key().to_string()),
+                ("ftp_external_ip", self.options.ftp_external_ip.to_string(),),
+                ("ftp_encoding", self.options.ftp_encoding.key().to_string()),
+                (
+                    "max_transfers",
+                    self.max_transfers
+                        .map(|count| count.to_string())
+                        .unwrap_or_default(),
+                ),
             ])
         )
     }
@@ -417,6 +461,54 @@ mod tests {
         assert_eq!(site.protocol, Protocol::Sftp);
         assert_eq!(site.port, 22);
         assert!(!site.save_secrets);
+    }
+
+    #[test]
+    fn connection_options_round_trip() {
+        let mut list = SiteList::default();
+        let mut ftp = site("Legacy", "");
+        ftp.protocol = Protocol::Ftp;
+        ftp.options = ConnectionOptions {
+            connect_timeout: Some(std::time::Duration::from_secs(45)),
+            keepalive_interval: Some(std::time::Duration::from_secs(25)),
+            ftp_mode: FtpMode::Active,
+            ftp_external_ip: false,
+            ftp_encoding: FileNameEncoding::Windows1252,
+        };
+        ftp.max_transfers = Some(1);
+        list.upsert(ftp.clone());
+        let parsed = SiteList::parse(&list.to_text());
+        assert_eq!(parsed.get(&ftp.id), Some(&ftp));
+    }
+
+    #[test]
+    fn old_files_get_the_default_options() {
+        let parsed = SiteList::parse(
+            "# Hoplix sites
+[site]
+id = old1
+name = Old
+protocol = ftp
+host = h
+",
+        );
+        let site = &parsed.sites[0];
+        assert_eq!(site.options, ConnectionOptions::default());
+        assert!(site.options.ftp_external_ip);
+        assert_eq!(site.max_transfers, None);
+        let broken = SiteList::parse(
+            "[site]
+id = b1
+connect_timeout = soon
+keepalive_interval = 99999
+ftp_mode = sideways
+ftp_external_ip = maybe
+ftp_encoding = ebcdic
+max_transfers = 0
+",
+        );
+        assert_eq!(broken.sites[0].options, ConnectionOptions::default());
+        assert_eq!(broken.sites[0].max_transfers, None);
     }
 
     // Folders

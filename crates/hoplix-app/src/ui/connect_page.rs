@@ -1,5 +1,8 @@
 use hoplix_core::Protocol;
-use iced::widget::{Space, button, checkbox, column, container, pick_list, row, text, text_input};
+use iced::widget::{
+    Column, Space, button, checkbox, column, container, pick_list, row, rule, scrollable, text,
+    text_input,
+};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{Hoplix, Message};
@@ -75,12 +78,70 @@ pub fn view(app: &Hoplix) -> Element<'_, Message> {
             .on_press_maybe(submit),
     );
     content = content.push(actions);
+    if let Some(recent) = recent_list(app) {
+        content = content.push(recent);
+    }
 
-    container(content)
-        .padding(24)
-        .width(Length::Fill)
-        .center_x(Length::Fill)
+    scrollable(
+        container(content)
+            .padding(24)
+            .width(Length::Fill)
+            .center_x(Length::Fill),
+    )
+    .height(Length::Fill)
+    .into()
+}
+
+// Recent connections
+
+fn recent_list(app: &Hoplix) -> Option<Element<'_, Message>> {
+    let strings = &app.strings;
+    if !app.settings.remember_recent || app.recent.entries.is_empty() {
+        return None;
+    }
+    let enabled = !app.connect_form.connecting;
+    let header = row![
+        text(strings.get("connect.recent")).size(18),
+        Space::new().width(Length::Fill),
+        button(text(strings.get("connect.recent.clear")).size(13))
+            .style(button::text)
+            .on_press_maybe(enabled.then_some(Message::RecentCleared)),
+    ]
+    .align_y(Alignment::Center);
+    let rows = app.recent.entries.iter().enumerate().map(|(index, entry)| {
+        let detail = if entry.uses_key_file() {
+            strings.format("connect.recent.key", &[("path", &entry.key_path)])
+        } else {
+            strings.get("connect.recent.password").to_string()
+        };
+        row![
+            button(
+                column![
+                    text(entry.label()).size(14),
+                    text(detail).size(12).style(text::secondary),
+                ]
+                .spacing(2)
+            )
+            .style(button::text)
+            .width(Length::Fill)
+            .on_press_maybe(enabled.then_some(Message::RecentSelected(index))),
+            button(text(strings.get("connect.recent.remove")).size(13))
+                .style(button::text)
+                .on_press_maybe(enabled.then_some(Message::RecentRemoved(index))),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
         .into()
+    });
+    Some(
+        column![
+            rule::horizontal(1),
+            header,
+            Column::with_children(rows).spacing(2),
+        ]
+        .spacing(8)
+        .into(),
+    )
 }
 
 // Shared fields

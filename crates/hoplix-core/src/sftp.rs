@@ -17,7 +17,10 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::connection::{Authentication, ConnectionParams, HostKeyTrust};
 use crate::file_system::{Reader, Writer};
 use crate::route::Route;
-use crate::{BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Result, proxy, ssh_agent};
+use crate::{
+    BoxFuture, ConnectionOptions, Entry, EntryKind, Error, ErrorKind, FileSystem, Result, proxy,
+    ssh_agent,
+};
 
 // Constants
 
@@ -42,6 +45,7 @@ pub fn auto_reconnect() -> bool {
 pub struct SftpFileSystem {
     params: ConnectionParams,
     route: Route,
+    options: ConnectionOptions,
     known_hosts: PathBuf,
     host_fingerprints: Vec<String>,
     connection: AsyncMutex<Arc<Connection>>,
@@ -149,11 +153,29 @@ impl SftpFileSystem {
         known_hosts: &Path,
         trusted: &[HostKeyTrust],
     ) -> Result<Self> {
+        Self::connect_via_with(
+            params,
+            route,
+            &ConnectionOptions::default(),
+            known_hosts,
+            trusted,
+        )
+        .await
+    }
+
+    pub async fn connect_via_with(
+        params: &ConnectionParams,
+        route: &Route,
+        options: &ConnectionOptions,
+        known_hosts: &Path,
+        trusted: &[HostKeyTrust],
+    ) -> Result<Self> {
         let (connection, host_fingerprints) =
-            establish(params, route, known_hosts, trusted.to_vec()).await?;
+            establish(params, route, options, known_hosts, trusted.to_vec()).await?;
         Ok(Self {
             params: params.clone(),
             route: route.clone(),
+            options: options.clone(),
             known_hosts: known_hosts.to_path_buf(),
             host_fingerprints,
             connection: AsyncMutex::new(Arc::new(connection)),
@@ -192,9 +214,15 @@ impl SftpFileSystem {
                 remember: false,
             })
             .collect();
-        establish(&self.params, &self.route, &self.known_hosts, trusted)
-            .await
-            .map(|(connection, _)| connection)
+        establish(
+            &self.params,
+            &self.route,
+            &self.options,
+            &self.known_hosts,
+            trusted,
+        )
+        .await
+        .map(|(connection, _)| connection)
     }
 
     async fn run<T, F, Fut>(&self, operation: F) -> Result<T>
@@ -216,12 +244,13 @@ impl SftpFileSystem {
 async fn establish(
     params: &ConnectionParams,
     route: &Route,
+    options: &ConnectionOptions,
     known_hosts: &Path,
     trusted: Vec<HostKeyTrust>,
 ) -> Result<(Connection, Vec<String>)> {
     tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        open_connection(params, route, known_hosts, trusted),
+        options.timeout_or(CONNECT_TIMEOUT),
+        open_connection(params, route, options, known_hosts, trusted),
     )
     .await
     .map_err(|_| Error::new(ErrorKind::ConnectionFailed, params.host.clone()))?
@@ -265,12 +294,13 @@ fn hops<'a>(params: &'a ConnectionParams, route: &'a Route) -> Vec<Hop<'a>> {
 async fn open_connection(
     params: &ConnectionParams,
     route: &Route,
+    options: &ConnectionOptions,
     known_hosts: &Path,
     trusted: Vec<HostKeyTrust>,
 ) -> Result<(Connection, Vec<String>)> {
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(INACTIVITY_TIMEOUT),
-        keepalive_interval: Some(KEEPALIVE_INTERVAL),
+        keepalive_interval: Some(options.keepalive().unwrap_or(KEEPALIVE_INTERVAL)),
         ..client::Config::default()
     });
     let mut fingerprints = Vec::new();

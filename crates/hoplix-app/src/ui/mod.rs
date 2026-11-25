@@ -3,6 +3,7 @@ mod compare;
 mod connect_page;
 mod dialog;
 mod edits;
+mod exchange;
 mod palette;
 mod settings_page;
 mod sites_page;
@@ -19,9 +20,11 @@ use crate::i18n::Strings;
 use crate::theme;
 use crate::updates::UpdateMessage;
 
-pub use dialog::focus_input;
+pub use dialog::{focus_id, focus_input};
 #[cfg(test)]
 pub use settings_page::SCROLL_ID as SETTINGS_SCROLL_ID;
+#[cfg(test)]
+pub use sites_page::EDITOR_SCROLL_ID;
 
 // Types
 

@@ -231,11 +231,15 @@ fn job_row<'a>(app: &'a Hoplix, job: &'a JobSnapshot) -> Element<'a, Message> {
                 ));
         }
     }
+    let status = match app.held_by_site_limit(job.id) {
+        Some(max) if job.status == JobStatus::Queued => {
+            strings.format("transfer.status.site_limit", &[("count", &max.to_string())])
+        }
+        _ => details(strings, job, app.transfers.retry_policy().attempts),
+    };
     row![
         title,
-        text(details(strings, job, app.transfers.retry_policy().attempts))
-            .size(12)
-            .width(DETAILS_WIDTH),
+        text(status).size(12).width(DETAILS_WIDTH),
         container(buttons)
             .width(Length::Fixed(150.0))
             .align_x(Alignment::End),

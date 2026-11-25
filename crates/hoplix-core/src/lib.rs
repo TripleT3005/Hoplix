@@ -1,5 +1,6 @@
 mod certificates;
 mod connection;
+mod encoding;
 mod entry;
 mod error;
 mod file_system;
@@ -7,12 +8,15 @@ mod ftp;
 pub mod key_value;
 pub mod language;
 mod local;
+mod options;
 mod paths;
 mod proxy;
 mod rate;
+mod recent;
 mod route;
 mod secrets;
 mod sftp;
+mod site_export;
 mod sites;
 mod ssh_agent;
 mod sync;
@@ -23,7 +27,10 @@ pub mod update;
 mod test_support;
 
 pub use certificates::certificate_fingerprint;
-pub use connection::{Authentication, ConnectionParams, HostKeyTrust, Protocol, connect};
+pub use connection::{
+    Authentication, ConnectionParams, HostKeyTrust, Protocol, connect, connect_with,
+};
+pub use encoding::{decode_windows_1252, encode_windows_1252};
 pub use entry::{Entry, EntryKind, SortKey, SortOrder, compare_names, sort_entries};
 pub use error::{Error, ErrorKind, Result};
 pub use file_system::{
@@ -31,24 +38,35 @@ pub use file_system::{
 };
 pub use ftp::{FtpFileSystem, ensure_passive_mode};
 pub use local::LocalFileSystem;
+pub use options::{
+    ConnectionOptions, FileNameEncoding, FtpMode, MAX_TIMEOUT_SECONDS, seconds_from_text,
+    seconds_text,
+};
 pub use paths::{TrustStore, config_dir};
 pub use proxy::{Proxy, ProxyCredentials, ProxyKind};
 pub use rate::RateLimiter;
-pub use route::{JumpHost, Route, connect_via};
+pub use recent::{MAX_RECENT, RECENT_FILE, RecentConnection, RecentList};
+pub use route::{JumpHost, Route, connect_via, connect_via_with};
 pub use secrets::{
     DEFAULT_ITERATIONS, Keyring, Moved, SecretBackend, SecretStore, VAULT_FILE, Vault,
     change_master_password, create_vault, jump_secret_name, move_to_keyring, move_to_vault,
     proxy_secret_name, secret_name, site_id_of, unlock_vault,
 };
 pub use sftp::{SftpFileSystem, auto_reconnect, fingerprint, set_auto_reconnect};
-pub use sites::{SITES_FILE, Site, SiteAuth, SiteList, new_id, normalize_folder};
+pub use site_export::{
+    EXPORT_EXTENSION, EXPORT_FILE_NAME, ExportError, ExportFile, ExportScope, ImportSummary,
+    SealedExport, SiteExport, decrypt_export, encrypt_export, utc_date,
+};
+pub use sites::{
+    MAX_SITE_TRANSFERS, SITES_FILE, Site, SiteAuth, SiteList, new_id, normalize_folder,
+};
 pub use sync::{
     CompareOptions, CompareStatus, ComparedEntry, DEFAULT_TIME_TOLERANCE, Pattern, Side,
     SyncAction, SyncDirection, SyncEndpoint, SyncMode, SyncOptions, SyncPlan, SyncSummary,
-    build_plan, compare, compare_entries, execute_plan, plan, refine,
+    build_plan, compare, compare_entries, execute_plan, execute_plan_with, plan, refine,
 };
 pub use transfer::{
     Conflict, ConflictDecision, ConflictPolicy, DEFAULT_PARALLELISM, DEFAULT_RETRIES,
     DEFAULT_RETRY_DELAY, JobId, JobOptions, JobSnapshot, JobStatus, Parallelism, RetryPolicy,
-    SpeedLimits, TransferDirection, TransferEvent, TransferQueue, TransferRequest,
+    SiteLimit, SpeedLimits, TransferDirection, TransferEvent, TransferQueue, TransferRequest,
 };

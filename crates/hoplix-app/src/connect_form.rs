@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use hoplix_core::{Authentication, ConnectionParams, Error, Protocol, Site, SiteAuth};
+use hoplix_core::{
+    Authentication, ConnectionParams, Error, Protocol, RecentConnection, Site, SiteAuth,
+};
 
 // Types
 
@@ -137,6 +139,26 @@ impl ConnectForm {
             key_path: site.key_path.clone(),
             site: Some(site.id.clone()),
             save_password: site.save_secrets,
+            ..Self::default()
+        };
+    }
+
+    pub fn fill_from_recent(&mut self, recent: &RecentConnection) {
+        *self = Self {
+            protocol: recent.protocol,
+            host: recent.host.clone(),
+            port: if recent.port == recent.protocol.default_port() {
+                String::new()
+            } else {
+                recent.port.to_string()
+            },
+            username: recent.username.clone(),
+            method: if recent.uses_key_file() {
+                AuthMethod::KeyFile
+            } else {
+                AuthMethod::Password
+            },
+            key_path: recent.key_path.clone(),
             ..Self::default()
         };
     }

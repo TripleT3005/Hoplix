@@ -1,16 +1,17 @@
-use hoplix_core::Site;
+use hoplix_core::{FileNameEncoding, FtpMode, Protocol, Site};
 use iced::widget::{
-    Column, Space, button, column, container, mouse_area, pick_list, row, scrollable, text,
-    text_editor, text_input,
+    Column, Space, button, checkbox, column, container, mouse_area, pick_list, row, scrollable,
+    text, text_editor, text_input,
 };
 use iced::{Alignment, Element, Length};
 
 use crate::app::{Hoplix, Message, SiteSelection};
 use crate::connect_form::Field;
 use crate::i18n::Strings;
-use crate::site_form::{SiteField, SiteForm};
+use crate::site_exchange::ExchangeMessage;
+use crate::site_form::{OptionField, SiteField, SiteForm};
 use crate::theme;
-use crate::ui::connect_page::{connection_fields, save_secret_checkbox, setting};
+use crate::ui::connect_page::{LABEL_WIDTH, connection_fields, save_secret_checkbox, setting};
 use crate::ui::{self, Choice};
 
 // Constants
@@ -19,6 +20,11 @@ const TREE_WIDTH: f32 = 320.0;
 const INDENT: f32 = 16.0;
 const NOTES_HEIGHT: f32 = 90.0;
 const ROW_PADDING: [u16; 2] = [4, 8];
+const NUMBER_WIDTH: f32 = 120.0;
+const HINT_SIZE: u32 = 13;
+const DEFAULT_TIMEOUT: u32 = 20;
+const DEFAULT_SFTP_KEEPALIVE: u32 = 30;
+pub const EDITOR_SCROLL_ID: &str = "site-editor";
 
 // Page
 
@@ -75,6 +81,16 @@ fn tree(app: &Hoplix) -> Element<'_, Message> {
             button(text(strings.get("sites.new_folder")))
                 .style(theme::secondary_button)
                 .on_press(Message::SiteFolderNew),
+            Space::new().width(Length::Fill),
+            button(text(strings.get("sites.import")))
+                .style(button::text)
+                .on_press(Message::SiteExchange(ExchangeMessage::OpenImport)),
+            button(text(strings.get("sites.export")))
+                .style(button::text)
+                .on_press_maybe(
+                    (!app.sites.sites.is_empty())
+                        .then_some(Message::SiteExchange(ExchangeMessage::OpenExport))
+                ),
         ]
         .spacing(6),
         container(list)
@@ -206,7 +222,8 @@ fn editor(app: &Hoplix) -> Element<'_, Message> {
                 .height(NOTES_HEIGHT)
                 .padding(8)
                 .into(),
-        ));
+        ))
+        .push(advanced(app, form));
     if let Some(invalid) = form.invalid {
         content = content.push(ui::notice(strings.get(invalid.key()).to_string()));
     }
@@ -227,8 +244,183 @@ fn editor(app: &Hoplix) -> Element<'_, Message> {
     );
 
     scrollable(container(content.max_width(680)).padding([4, 16]))
+        .id(EDITOR_SCROLL_ID)
         .height(Length::Fill)
         .into()
+}
+
+// Advanced settings
+
+fn option(field: OptionField) -> Message {
+    Message::SiteField(SiteField::Option(field))
+}
+
+fn advanced<'a>(app: &'a Hoplix, form: &'a SiteForm) -> Element<'a, Message> {
+    let strings = &app.strings;
+    let options = &form.options;
+    let arrow = if options.open { "▾" } else { "▸" };
+    let mut title = strings.get("sites.advanced").to_string();
+    if !options.open && !options.is_default() {
+        title = format!("{title} {}", strings.get("sites.advanced.changed"));
+    }
+    let header = button(text(format!("{arrow} {title}")))
+        .style(button::text)
+        .padding([4, 0])
+        .on_press(option(OptionField::Toggle));
+    let mut content = column![header].spacing(12);
+    if !options.open {
+        return content.into();
+    }
+    content = content.push(subheading(strings.get("sites.advanced.connection")));
+    for element in connection_options(strings, form) {
+        content = content.push(element);
+    }
+    if form.connection.protocol != Protocol::Sftp {
+        content = content.push(subheading(strings.get("sites.advanced.ftp")));
+        for element in ftp_options(strings, form) {
+            content = content.push(element);
+        }
+    }
+    content = content.push(subheading(strings.get("sites.advanced.transfers")));
+    content = content.push(setting(
+        strings.get("sites.advanced.max_transfers"),
+        number_input(
+            &strings.format(
+                "sites.advanced.max_transfers.global",
+                &[("count", &app.settings.parallel_transfers.to_string())],
+            ),
+            &options.max_transfers,
+            OptionField::MaxTransfers,
+        ),
+    ));
+    content = content.push(hint(strings.get("sites.advanced.max_transfers.hint")));
+    content.into()
+}
+
+fn connection_options<'a>(strings: &'a Strings, form: &'a SiteForm) -> Vec<Element<'a, Message>> {
+    let options = &form.options;
+    let keepalive_placeholder = if form.connection.protocol == Protocol::Sftp {
+        strings.format(
+            "sites.advanced.default_seconds",
+            &[("count", &DEFAULT_SFTP_KEEPALIVE.to_string())],
+        )
+    } else {
+        strings.get("sites.advanced.keepalive.off").to_string()
+    };
+    vec![
+        setting(
+            strings.get("sites.advanced.timeout"),
+            number_input(
+                &strings.format(
+                    "sites.advanced.default_seconds",
+                    &[("count", &DEFAULT_TIMEOUT.to_string())],
+                ),
+                &options.connect_timeout,
+                OptionField::ConnectTimeout,
+            ),
+        ),
+        setting(
+            strings.get("sites.advanced.keepalive"),
+            number_input(
+                &keepalive_placeholder,
+                &options.keepalive,
+                OptionField::Keepalive,
+            ),
+        ),
+        hint(strings.get("sites.advanced.keepalive.hint")),
+    ]
+}
+
+fn ftp_options<'a>(strings: &'a Strings, form: &'a SiteForm) -> Vec<Element<'a, Message>> {
+    let options = &form.options;
+    let modes: Vec<Choice<FtpMode>> = FtpMode::ALL
+        .into_iter()
+        .map(|value| Choice {
+            value,
+            label: strings
+                .get(match value {
+                    FtpMode::Passive => "sites.advanced.mode.passive",
+                    FtpMode::Active => "sites.advanced.mode.active",
+                })
+                .to_string(),
+        })
+        .collect();
+    let selected_mode = modes.iter().find(|c| c.value == options.ftp_mode).cloned();
+    let encodings: Vec<Choice<FileNameEncoding>> = FileNameEncoding::ALL
+        .into_iter()
+        .map(|value| Choice {
+            value,
+            label: strings
+                .get(match value {
+                    FileNameEncoding::Utf8 => "sites.advanced.encoding.utf8",
+                    FileNameEncoding::Windows1252 => "sites.advanced.encoding.windows1252",
+                })
+                .to_string(),
+        })
+        .collect();
+    let selected_encoding = encodings
+        .iter()
+        .find(|c| c.value == options.ftp_encoding)
+        .cloned();
+    let mut rows = vec![setting(
+        strings.get("sites.advanced.mode"),
+        pick_list(modes, selected_mode, |choice| {
+            option(OptionField::FtpMode(choice.value))
+        })
+        .width(Length::Fill)
+        .into(),
+    )];
+    if options.ftp_mode == FtpMode::Passive {
+        rows.push(
+            row![
+                Space::new().width(LABEL_WIDTH),
+                checkbox(options.ftp_external_ip)
+                    .label(strings.get("sites.advanced.external_ip"))
+                    .on_toggle(|enabled| option(OptionField::ExternalIp(enabled))),
+            ]
+            .spacing(12)
+            .into(),
+        );
+    } else {
+        rows.push(hint(strings.get("sites.advanced.mode.active.hint")));
+    }
+    rows.push(setting(
+        strings.get("sites.advanced.encoding"),
+        pick_list(encodings, selected_encoding, |choice| {
+            option(OptionField::Encoding(choice.value))
+        })
+        .width(Length::Fill)
+        .into(),
+    ));
+    rows
+}
+
+fn number_input<'a>(
+    placeholder: &str,
+    value: &'a str,
+    build: fn(String) -> OptionField,
+) -> Element<'a, Message> {
+    row![
+        text_input(placeholder, value)
+            .on_input(move |value| option(build(value)))
+            .padding(8)
+            .width(Length::Fill),
+        Space::new().width(NUMBER_WIDTH),
+    ]
+    .into()
+}
+
+fn subheading(label: &str) -> Element<'_, Message> {
+    text(label).size(15).style(text::primary).into()
+}
+
+fn hint(content: &str) -> Element<'_, Message> {
+    row![
+        Space::new().width(LABEL_WIDTH),
+        text(content).size(HINT_SIZE).width(Length::Fill),
+    ]
+    .spacing(12)
+    .into()
 }
 
 fn folder_picker<'a>(

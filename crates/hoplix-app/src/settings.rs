@@ -63,6 +63,7 @@ pub struct Settings {
     pub retry_attempts: u32,
     pub retry_delay: u32,
     pub auto_reconnect: bool,
+    pub remember_recent: bool,
     pub editor: String,
     pub upload_changes_automatically: bool,
     pub update_check: bool,
@@ -86,6 +87,7 @@ impl Default for Settings {
             retry_attempts: DEFAULT_RETRIES,
             retry_delay: u32::try_from(DEFAULT_RETRY_DELAY.as_secs()).unwrap_or(MIN_RETRY_DELAY),
             auto_reconnect: true,
+            remember_recent: true,
             editor: String::new(),
             upload_changes_automatically: false,
             update_check: true,
@@ -264,6 +266,11 @@ impl Settings {
                         settings.auto_reconnect = enabled;
                     }
                 }
+                "remember_recent_connections" => {
+                    if let Ok(enabled) = value.parse::<bool>() {
+                        settings.remember_recent = enabled;
+                    }
+                }
                 "editor" => settings.editor = value,
                 "upload_changes_automatically" => {
                     settings.upload_changes_automatically = value == "true";
@@ -315,6 +322,10 @@ impl Settings {
             ("retry_attempts", self.retry_attempts.to_string()),
             ("retry_delay", self.retry_delay.to_string()),
             ("reconnect_automatically", self.auto_reconnect.to_string()),
+            (
+                "remember_recent_connections",
+                self.remember_recent.to_string(),
+            ),
             ("editor", self.editor.clone()),
             (
                 "upload_changes_automatically",
@@ -386,6 +397,7 @@ mod tests {
             retry_attempts: 0,
             retry_delay: 30,
             auto_reconnect: false,
+            remember_recent: false,
             editor: r#"C:\Tools\My Editor = "new".exe"#.to_string(),
             upload_changes_automatically: true,
             update_check: false,
@@ -408,6 +420,7 @@ mod tests {
              download_limit_unit = gib\nupload_limit = 99999999\nretry_attempts = 11\n\
              retry_delay = 0\nreconnect_automatically = maybe\nupdate_check = maybe\n\
              update_last_check = soon\nupdate_notified_version = new\n\
+             remember_recent_connections = sometimes\n\
              update_latest_version = 1.0\nupdate_latest_url = https://example.com/\n",
         );
         assert_eq!(settings, Settings::default());
@@ -423,6 +436,7 @@ mod tests {
         assert_eq!(settings.retry_attempts, 3);
         assert_eq!(settings.retry_delay, 1);
         assert!(settings.auto_reconnect);
+        assert!(settings.remember_recent);
         assert!(settings.update_check);
         assert_eq!(settings.update_last_check, None);
         assert_eq!(settings.speed_limits(), SpeedLimits::default());
