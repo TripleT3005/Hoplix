@@ -15,8 +15,8 @@ use hoplix_core::{
     Keyring, LocalFileSystem, Pattern, ProxyCredentials, RetryPolicy, Route, SecretBackend, Site,
     SiteExport, SiteList, SortKey, SortOrder, SpeedLimits, SyncAction, SyncDirection, SyncEndpoint,
     SyncMode, SyncOptions, SyncPlan, TransferEvent, TransferQueue, TransferRequest, TrustStore,
-    Vault, config_dir, decrypt_export, encrypt_export, remove_recursive, secret_name, sort_entries,
-    unlock_vault, utc_date,
+    Vault, config_dir, decrypt_export, encrypt_export, jump_secret_name, proxy_secret_name,
+    remove_recursive, secret_name, sort_entries, unlock_vault, utc_date,
 };
 
 use arguments::{Command, Invocation, Options, USAGE};
@@ -599,7 +599,9 @@ async fn open(target: &Target, options: &Options) -> Result<Opened, String> {
                 username: remote.username.clone(),
                 authentication: authentication(remote, options)?,
             };
-            let file_system = connect(&params, &ConnectionOptions::default(), options).await?;
+            let route = route(options)?;
+            let file_system =
+                connect(&params, &route, &ConnectionOptions::default(), options).await?;
             let path = locate(file_system.as_ref(), &remote.path).await?;
             Ok(Opened {
                 file_system,
@@ -610,8 +612,8 @@ async fn open(target: &Target, options: &Options) -> Result<Opened, String> {
         Target::Site(target) => {
             let sites = load_sites()?;
             let site = find_site(&sites, target)?;
-            let params = site_params(site, options).await?;
-            let file_system = connect(&params, &site.options, options).await?;
+            let (params, route) = site_connection(site, options).await?;
+            let file_system = connect(&params, &route, &site.options, options).await?;
             let path = target
                 .path
                 .clone()
@@ -646,6 +648,7 @@ async fn resolve(opened: &Opened, path: &RemotePath) -> Result<String, String> {
 
 async fn connect(
     params: &ConnectionParams,
+    route: &Route,
     connection: &ConnectionOptions,
     options: &Options,
 ) -> Result<Arc<dyn FileSystem>, String> {
@@ -656,11 +659,10 @@ async fn connect(
     if let Some(path) = &options.trusted_certificates {
         trust_store.certificates.clone_from(path);
     }
-    let route = route(options)?;
     let mut trusted: Vec<HostKeyTrust> = Vec::new();
     loop {
         let error =
-            match hoplix_core::connect_via_with(params, &route, connection, &trust_store, &trusted)
+            match hoplix_core::connect_via_with(params, route, connection, &trust_store, &trusted)
                 .await
             {
                 Ok(file_system) => return Ok(file_system),
@@ -790,11 +792,38 @@ fn find_site<'a>(sites: &'a SiteList, target: &SiteTarget) -> Result<&'a Site, S
     })
 }
 
-async fn site_params(site: &Site, options: &Options) -> Result<ConnectionParams, String> {
+async fn site_connection(
+    site: &Site,
+    options: &Options,
+) -> Result<(ConnectionParams, Route), String> {
+    let own_route = options.jump.is_some() || options.proxy.is_some();
+    let own_sign_in = options.agent || options.key.is_some() || options.password_env.is_some();
+    let mut wanted = Vec::new();
+    if !own_sign_in {
+        wanted.push(secret_name(&site.id));
+    }
+    if !own_route {
+        wanted.push(jump_secret_name(&site.id, 0));
+        wanted.push(proxy_secret_name(&site.id));
+    }
+    let names: Vec<String> = site
+        .saved_secret_names()
+        .into_iter()
+        .filter(|name| wanted.contains(name))
+        .collect();
+    let mut saved = saved_secrets(&names, options).await?;
+    let route = if own_route {
+        route(options)?
+    } else {
+        site.route(
+            saved.remove(&jump_secret_name(&site.id, 0)),
+            saved.remove(&proxy_secret_name(&site.id)),
+        )
+    };
     let mut params = site.to_params(None);
     if options.agent {
         params.authentication = Authentication::Agent;
-        return Ok(params);
+        return Ok((params, route));
     }
     if let Some(key) = &options.key {
         let passphrase = options.passphrase_env.as_deref().map(secret).transpose()?;
@@ -802,42 +831,46 @@ async fn site_params(site: &Site, options: &Options) -> Result<ConnectionParams,
             path: PathBuf::from(key),
             passphrase,
         };
-        return Ok(params);
+        return Ok((params, route));
     }
     if let Some(name) = &options.password_env {
         params.authentication = Authentication::Password(secret(name)?);
-        return Ok(params);
+        return Ok((params, route));
     }
-    let saved = if site.save_secrets {
-        saved_secret(site, options).await?
-    } else {
-        None
-    };
-    if saved.is_none() && !site.uses_key_file() {
+    let saved = saved.remove(&secret_name(&site.id));
+    if saved.is_none() && !site.uses_key_file() && !site.uses_agent() {
         return Err(format!(
             "no password is saved for the site {}: pass --password-env <name>",
             site.name
         ));
     }
-    Ok(site.to_params(saved))
+    Ok((site.to_params(saved), route))
 }
 
-async fn saved_secret(site: &Site, options: &Options) -> Result<Option<String>, String> {
+async fn saved_secrets(
+    names: &[String],
+    options: &Options,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut secrets = BTreeMap::new();
+    if names.is_empty() {
+        return Ok(secrets);
+    }
     let directory = config_dir().ok_or("no Hoplix configuration folder")?;
-    let name = secret_name(&site.id);
-    match SecretBackend::detect(&directory) {
-        SecretBackend::Keyring => Keyring::default().get(&name).await.map_err(describe),
-        SecretBackend::Vault => {
-            let variable = options
-                .master_password_env
-                .as_deref()
-                .ok_or_else(|| describe(Error::new(ErrorKind::VaultLocked, "")))?;
-            let vault = unlock_vault(directory, secret(variable)?)
-                .await
-                .map_err(describe)?;
-            vault.get(&name).map_err(describe)
+    let vault = match SecretBackend::detect(&directory) {
+        SecretBackend::Vault => Some(open_vault(&directory, options).await?),
+        SecretBackend::Keyring => None,
+    };
+    let keyring = Keyring::default();
+    for name in names {
+        let value = match &vault {
+            Some(vault) => vault.get(name).map_err(describe)?,
+            None => keyring.get(name).await.map_err(describe)?,
+        };
+        if let Some(value) = value.filter(|value| !value.is_empty()) {
+            secrets.insert(name.clone(), value);
         }
     }
+    Ok(secrets)
 }
 
 // Site lists
@@ -915,12 +948,11 @@ async fn import_sites(file: &Path, options: &Options) -> Result<(), String> {
     sites
         .save(&directory)
         .map_err(|error| format!("the sites could not be saved: {error}"))?;
-    for (site, value) in &summary.stored {
-        let name = secret_name(site);
+    for (name, value) in &summary.stored {
         match &mut vault {
-            Some(vault) => vault.set(&name, value).map_err(describe)?,
+            Some(vault) => vault.set(name, value).map_err(describe)?,
             None => Keyring::default()
-                .set(&name, value)
+                .set(name, value)
                 .await
                 .map_err(describe)?,
         }
@@ -941,28 +973,12 @@ async fn read_secrets(
     list: &SiteList,
     options: &Options,
 ) -> Result<BTreeMap<String, String>, String> {
-    let mut secrets = BTreeMap::new();
-    let saved: Vec<&Site> = list.sites.iter().filter(|site| site.save_secrets).collect();
-    if saved.is_empty() {
-        return Ok(secrets);
-    }
-    let directory = config_dir().ok_or("no Hoplix configuration folder")?;
-    let vault = match SecretBackend::detect(&directory) {
-        SecretBackend::Vault => Some(open_vault(&directory, options).await?),
-        SecretBackend::Keyring => None,
-    };
-    let keyring = Keyring::default();
-    for site in saved {
-        let name = secret_name(&site.id);
-        let value = match &vault {
-            Some(vault) => vault.get(&name).map_err(describe)?,
-            None => keyring.get(&name).await.map_err(describe)?,
-        };
-        if let Some(value) = value.filter(|value| !value.is_empty()) {
-            secrets.insert(site.id.clone(), value);
-        }
-    }
-    Ok(secrets)
+    let names: Vec<String> = list
+        .sites
+        .iter()
+        .flat_map(Site::saved_secret_names)
+        .collect();
+    saved_secrets(&names, options).await
 }
 
 async fn open_vault(directory: &Path, options: &Options) -> Result<Vault, String> {

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::key_value::{self, Section};
 use crate::sites::write_atomically;
-use crate::{Authentication, ConnectionParams, Protocol, SiteAuth};
+use crate::{Authentication, ConnectionParams, Protocol, SiteAuth, SiteJump, SiteProxy};
 
 // Constants
 
@@ -22,6 +22,8 @@ pub struct RecentConnection {
     pub username: String,
     pub auth: SiteAuth,
     pub key_path: String,
+    pub jump: Option<SiteJump>,
+    pub proxy: Option<SiteProxy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -37,6 +39,9 @@ impl RecentConnection {
             Authentication::KeyFile { path, .. } if params.protocol.supports_key_files() => {
                 (SiteAuth::KeyFile, path.to_string_lossy().into_owned())
             }
+            Authentication::Agent if params.protocol.supports_key_files() => {
+                (SiteAuth::Agent, String::new())
+            }
             _ => (SiteAuth::Password, String::new()),
         };
         Self {
@@ -46,7 +51,23 @@ impl RecentConnection {
             username: params.username.clone(),
             auth,
             key_path,
+            jump: None,
+            proxy: None,
         }
+    }
+
+    pub fn with_route(mut self, jump: Option<SiteJump>, proxy: Option<SiteProxy>) -> Self {
+        self.jump = jump
+            .filter(|_| self.protocol.supports_key_files())
+            .map(|jump| SiteJump {
+                save_secret: false,
+                ..jump
+            });
+        self.proxy = proxy.map(|proxy| SiteProxy {
+            save_secret: false,
+            ..proxy
+        });
+        self
     }
 
     pub fn label(&self) -> String {
@@ -67,16 +88,16 @@ impl RecentConnection {
         self.protocol.supports_key_files() && self.auth == SiteAuth::KeyFile
     }
 
+    pub fn uses_agent(&self) -> bool {
+        self.protocol.supports_key_files() && self.auth == SiteAuth::Agent
+    }
+
     fn from_section(section: &Section) -> Option<Self> {
         let protocol = section
             .get("protocol")
             .and_then(|scheme| Protocol::ALL.into_iter().find(|p| p.scheme() == scheme))?;
         let host = section.get("host").filter(|host| !host.is_empty())?;
-        let auth = if section.get("auth") == Some("key") {
-            SiteAuth::KeyFile
-        } else {
-            SiteAuth::Password
-        };
+        let auth = SiteAuth::from_key(section.get("auth").unwrap_or_default());
         Some(Self {
             protocol,
             host: host.to_string(),
@@ -92,25 +113,44 @@ impl RecentConnection {
             } else {
                 String::new()
             },
+            jump: SiteJump::from_section(section)
+                .filter(|_| protocol.supports_key_files())
+                .map(|jump| SiteJump {
+                    save_secret: false,
+                    ..jump
+                }),
+            proxy: SiteProxy::from_section(section).map(|proxy| SiteProxy {
+                save_secret: false,
+                ..proxy
+            }),
         })
     }
 
     fn to_text(&self) -> String {
-        let auth = match self.auth {
-            SiteAuth::Password => "password",
-            SiteAuth::KeyFile => "key",
-        };
-        format!(
-            "\n[{ENTRY_SECTION}]\n{}",
-            key_value::write(&[
-                ("protocol", self.protocol.scheme().to_string()),
-                ("host", self.host.clone()),
-                ("port", self.port.to_string()),
-                ("username", self.username.clone()),
-                ("auth", auth.to_string()),
-                ("key_path", self.key_path.clone()),
-            ])
-        )
+        let mut pairs = vec![
+            ("protocol", self.protocol.scheme().to_string()),
+            ("host", self.host.clone()),
+            ("port", self.port.to_string()),
+            ("username", self.username.clone()),
+            ("auth", self.auth.key().to_string()),
+            ("key_path", self.key_path.clone()),
+        ];
+        if let Some(jump) = &self.jump {
+            pairs.extend(
+                jump.pairs()
+                    .into_iter()
+                    .filter(|(key, _)| *key != "jump_save_secret"),
+            );
+        }
+        if let Some(proxy) = &self.proxy {
+            pairs.extend(
+                proxy
+                    .pairs()
+                    .into_iter()
+                    .filter(|(key, _)| *key != "proxy_save_secret"),
+            );
+        }
+        format!("\n[{ENTRY_SECTION}]\n{}", key_value::write(&pairs))
     }
 }
 
@@ -269,6 +309,49 @@ mod tests {
             RecentList::load(&directory).expect("loading failed"),
             RecentList::default()
         );
+        fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[test]
+    fn routes_are_remembered_without_secrets() {
+        let directory = temporary_directory("routes");
+        let mut list = RecentList::default();
+        let jump = SiteJump {
+            host: "bastion.test".to_string(),
+            port: 2222,
+            username: "hop".to_string(),
+            auth: SiteAuth::KeyFile,
+            key_path: "C:\\keys\\hop".to_string(),
+            save_secret: true,
+        };
+        let proxy = SiteProxy {
+            kind: crate::ProxyKind::Http,
+            host: "proxy.test".to_string(),
+            port: 3128,
+            username: "me".to_string(),
+            save_secret: true,
+        };
+        let entry = RecentConnection::from_params(&params("inner.test", Authentication::Agent))
+            .with_route(Some(jump.clone()), Some(proxy.clone()));
+        assert!(entry.uses_agent());
+        assert!(!entry.jump.as_ref().expect("jump").save_secret);
+        list.record(entry.clone());
+        list.save(&directory).expect("saving failed");
+        let text = fs::read_to_string(directory.join(RECENT_FILE)).expect("reading failed");
+        assert!(!text.contains("save_secret"));
+        let loaded = RecentList::load(&directory).expect("loading failed");
+        assert_eq!(loaded.entries, [entry]);
+        assert_eq!(loaded.entries[0].jump.as_ref().map(|j| j.port), Some(2222));
+        assert_eq!(
+            loaded.entries[0].proxy.as_ref().map(|p| p.host.as_str()),
+            Some("proxy.test")
+        );
+
+        let mut ftp = params("ftp.test", Authentication::Password(test_password()));
+        ftp.protocol = Protocol::Ftp;
+        let entry = RecentConnection::from_params(&ftp).with_route(Some(jump), Some(proxy));
+        assert_eq!(entry.jump, None);
+        assert!(entry.proxy.is_some());
         fs::remove_dir_all(directory).expect("cleaning up failed");
     }
 

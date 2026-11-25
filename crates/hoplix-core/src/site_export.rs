@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::key_value::{self, from_hex, to_hex};
 use crate::secrets::vault::{self, CIPHER, KDF, SALT_LENGTH};
-use crate::{DEFAULT_ITERATIONS, Site, SiteList, new_id, normalize_folder};
+use crate::{DEFAULT_ITERATIONS, SecretSlot, Site, SiteList, new_id, normalize_folder};
 
 // Constants
 
@@ -15,6 +15,7 @@ const HEADER: &str = "# Hoplix site list";
 const FORMAT: &str = "hoplix-sites";
 const VERSION: u32 = 1;
 const SECRET_SECTION: &str = "secret";
+const ROUTE_SECRET_SECTION: &str = "route-secret";
 const CHECK_NAME: &str = "export-check";
 const CHECK_TEXT: &[u8] = b"hoplix-sites";
 const DATA_NAME: &str = "export-data";
@@ -166,14 +167,28 @@ impl SiteExport {
 
     fn inner_text(&self) -> String {
         let mut text = body_of(&self.list);
-        for (site, secret) in &self.secrets {
+        for (name, secret) in &self.secrets {
+            let Some((site, slot)) = SecretSlot::parse(name) else {
+                continue;
+            };
             if self.list.get(site).is_none() || secret.is_empty() {
                 continue;
             }
-            text.push_str(&format!(
-                "\n[{SECRET_SECTION}]\n{}",
-                key_value::write(&[("site", site.clone()), ("value", secret.clone())])
-            ));
+            let section = match slot {
+                SecretSlot::Site => format!(
+                    "\n[{SECRET_SECTION}]\n{}",
+                    key_value::write(&[("site", site.to_string()), ("value", secret.clone())])
+                ),
+                _ => format!(
+                    "\n[{ROUTE_SECRET_SECTION}]\n{}",
+                    key_value::write(&[
+                        ("site", site.to_string()),
+                        ("slot", slot.key()),
+                        ("value", secret.clone()),
+                    ])
+                ),
+            };
+            text.push_str(&section);
         }
         text
     }
@@ -182,11 +197,16 @@ impl SiteExport {
         let list = SiteList::parse(text);
         let secrets = key_value::parse_sections(text)
             .into_iter()
-            .filter(|section| section.name == SECRET_SECTION)
             .filter_map(|section| {
-                let site = section.get("site")?.to_string();
+                let slot = match section.name.as_str() {
+                    SECRET_SECTION => SecretSlot::Site,
+                    ROUTE_SECRET_SECTION => SecretSlot::from_key(section.get("slot")?)
+                        .filter(|slot| *slot != SecretSlot::Site)?,
+                    _ => return None,
+                };
+                let site = section.get("site")?;
                 let value = section.get("value").filter(|value| !value.is_empty())?;
-                list.get(&site).map(|_| (site, value.to_string()))
+                list.get(site).map(|_| (slot.name(site), value.to_string()))
             })
             .collect();
         Self { list, secrets }
@@ -210,13 +230,27 @@ impl SiteExport {
         let mut stored = Vec::new();
         let mut count = 0;
         for mut site in self.list.sites {
-            let secret = self.secrets.get(&site.id).cloned();
+            let secrets: Vec<(SecretSlot, String)> = self
+                .secrets
+                .iter()
+                .filter_map(|(name, secret)| match SecretSlot::parse(name) {
+                    Some((id, slot)) if id == site.id => Some((slot, secret.clone())),
+                    _ => None,
+                })
+                .collect();
+            let has = |wanted: SecretSlot| secrets.iter().any(|(slot, _)| *slot == wanted);
             site.id = new_id();
             site.folder = normalize_folder(&place(&site.folder));
             site.name = free_name(list, &site.folder, &site.name);
-            site.save_secrets = secret.is_some();
-            if let Some(secret) = secret {
-                stored.push((site.id.clone(), secret));
+            site.save_secrets = has(SecretSlot::Site);
+            if let Some(jump) = &mut site.jump {
+                jump.save_secret = has(SecretSlot::Jump(0));
+            }
+            if let Some(proxy) = &mut site.proxy {
+                proxy.save_secret = has(SecretSlot::Proxy);
+            }
+            for (slot, secret) in secrets {
+                stored.push((slot.name(&site.id), secret));
             }
             list.upsert(site);
             count += 1;
@@ -385,7 +419,10 @@ pub fn utc_date(time: SystemTime) -> String {
 mod tests {
     use super::*;
     use crate::test_support::test_password;
-    use crate::{FtpMode, Protocol};
+    use crate::{
+        FtpMode, Protocol, ProxyKind, SiteAuth, SiteJump, SiteProxy, jump_secret_name,
+        proxy_secret_name, secret_name,
+    };
     use std::time::Duration;
 
     const FAST: u32 = 1_000;
@@ -421,7 +458,7 @@ mod tests {
         let password = test_password();
         let export = SiteExport {
             list: list.clone(),
-            secrets: BTreeMap::from([(web.id.clone(), password.clone())]),
+            secrets: BTreeMap::from([(secret_name(&web.id), password.clone())]),
         };
         let text = export.to_plain_text();
         assert!(text.starts_with(HEADER));
@@ -441,7 +478,7 @@ mod tests {
         let password = test_password();
         let export = SiteExport {
             list: list.clone(),
-            secrets: BTreeMap::from([(web.id.clone(), secret.clone())]),
+            secrets: BTreeMap::from([(secret_name(&web.id), secret.clone())]),
         };
         let text = export
             .to_encrypted_text(&password, FAST)
@@ -455,7 +492,7 @@ mod tests {
         };
         let opened = sealed.open(&password).expect("opened");
         assert_eq!(opened.list, list);
-        assert_eq!(opened.secrets.get(&web.id), Some(&secret));
+        assert_eq!(opened.secrets.get(&secret_name(&web.id)), Some(&secret));
         assert_eq!(
             sealed.open(&test_password()).map(|_| ()),
             Err(ExportError::WrongPassword)
@@ -543,7 +580,7 @@ mod tests {
         let secret = test_password();
         let export = SiteExport {
             list: SiteExport::select(&exported, &ExportScope::Folder("Work".to_string())),
-            secrets: BTreeMap::from([(web.id.clone(), secret.clone())]),
+            secrets: BTreeMap::from([(secret_name(&web.id), secret.clone())]),
         };
         let mut target = SiteList::default();
         let mut existing = site("Web", "Imported 2026-11-25/Work/Clients");
@@ -567,7 +604,7 @@ mod tests {
         assert!(imported.save_secrets);
         assert_eq!(imported.options.ftp_mode, FtpMode::Active);
         assert_eq!(imported.max_transfers, Some(2));
-        assert_eq!(summary.stored, [(imported.id.clone(), secret)]);
+        assert_eq!(summary.stored, [(secret_name(&imported.id), secret)]);
         assert!(
             target
                 .all_folders()
@@ -595,6 +632,72 @@ mod tests {
             root.sites
                 .iter()
                 .any(|candidate| candidate.folder == "Home")
+        );
+    }
+
+    #[test]
+    fn route_secrets_travel_with_their_site() {
+        let mut list = SiteList::default();
+        let mut inner = site("Inner", "");
+        inner.auth = SiteAuth::Agent;
+        inner.jump = Some(SiteJump {
+            host: "bastion.test".to_string(),
+            port: 22,
+            username: "hop".to_string(),
+            auth: SiteAuth::Password,
+            key_path: String::new(),
+            save_secret: true,
+        });
+        inner.proxy = Some(SiteProxy {
+            kind: ProxyKind::Socks5,
+            host: "proxy.test".to_string(),
+            port: 1080,
+            username: "me".to_string(),
+            save_secret: true,
+        });
+        list.upsert(inner.clone());
+        let jump_password = test_password();
+        let proxy_password = test_password();
+        let export = SiteExport {
+            list: list.clone(),
+            secrets: BTreeMap::from([
+                (jump_secret_name(&inner.id, 0), jump_password.clone()),
+                (proxy_secret_name(&inner.id), proxy_password.clone()),
+            ]),
+        };
+        let password = test_password();
+        let text = export
+            .to_encrypted_text(&password, FAST)
+            .expect("encrypted");
+        let ExportFile::Encrypted(sealed) = ExportFile::parse(&text).expect("parsed") else {
+            panic!("not encrypted");
+        };
+        let opened = sealed.open(&password).expect("opened");
+        assert_eq!(opened.list, list);
+        assert_eq!(opened.secrets, export.secrets);
+        assert!(export.inner_text().contains("[route-secret]"));
+        assert!(!export.inner_text().contains("[secret]"));
+
+        let mut target = SiteList::default();
+        let summary = opened.import_into(&mut target, "");
+        let imported = &target.sites[0];
+        assert!(!imported.save_secrets);
+        assert!(imported.jump.as_ref().expect("jump").save_secret);
+        assert!(imported.proxy.as_ref().expect("proxy").save_secret);
+        assert_eq!(summary.secrets, 2);
+        assert_eq!(
+            summary.stored,
+            [
+                (jump_secret_name(&imported.id, 0), jump_password),
+                (proxy_secret_name(&imported.id), proxy_password),
+            ]
+        );
+        assert_eq!(
+            imported.saved_secret_names(),
+            [
+                jump_secret_name(&imported.id, 0),
+                proxy_secret_name(&imported.id)
+            ]
         );
     }
 

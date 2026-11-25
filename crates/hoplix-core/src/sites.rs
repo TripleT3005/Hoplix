@@ -6,7 +6,10 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::key_value::{self, Section};
 use crate::options::{self, ConnectionOptions, FileNameEncoding, FtpMode};
-use crate::{Authentication, ConnectionParams, Protocol};
+use crate::{
+    ConnectionParams, Protocol, Route, SiteJump, SiteProxy, jump_secret_name, proxy_secret_name,
+    secret_name,
+};
 
 // Constants
 
@@ -22,6 +25,7 @@ pub enum SiteAuth {
     #[default]
     Password,
     KeyFile,
+    Agent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -41,6 +45,8 @@ pub struct Site {
     pub save_secrets: bool,
     pub options: ConnectionOptions,
     pub max_transfers: Option<usize>,
+    pub jump: Option<SiteJump>,
+    pub proxy: Option<SiteProxy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -89,22 +95,68 @@ impl Site {
         self.protocol.supports_key_files() && self.auth == SiteAuth::KeyFile
     }
 
-    pub fn to_params(&self, secret: Option<String>) -> ConnectionParams {
-        let authentication = if self.uses_key_file() {
-            Authentication::KeyFile {
-                path: PathBuf::from(&self.key_path),
-                passphrase: secret.filter(|value| !value.is_empty()),
-            }
+    pub fn uses_agent(&self) -> bool {
+        self.protocol.supports_key_files() && self.auth == SiteAuth::Agent
+    }
+
+    pub fn effective_auth(&self) -> SiteAuth {
+        if self.protocol.supports_key_files() {
+            self.auth
         } else {
-            Authentication::Password(secret.unwrap_or_default())
-        };
+            SiteAuth::Password
+        }
+    }
+
+    pub fn active_jump(&self) -> Option<&SiteJump> {
+        self.jump
+            .as_ref()
+            .filter(|_| self.protocol.supports_key_files())
+    }
+
+    pub fn to_params(&self, secret: Option<String>) -> ConnectionParams {
         ConnectionParams {
             protocol: self.protocol,
             host: self.host.clone(),
             port: self.port,
             username: self.username.clone(),
-            authentication,
+            authentication: self.effective_auth().authentication(&self.key_path, secret),
         }
+    }
+
+    pub fn route(&self, jump_secret: Option<String>, proxy_secret: Option<String>) -> Route {
+        Route {
+            proxy: self
+                .proxy
+                .as_ref()
+                .map(|proxy| proxy.to_proxy(proxy_secret)),
+            jump_hosts: self
+                .active_jump()
+                .map(|jump| jump.to_jump_host(jump_secret))
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    pub fn saved_secret_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        if self.save_secrets {
+            names.push(secret_name(&self.id));
+        }
+        if self
+            .jump
+            .as_ref()
+            .is_some_and(|jump| jump.save_secret && jump.uses_secret())
+        {
+            names.push(jump_secret_name(&self.id, 0));
+        }
+        if self
+            .proxy
+            .as_ref()
+            .is_some_and(|proxy| proxy.save_secret && proxy.uses_secret())
+        {
+            names.push(proxy_secret_name(&self.id));
+        }
+        names
     }
 
     // Serialization
@@ -146,11 +198,7 @@ impl Site {
                 .filter(|port| *port > 0)
                 .unwrap_or(protocol.default_port()),
             username: text("username"),
-            auth: if section.get("auth") == Some("key") {
-                SiteAuth::KeyFile
-            } else {
-                SiteAuth::Password
-            },
+            auth: SiteAuth::from_key(section.get("auth").unwrap_or_default()),
             key_path: text("key_path"),
             remote_path: text("remote_path"),
             local_path: text("local_path"),
@@ -161,48 +209,55 @@ impl Site {
                 .get("max_transfers")
                 .and_then(|value| value.parse().ok())
                 .filter(|count| (1..=MAX_SITE_TRANSFERS).contains(count)),
+            jump: SiteJump::from_section(section),
+            proxy: SiteProxy::from_section(section),
         })
     }
 
     fn to_text(&self) -> String {
-        let auth = match self.auth {
-            SiteAuth::Password => "password",
-            SiteAuth::KeyFile => "key",
-        };
+        let mut pairs = vec![
+            ("id", self.id.clone()),
+            ("name", self.name.clone()),
+            ("folder", self.folder.clone()),
+            ("protocol", self.protocol.scheme().to_string()),
+            ("host", self.host.clone()),
+            ("port", self.port.to_string()),
+            ("username", self.username.clone()),
+            ("auth", self.auth.key().to_string()),
+            ("key_path", self.key_path.clone()),
+            ("remote_path", self.remote_path.clone()),
+            ("local_path", self.local_path.clone()),
+            ("notes", self.notes.clone()),
+            ("save_secrets", self.save_secrets.to_string()),
+            (
+                "connect_timeout",
+                options::seconds_text(self.options.connect_timeout),
+            ),
+            (
+                "keepalive_interval",
+                options::seconds_text(self.options.keepalive_interval),
+            ),
+            ("ftp_mode", self.options.ftp_mode.key().to_string()),
+            ("ftp_external_ip", self.options.ftp_external_ip.to_string()),
+            ("ftp_encoding", self.options.ftp_encoding.key().to_string()),
+            (
+                "max_transfers",
+                self.max_transfers
+                    .map(|count| count.to_string())
+                    .unwrap_or_default(),
+            ),
+        ];
+        if let Some(jump) = &self.jump {
+            pairs.extend(jump.pairs());
+        }
+        if let Some(proxy) = &self.proxy {
+            pairs.extend(proxy.pairs());
+        }
         format!(
-            "\n[{SITE_SECTION}]\n{}",
-            key_value::write(&[
-                ("id", self.id.clone()),
-                ("name", self.name.clone()),
-                ("folder", self.folder.clone()),
-                ("protocol", self.protocol.scheme().to_string()),
-                ("host", self.host.clone()),
-                ("port", self.port.to_string()),
-                ("username", self.username.clone()),
-                ("auth", auth.to_string()),
-                ("key_path", self.key_path.clone()),
-                ("remote_path", self.remote_path.clone()),
-                ("local_path", self.local_path.clone()),
-                ("notes", self.notes.clone()),
-                ("save_secrets", self.save_secrets.to_string()),
-                (
-                    "connect_timeout",
-                    options::seconds_text(self.options.connect_timeout),
-                ),
-                (
-                    "keepalive_interval",
-                    options::seconds_text(self.options.keepalive_interval),
-                ),
-                ("ftp_mode", self.options.ftp_mode.key().to_string()),
-                ("ftp_external_ip", self.options.ftp_external_ip.to_string(),),
-                ("ftp_encoding", self.options.ftp_encoding.key().to_string()),
-                (
-                    "max_transfers",
-                    self.max_transfers
-                        .map(|count| count.to_string())
-                        .unwrap_or_default(),
-                ),
-            ])
+            "
+[{SITE_SECTION}]
+{}",
+            key_value::write(&pairs)
         )
     }
 }
@@ -339,6 +394,12 @@ impl SiteList {
         copy.id = new_id();
         copy.name = name.to_string();
         copy.save_secrets = false;
+        if let Some(jump) = &mut copy.jump {
+            jump.save_secret = false;
+        }
+        if let Some(proxy) = &mut copy.proxy {
+            proxy.save_secret = false;
+        }
         self.sites.push(copy.clone());
         Some(copy)
     }
@@ -414,6 +475,7 @@ pub(crate) fn write_atomically(path: &Path, content: &[u8]) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::test_support::test_password;
+    use crate::{Authentication, JumpHost, Proxy, ProxyKind};
 
     fn site(name: &str, folder: &str) -> Site {
         Site {
@@ -509,6 +571,82 @@ max_transfers = 0
         );
         assert_eq!(broken.sites[0].options, ConnectionOptions::default());
         assert_eq!(broken.sites[0].max_transfers, None);
+    }
+
+    #[test]
+    fn jump_hosts_and_proxies_round_trip_without_secrets() {
+        let mut list = SiteList::default();
+        let mut inner = site("Inner", "");
+        inner.auth = SiteAuth::Agent;
+        inner.save_secrets = false;
+        inner.jump = Some(SiteJump {
+            host: "bastion.test".to_string(),
+            port: 2222,
+            username: "hop".to_string(),
+            auth: SiteAuth::KeyFile,
+            key_path: "C:\\keys\\hop".to_string(),
+            save_secret: true,
+        });
+        inner.proxy = Some(SiteProxy {
+            kind: ProxyKind::Http,
+            host: "proxy.test".to_string(),
+            port: 3128,
+            username: "me".to_string(),
+            save_secret: true,
+        });
+        list.upsert(inner.clone());
+        let text = list.to_text();
+        assert!(text.contains("auth = agent"));
+        assert!(text.contains("jump_host = bastion.test"));
+        assert!(text.contains("proxy = http"));
+        let parsed = SiteList::parse(&text);
+        assert_eq!(parsed.get(&inner.id), Some(&inner));
+        assert_eq!(
+            inner.saved_secret_names(),
+            [jump_secret_name(&inner.id, 0), proxy_secret_name(&inner.id)]
+        );
+
+        let route = inner.route(Some("jump".to_string()), Some("proxy".to_string()));
+        assert_eq!(
+            route.jump_hosts,
+            [JumpHost {
+                host: "bastion.test".to_string(),
+                port: 2222,
+                username: "hop".to_string(),
+                authentication: Authentication::KeyFile {
+                    path: PathBuf::from("C:\\keys\\hop"),
+                    passphrase: Some("jump".to_string()),
+                },
+            }]
+        );
+        assert_eq!(
+            route.proxy.as_ref().map(Proxy::label),
+            Some("http://proxy.test:3128".to_string())
+        );
+        assert_eq!(inner.to_params(None).authentication, Authentication::Agent);
+
+        inner.protocol = Protocol::Ftp;
+        let route = inner.route(None, None);
+        assert!(route.jump_hosts.is_empty());
+        assert!(route.proxy.is_some());
+        assert!(matches!(
+            inner.to_params(None).authentication,
+            Authentication::Password(_)
+        ));
+
+        list.upsert(inner.clone());
+        let copy = list.duplicate(&inner.id, "Copy").expect("copied");
+        assert!(copy.saved_secret_names().is_empty());
+    }
+
+    #[test]
+    fn old_files_have_no_route() {
+        let parsed = SiteList::parse("[site]\nid = old2\nhost = h\nauth = key\n");
+        let site = &parsed.sites[0];
+        assert_eq!(site.jump, None);
+        assert_eq!(site.proxy, None);
+        assert_eq!(site.auth, SiteAuth::KeyFile);
+        assert!(site.route(None, None).is_direct());
     }
 
     // Folders
