@@ -282,17 +282,26 @@ impl Hoplix {
 
     pub fn held_by_site_limit(&self, job: JobId) -> Option<usize> {
         let limits = &self.transfer_targets.get(&job)?.site_limits;
+        let position = self
+            .transfer_jobs
+            .iter()
+            .position(|other| other.id == job)?;
         limits
             .iter()
             .find(|limit| {
-                let running = self
+                let ahead = self
                     .transfer_jobs
                     .iter()
-                    .filter(|other| other.id != job && other.status.is_active())
-                    .filter_map(|other| self.transfer_targets.get(&other.id))
+                    .enumerate()
+                    .filter(|(index, other)| {
+                        other.status.is_active()
+                            || (*index < position && other.status == JobStatus::Queued)
+                    })
+                    .filter(|(_, other)| other.id != job)
+                    .filter_map(|(_, other)| self.transfer_targets.get(&other.id))
                     .filter(|other| other.site_limits.iter().any(|item| item.site == limit.site))
                     .count();
-                running >= limit.max
+                ahead >= limit.max
             })
             .map(|limit| limit.max)
     }

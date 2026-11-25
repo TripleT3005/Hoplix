@@ -23,6 +23,8 @@ use crate::updates::UpdateMessage;
 pub use dialog::{focus_id, focus_input};
 #[cfg(test)]
 pub use settings_page::SCROLL_ID as SETTINGS_SCROLL_ID;
+#[cfg(test)]
+pub use sites_page::EDITOR_SCROLL_ID;
 
 // Types
 

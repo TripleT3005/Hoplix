@@ -24,6 +24,7 @@ const NUMBER_WIDTH: f32 = 120.0;
 const HINT_SIZE: u32 = 13;
 const DEFAULT_TIMEOUT: u32 = 20;
 const DEFAULT_SFTP_KEEPALIVE: u32 = 30;
+pub const EDITOR_SCROLL_ID: &str = "site-editor";
 
 // Page
 
@@ -243,6 +244,7 @@ fn editor(app: &Hoplix) -> Element<'_, Message> {
     );
 
     scrollable(container(content.max_width(680)).padding([4, 16]))
+        .id(EDITOR_SCROLL_ID)
         .height(Length::Fill)
         .into()
 }
