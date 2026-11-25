@@ -1,6 +1,6 @@
 use hoplix_core::{
-    ConnectionOptions, FileNameEncoding, FtpMode, MAX_SITE_TRANSFERS, Site, normalize_folder,
-    seconds_from_text, seconds_text,
+    ConnectionOptions, FileNameEncoding, FtpMode, MAX_SITE_TRANSFERS, Protocol, Site,
+    normalize_folder, seconds_from_text, seconds_text,
 };
 use iced::widget::text_editor;
 
@@ -15,6 +15,14 @@ pub enum SiteFormError {
     InvalidTimeout,
     InvalidKeepalive,
     InvalidMaxTransfers,
+    ActiveModeWithProxy,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SiteSecrets {
+    pub main: Option<String>,
+    pub jump: Option<String>,
+    pub proxy: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +69,8 @@ pub struct SiteForm {
     pub local_path: String,
     pub notes: text_editor::Content,
     pub had_secret: bool,
+    pub had_jump_secret: bool,
+    pub had_proxy_secret: bool,
     pub options: OptionsForm,
     pub invalid: Option<SiteFormError>,
 }
@@ -73,6 +83,7 @@ impl SiteFormError {
             Self::InvalidTimeout => "sites.invalid.timeout",
             Self::InvalidKeepalive => "sites.invalid.keepalive",
             Self::InvalidMaxTransfers => "sites.invalid.max_transfers",
+            Self::ActiveModeWithProxy => "sites.invalid.active_proxy",
         }
     }
 }
@@ -162,6 +173,8 @@ impl SiteForm {
             local_path: site.local_path.clone(),
             notes: text_editor::Content::with_text(&site.notes),
             had_secret: site.save_secrets,
+            had_jump_secret: site.jump.as_ref().is_some_and(|jump| jump.save_secret),
+            had_proxy_secret: site.proxy.as_ref().is_some_and(|proxy| proxy.save_secret),
             options: OptionsForm::from_options(&site.options, site.max_transfers),
             invalid: None,
         }
@@ -202,12 +215,15 @@ impl SiteForm {
     }
 
     pub fn reveal_invalid(&mut self, invalid: SiteFormError) {
-        if matches!(
-            invalid,
+        let advanced = match invalid {
+            SiteFormError::Connection(error) => error.is_route(),
+            SiteFormError::MissingName => false,
             SiteFormError::InvalidTimeout
-                | SiteFormError::InvalidKeepalive
-                | SiteFormError::InvalidMaxTransfers
-        ) {
+            | SiteFormError::InvalidKeepalive
+            | SiteFormError::InvalidMaxTransfers
+            | SiteFormError::ActiveModeWithProxy => true,
+        };
+        if advanced {
             self.options.open = true;
         }
         self.invalid = Some(invalid);
@@ -215,7 +231,7 @@ impl SiteForm {
 
     // Validation
 
-    pub fn to_site(&self) -> Result<(Site, Option<String>), SiteFormError> {
+    pub fn to_site(&self) -> Result<(Site, SiteSecrets), SiteFormError> {
         let name = self.name.trim();
         if name.is_empty() {
             return Err(SiteFormError::MissingName);
@@ -224,7 +240,21 @@ impl SiteForm {
             .connection
             .to_params()
             .map_err(SiteFormError::Connection)?;
+        let jump = self
+            .connection
+            .jump_settings()
+            .map_err(SiteFormError::Connection)?;
+        let proxy = self
+            .connection
+            .proxy_settings()
+            .map_err(SiteFormError::Connection)?;
         let (options, max_transfers) = self.options.to_options()?;
+        if proxy.is_some()
+            && params.protocol != Protocol::Sftp
+            && options.ftp_mode == FtpMode::Active
+        {
+            return Err(SiteFormError::ActiveModeWithProxy);
+        }
         let notes = self.notes.text();
         let site = Site {
             id: self.id.clone(),
@@ -244,12 +274,26 @@ impl SiteForm {
             remote_path: self.remote_path.trim().to_string(),
             local_path: self.local_path.trim().trim_matches('"').to_string(),
             notes: notes.trim_end().to_string(),
-            save_secrets: self.connection.save_password,
+            save_secrets: self.connection.save_password && self.connection.uses_secret(),
             options,
             max_transfers,
+            jump,
+            proxy,
         };
-        let secret = Some(self.connection.secret().to_string()).filter(|secret| !secret.is_empty());
-        Ok((site, secret))
+        let filled = |secret: &str| Some(secret.to_string()).filter(|secret| !secret.is_empty());
+        let secrets = SiteSecrets {
+            main: filled(self.connection.secret()),
+            jump: site
+                .jump
+                .as_ref()
+                .and_then(|_| filled(self.connection.jump.secret())),
+            proxy: site
+                .proxy
+                .as_ref()
+                .filter(|proxy| proxy.uses_secret())
+                .and_then(|_| filled(&self.connection.proxy.password)),
+        };
+        Ok((site, secrets))
     }
 }
 
@@ -258,8 +302,8 @@ mod tests {
     use super::*;
     use crate::connect_form::AuthMethod;
     use crate::ui_tests::test_password;
+    use hoplix_core::SiteAuth;
     use hoplix_core::{FileNameEncoding, FtpMode};
-    use hoplix_core::{Protocol, SiteAuth};
 
     fn site() -> Site {
         Site {
@@ -280,7 +324,7 @@ mod tests {
         assert!(!form.is_new && form.had_secret);
         let (saved, secret) = form.to_site().expect("valid");
         assert_eq!(saved, original);
-        assert_eq!(secret, None);
+        assert_eq!(secret, SiteSecrets::default());
 
         form.apply(SiteField::Name("  Web 2 ".to_string()));
         form.apply(SiteField::Folder(" Work / Clients ".to_string()));
@@ -289,7 +333,7 @@ mod tests {
         let (saved, secret) = form.to_site().expect("valid");
         assert_eq!(saved.name, "Web 2");
         assert_eq!(saved.folder, "Work/Clients");
-        assert_eq!(secret, Some(password));
+        assert_eq!(secret.main, Some(password));
     }
 
     #[test]
@@ -309,7 +353,7 @@ mod tests {
         let (saved, secret) = form.to_site().expect("valid");
         assert_eq!(saved.auth, SiteAuth::KeyFile);
         assert_eq!(saved.key_path, "C:\\id");
-        assert_eq!(secret, Some(passphrase));
+        assert_eq!(secret.main, Some(passphrase));
     }
 
     #[test]
@@ -387,6 +431,75 @@ mod tests {
     }
 
     #[test]
+    fn jump_hosts_and_proxies_become_part_of_the_site() {
+        use crate::route_form::{JumpField, ProxyField};
+        use hoplix_core::ProxyKind;
+
+        let mut form = SiteForm::edit(&site());
+        form.apply(SiteField::Connection(Field::Method(AuthMethod::Agent)));
+        form.apply(SiteField::Connection(Field::Jump(JumpField::Enabled(true))));
+        form.options.open = false;
+        let invalid = form.to_site().map(|_| ()).expect_err("jump host is empty");
+        assert_eq!(
+            invalid,
+            SiteFormError::Connection(FormError::MissingJumpHost)
+        );
+        form.reveal_invalid(invalid);
+        assert!(form.options.open);
+        form.apply(SiteField::Connection(Field::Jump(JumpField::Host(
+            "bastion.test".to_string(),
+        ))));
+        form.apply(SiteField::Connection(Field::Jump(JumpField::Username(
+            "hop".to_string(),
+        ))));
+        let jump_password = test_password();
+        form.apply(SiteField::Connection(Field::Jump(JumpField::Password(
+            jump_password.clone(),
+        ))));
+        form.apply(SiteField::Connection(Field::Jump(JumpField::SavePassword(
+            true,
+        ))));
+        form.apply(SiteField::Connection(Field::Proxy(ProxyField::Kind(Some(
+            ProxyKind::Socks5,
+        )))));
+        form.apply(SiteField::Connection(Field::Proxy(ProxyField::Host(
+            "proxy.test".to_string(),
+        ))));
+        let proxy_password = test_password();
+        form.apply(SiteField::Connection(Field::Proxy(ProxyField::Password(
+            proxy_password.clone(),
+        ))));
+        let (saved, secrets) = form.to_site().expect("valid");
+        assert_eq!(saved.auth, SiteAuth::Agent);
+        assert!(!saved.save_secrets);
+        assert!(saved.jump.as_ref().is_some_and(|jump| jump.save_secret));
+        assert_eq!(saved.proxy.as_ref().map(|proxy| proxy.port), Some(1080));
+        assert_eq!(secrets.main, None);
+        assert_eq!(secrets.jump, Some(jump_password));
+        assert_eq!(secrets.proxy, None);
+        form.apply(SiteField::Connection(Field::Proxy(ProxyField::Username(
+            "me".to_string(),
+        ))));
+        assert_eq!(form.to_site().expect("valid").1.proxy, Some(proxy_password));
+        let edited = SiteForm::edit(&saved);
+        assert!(edited.had_jump_secret && !edited.had_proxy_secret);
+        assert!(edited.connection.advanced_open);
+
+        form.apply(SiteField::Connection(Field::Protocol(
+            hoplix_core::Protocol::Ftp,
+        )));
+        form.apply(SiteField::Option(OptionField::FtpMode(FtpMode::Active)));
+        assert_eq!(
+            form.to_site().map(|_| ()),
+            Err(SiteFormError::ActiveModeWithProxy)
+        );
+        form.apply(SiteField::Option(OptionField::FtpMode(FtpMode::Passive)));
+        let (saved, _) = form.to_site().expect("valid");
+        assert_eq!(saved.jump, None);
+        assert!(saved.proxy.is_some());
+    }
+
+    #[test]
     fn connect_forms_become_new_sites() {
         let mut connection = ConnectForm::default();
         connection.apply(Field::Protocol(Protocol::FtpsExplicit));
@@ -402,6 +515,6 @@ mod tests {
         assert_eq!(saved.protocol, Protocol::FtpsExplicit);
         assert_eq!(saved.port, 21);
         assert!(saved.save_secrets);
-        assert_eq!(secret, Some(password));
+        assert_eq!(secret.main, Some(password));
     }
 }

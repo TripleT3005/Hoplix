@@ -62,6 +62,7 @@ pub use site_route::{SiteJump, SiteProxy};
 pub use sites::{
     MAX_SITE_TRANSFERS, SITES_FILE, Site, SiteAuth, SiteList, new_id, normalize_folder,
 };
+pub use ssh_agent::{AGENT_EMPTY, AGENT_MISSING, AGENT_REJECTED};
 pub use sync::{
     CompareOptions, CompareStatus, ComparedEntry, DEFAULT_TIME_TOLERANCE, Pattern, Side,
     SyncAction, SyncDirection, SyncEndpoint, SyncMode, SyncOptions, SyncPlan, SyncSummary,

@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 
 use hoplix_core::{
-    Authentication, ConnectionParams, Error, Protocol, RecentConnection, Site, SiteAuth,
+    Authentication, ConnectionParams, Error, Protocol, RecentConnection, Route, Site, SiteAuth,
+    SiteJump, SiteProxy,
 };
+
+use crate::route_form::{JumpField, JumpForm, ProxyField, ProxyForm, parse_port};
 
 // Types
 
@@ -11,6 +14,7 @@ pub enum AuthMethod {
     #[default]
     Password,
     KeyFile,
+    Agent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +23,12 @@ pub enum FormError {
     InvalidPort,
     MissingUsername,
     MissingKey,
+    MissingJumpHost,
+    InvalidJumpPort,
+    MissingJumpUsername,
+    MissingJumpKey,
+    MissingProxyHost,
+    InvalidProxyPort,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +42,9 @@ pub enum Field {
     KeyPath(String),
     Passphrase(String),
     SavePassword(bool),
+    ToggleAdvanced,
+    Jump(JumpField),
+    Proxy(ProxyField),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -50,10 +63,13 @@ pub struct ConnectForm {
     pub site: Option<String>,
     pub save_password: bool,
     pub secret_from_store: bool,
+    pub advanced_open: bool,
+    pub jump: JumpForm,
+    pub proxy: ProxyForm,
 }
 
 impl AuthMethod {
-    pub const ALL: [Self; 2] = [Self::Password, Self::KeyFile];
+    pub const ALL: [Self; 3] = [Self::Password, Self::KeyFile, Self::Agent];
 }
 
 impl FormError {
@@ -63,7 +79,20 @@ impl FormError {
             Self::InvalidPort => "connect.invalid.port",
             Self::MissingUsername => "connect.invalid.username",
             Self::MissingKey => "connect.invalid.key",
+            Self::MissingJumpHost => "connect.invalid.jump_host",
+            Self::InvalidJumpPort => "connect.invalid.jump_port",
+            Self::MissingJumpUsername => "connect.invalid.jump_username",
+            Self::MissingJumpKey => "connect.invalid.jump_key",
+            Self::MissingProxyHost => "connect.invalid.proxy_host",
+            Self::InvalidProxyPort => "connect.invalid.proxy_port",
         }
+    }
+
+    pub fn is_route(self) -> bool {
+        !matches!(
+            self,
+            Self::MissingHost | Self::InvalidPort | Self::MissingUsername | Self::MissingKey
+        )
     }
 }
 
@@ -96,6 +125,9 @@ impl ConnectForm {
                 self.secret_from_store = false;
             }
             Field::SavePassword(save) => self.save_password = save,
+            Field::ToggleAdvanced => self.advanced_open = !self.advanced_open,
+            Field::Jump(field) => self.jump.apply(field),
+            Field::Proxy(field) => self.proxy.apply(field),
         }
         self.invalid = None;
     }
@@ -107,6 +139,10 @@ impl ConnectForm {
             self.site = None;
             self.save_password = false;
             self.secret_from_store = false;
+            self.jump.save_password = false;
+            self.jump.secret_from_store = false;
+            self.proxy.save_password = false;
+            self.proxy.secret_from_store = false;
         }
     }
 
@@ -131,16 +167,13 @@ impl ConnectForm {
                 site.port.to_string()
             },
             username: site.username.clone(),
-            method: if site.uses_key_file() {
-                AuthMethod::KeyFile
-            } else {
-                AuthMethod::Password
-            },
+            method: AuthMethod::from_site_auth(site.effective_auth()),
             key_path: site.key_path.clone(),
             site: Some(site.id.clone()),
             save_password: site.save_secrets,
             ..Self::default()
         };
+        self.fill_route(site.jump.as_ref(), site.proxy.as_ref());
     }
 
     pub fn fill_from_recent(&mut self, recent: &RecentConnection) {
@@ -153,20 +186,28 @@ impl ConnectForm {
                 recent.port.to_string()
             },
             username: recent.username.clone(),
-            method: if recent.uses_key_file() {
-                AuthMethod::KeyFile
+            method: if recent.protocol.supports_key_files() {
+                AuthMethod::from_site_auth(recent.auth)
             } else {
                 AuthMethod::Password
             },
             key_path: recent.key_path.clone(),
             ..Self::default()
         };
+        self.fill_route(recent.jump.as_ref(), recent.proxy.as_ref());
+    }
+
+    fn fill_route(&mut self, jump: Option<&SiteJump>, proxy: Option<&SiteProxy>) {
+        self.jump = JumpForm::fill(jump);
+        self.proxy = ProxyForm::fill(proxy);
+        self.advanced_open = self.has_route();
     }
 
     pub fn set_secret(&mut self, secret: String) {
         match self.effective_method() {
             AuthMethod::Password => self.password = secret,
             AuthMethod::KeyFile => self.passphrase = secret,
+            AuthMethod::Agent => {}
         }
     }
 
@@ -174,6 +215,7 @@ impl ConnectForm {
         match self.effective_method() {
             AuthMethod::Password => &self.password,
             AuthMethod::KeyFile => &self.passphrase,
+            AuthMethod::Agent => "",
         }
     }
 
@@ -186,15 +228,63 @@ impl ConnectForm {
     }
 
     pub fn site_auth(&self) -> SiteAuth {
-        match self.effective_method() {
-            AuthMethod::Password => SiteAuth::Password,
-            AuthMethod::KeyFile => SiteAuth::KeyFile,
-        }
+        self.effective_method().site_auth()
+    }
+
+    pub fn uses_secret(&self) -> bool {
+        self.effective_method() != AuthMethod::Agent
     }
 
     pub fn clear_secrets(&mut self) {
         self.password.clear();
         self.passphrase.clear();
+        self.jump.clear_secrets();
+        self.proxy.password.clear();
+    }
+
+    // Routes
+
+    pub fn uses_jump(&self) -> bool {
+        self.jump.enabled && self.protocol.supports_key_files()
+    }
+
+    pub fn has_route(&self) -> bool {
+        self.uses_jump() || self.proxy.kind.is_some()
+    }
+
+    pub fn jump_settings(&self) -> Result<Option<SiteJump>, FormError> {
+        if self.uses_jump() {
+            self.jump.to_site_jump().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn proxy_settings(&self) -> Result<Option<SiteProxy>, FormError> {
+        self.proxy.to_site_proxy()
+    }
+
+    pub fn to_route(&self) -> Result<Route, FormError> {
+        let jump = self.jump_settings()?;
+        let proxy = self.proxy_settings()?;
+        Ok(Route {
+            proxy: proxy.map(|proxy| proxy.to_proxy(Some(self.proxy.password.clone()))),
+            jump_hosts: jump
+                .map(|jump| jump.to_jump_host(Some(self.jump.secret().to_string())))
+                .into_iter()
+                .collect(),
+        })
+    }
+
+    pub fn ready_to_connect(&self) -> bool {
+        let main = self.effective_method() != AuthMethod::Password || !self.password.is_empty();
+        let jump = !self.uses_jump()
+            || self.jump.method != AuthMethod::Password
+            || !self.jump.password.is_empty();
+        let proxy = self.proxy.kind.is_none()
+            || !self.proxy.uses_secret()
+            || !self.proxy.password.is_empty();
+        main && jump && proxy
     }
 
     // Validation
@@ -204,16 +294,8 @@ impl ConnectForm {
         if host.is_empty() {
             return Err(FormError::MissingHost);
         }
-        let port = if self.port.trim().is_empty() {
-            self.protocol.default_port()
-        } else {
-            self.port
-                .trim()
-                .parse::<u16>()
-                .ok()
-                .filter(|port| *port > 0)
-                .ok_or(FormError::InvalidPort)?
-        };
+        let port =
+            parse_port(&self.port, self.protocol.default_port()).ok_or(FormError::InvalidPort)?;
         let username = self.username.trim();
         if username.is_empty() {
             return Err(FormError::MissingUsername);
@@ -230,6 +312,7 @@ impl ConnectForm {
                     passphrase: Some(self.passphrase.clone()).filter(|value| !value.is_empty()),
                 }
             }
+            AuthMethod::Agent => Authentication::Agent,
         };
         Ok(ConnectionParams {
             protocol: self.protocol,
@@ -347,6 +430,60 @@ mod tests {
         form.fill_from_site(&site);
         form.edit(Field::Host("other.example.test".to_string()));
         assert_eq!(form.site, None);
+    }
+
+    #[test]
+    fn agents_and_routes_become_params() {
+        use crate::route_form::{JumpField, ProxyField};
+        use hoplix_core::ProxyKind;
+
+        let mut form = filled("");
+        form.apply(Field::Method(AuthMethod::Agent));
+        assert_eq!(
+            form.to_params().map(|params| params.authentication),
+            Ok(Authentication::Agent)
+        );
+        assert!(form.ready_to_connect());
+        assert!(!form.uses_secret());
+        assert_eq!(form.to_route().map(|route| route.is_direct()), Ok(true));
+
+        form.apply(Field::Jump(JumpField::Enabled(true)));
+        form.apply(Field::Jump(JumpField::Host("bastion.test".to_string())));
+        form.apply(Field::Jump(JumpField::Username("hop".to_string())));
+        assert!(!form.ready_to_connect());
+        let password = test_password();
+        form.apply(Field::Jump(JumpField::Password(password.clone())));
+        form.apply(Field::Proxy(ProxyField::Kind(Some(ProxyKind::Http))));
+        form.apply(Field::Proxy(ProxyField::Host("proxy.test".to_string())));
+        form.apply(Field::Proxy(ProxyField::Username("me".to_string())));
+        assert!(!form.ready_to_connect());
+        form.apply(Field::Proxy(ProxyField::Password(password.clone())));
+        assert!(form.ready_to_connect());
+        let route = form.to_route().expect("valid");
+        assert_eq!(
+            route.jump_hosts[0].authentication,
+            Authentication::Password(password.clone())
+        );
+        assert_eq!(
+            route
+                .proxy
+                .and_then(|proxy| proxy.credentials)
+                .map(|c| c.password),
+            Some(password)
+        );
+
+        form.apply(Field::Protocol(Protocol::Ftp));
+        assert_eq!(form.effective_method(), AuthMethod::Password);
+        assert!(form.to_route().expect("valid").jump_hosts.is_empty());
+        form.clear_secrets();
+        assert!(form.jump.password.is_empty() && form.proxy.password.is_empty());
+        form.apply(Field::Proxy(ProxyField::Port("0".to_string())));
+        assert_eq!(
+            form.to_route().map(|_| ()),
+            Err(FormError::InvalidProxyPort)
+        );
+        assert!(FormError::InvalidProxyPort.is_route());
+        assert!(!FormError::MissingHost.is_route());
     }
 
     #[test]

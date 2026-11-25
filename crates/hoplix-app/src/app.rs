@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use hoplix_core::{
     BoxFuture, Conflict, ConflictDecision, ConnectionOptions, ConnectionParams, Entry, Error,
     ErrorKind, FileSystem, HostKeyTrust, JobId, JobSnapshot, Keyring, LocalFileSystem, Moved,
-    RecentList, SecretBackend, SiteList, SortKey, SortOrder, TransferEvent, TransferQueue,
+    RecentList, Route, SecretBackend, SiteList, SortKey, SortOrder, TransferEvent, TransferQueue,
     TrustStore, Vault, config_dir, is_valid_name, remove_recursive, sort_entries,
 };
 use iced::keyboard::{Key, Modifiers};
@@ -112,6 +112,8 @@ pub enum Dialog {
     HostKey {
         fingerprint: String,
         certificate: bool,
+        host: String,
+        jump: bool,
     },
     NewSiteFolder {
         parent: String,
@@ -173,7 +175,7 @@ pub enum Message {
     },
     SiteEditCancelled,
     SiteConnect(String),
-    SecretLoaded(String, Result<Option<String>, Error>),
+    SecretsLoaded(String, Result<Vec<(String, String)>, Error>),
     SecretSaved(Result<(), Error>),
     ConnectSaveAsSite,
     SecretBackendSelected(SecretBackend),
@@ -269,6 +271,7 @@ pub struct Hoplix {
     pub(crate) window: WindowState,
     window_id: Option<window::Id>,
     pub(crate) reconnect: Option<(TabId, String)>,
+    pub(crate) trusted: Vec<HostKeyTrust>,
     pub(crate) services: Services,
     pub edits: Edits,
     pub update_state: CheckState,
@@ -278,9 +281,10 @@ pub struct Hoplix {
 pub(crate) type Connector = Arc<
     dyn Fn(
             ConnectionParams,
+            Route,
             ConnectionOptions,
             TrustStore,
-            Option<HostKeyTrust>,
+            Vec<HostKeyTrust>,
         ) -> BoxFuture<'static, Result<Arc<dyn FileSystem>, Error>>
         + Send
         + Sync,
@@ -301,9 +305,10 @@ impl Default for Services {
     fn default() -> Self {
         Self {
             keyring: Keyring::default(),
-            connector: Arc::new(|params, options, trust_store, trust| {
+            connector: Arc::new(|params, route, options, trust_store, trusted| {
                 Box::pin(async move {
-                    hoplix_core::connect_with(&params, &options, &trust_store, trust).await
+                    hoplix_core::connect_via_with(&params, &route, &options, &trust_store, &trusted)
+                        .await
                 })
             }),
             local: Arc::new(LocalFileSystem),
@@ -457,6 +462,7 @@ impl Hoplix {
             window: WindowState::default(),
             window_id: None,
             reconnect: None,
+            trusted: Vec::new(),
             next_tab_id: 1,
             services: Services::default(),
             edits: Edits::default(),
@@ -887,13 +893,22 @@ impl Hoplix {
     // Connections
 
     pub(crate) fn connect(&mut self, trust: Option<HostKeyTrust>) -> Task<Message> {
-        let params = match self.connect_form.to_params() {
+        let route = self.connect_form.to_route();
+        let params = match self
+            .connect_form
+            .to_params()
+            .and_then(|params| route.clone().map(|route| (params, route)))
+        {
             Ok(params) => params,
             Err(invalid) => {
+                if invalid.is_route() {
+                    self.connect_form.advanced_open = true;
+                }
                 self.connect_form.invalid = Some(invalid);
                 return Task::none();
             }
         };
+        let (params, route) = params;
         let Some(trust_store) = self.config_dir.as_deref().map(TrustStore::in_directory) else {
             self.connect_form.error = Some(Error::new(ErrorKind::Other, "known_hosts"));
             return Task::none();
@@ -905,36 +920,51 @@ impl Hoplix {
             .and_then(|id| self.sites.get(id))
             .map(|site| site.options.clone())
             .unwrap_or_default();
+        match trust {
+            Some(trust) => self.trusted.push(trust),
+            None => self.trusted.clear(),
+        }
         self.connect_form.connecting = true;
         self.connect_form.error = None;
         Task::perform(
-            (self.services.connector)(params, options, trust_store, trust),
+            (self.services.connector)(params, route, options, trust_store, self.trusted.clone()),
             Message::Connected,
         )
     }
 
     fn finish_connect(&mut self, result: Result<Arc<dyn FileSystem>, Error>) -> Task<Message> {
         self.connect_form.connecting = false;
-        match result {
-            Ok(file_system) => self.open_connection(file_system),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    ErrorKind::UnknownHostKey | ErrorKind::UntrustedCertificate
-                ) =>
-            {
-                self.dialog = Some(Dialog::HostKey {
-                    fingerprint: error.detail().to_string(),
-                    certificate: error.kind() == ErrorKind::UntrustedCertificate,
-                });
-                Task::none()
+        let error = match result {
+            Ok(file_system) => {
+                self.trusted.clear();
+                return self.open_connection(file_system);
             }
-            Err(error) => {
-                self.connect_form.error = Some(error);
-                self.page = Page::Connect;
-                Task::none()
-            }
+            Err(error) => error,
+        };
+        let untrusted = matches!(
+            error.kind(),
+            ErrorKind::UnknownHostKey | ErrorKind::UntrustedCertificate
+        );
+        let jumps = usize::from(self.connect_form.uses_jump());
+        let repeated = self
+            .trusted
+            .iter()
+            .any(|trust| trust.fingerprint == error.detail());
+        if untrusted && !repeated && self.trusted.len() <= jumps {
+            self.dialog = Some(Dialog::HostKey {
+                fingerprint: error.detail().to_string(),
+                certificate: error.kind() == ErrorKind::UntrustedCertificate,
+                host: error
+                    .hop()
+                    .map_or_else(|| self.connect_form.host.trim().to_string(), str::to_string),
+                jump: error.hop().is_some(),
+            });
+            return Task::none();
         }
+        self.trusted.clear();
+        self.connect_form.error = Some(error);
+        self.page = Page::Connect;
+        Task::none()
     }
 
     fn answer_host_key(&mut self, answer: Option<bool>) -> Task<Message> {
@@ -946,7 +976,10 @@ impl Hoplix {
                 fingerprint,
                 remember,
             })),
-            None => Task::none(),
+            None => {
+                self.trusted.clear();
+                Task::none()
+            }
         }
     }
 
@@ -1432,6 +1465,8 @@ mod tests {
             Some(Dialog::HostKey {
                 fingerprint: "SHA256:abc".to_string(),
                 certificate: false,
+                host: String::new(),
+                jump: false,
             })
         );
         let _ = app.update(Message::DialogCancelled);
@@ -1444,6 +1479,8 @@ mod tests {
             Some(Dialog::HostKey {
                 fingerprint: "SHA256:AB:CD".to_string(),
                 certificate: true,
+                host: String::new(),
+                jump: false,
             })
         );
         let _ = app.update(Message::DialogCancelled);

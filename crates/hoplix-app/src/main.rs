@@ -11,6 +11,7 @@ mod icon;
 mod local_time;
 mod opener;
 mod recent_actions;
+mod route_form;
 mod session;
 mod settings;
 mod site_actions;
