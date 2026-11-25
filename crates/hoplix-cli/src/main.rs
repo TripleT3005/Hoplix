@@ -874,13 +874,8 @@ async fn export_sites(file: &Path, options: &Options) -> Result<(), String> {
         export.to_plain_text()
     };
     std::fs::write(file, text).map_err(|error| format!("{}: {error}", file.display()))?;
-    let content = if options.include_passwords {
-        " encrypted, with saved passwords,"
-    } else {
-        " without passwords"
-    };
     println!(
-        "{} site(s) exported{content} to {}",
+        "{} site(s) exported to {}",
         export.site_count(),
         file.display()
     );
