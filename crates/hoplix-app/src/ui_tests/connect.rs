@@ -122,7 +122,9 @@ fn unknown_host_keys_can_be_trusted_once() {
         harness.app.dialog,
         Some(Dialog::HostKey {
             fingerprint: fingerprint(HOST),
-            certificate: false
+            certificate: false,
+            host: HOST.to_string(),
+            jump: false,
         })
     );
     assert!(harness.has("Unknown server"));
