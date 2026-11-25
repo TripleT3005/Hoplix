@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::{ConnectionOptions, FileSystem, FtpFileSystem, Result, SftpFileSystem, TrustStore};
+use crate::{ConnectionOptions, FileSystem, Result, Route, TrustStore, connect_via_with};
 
 // Types
 
@@ -22,6 +22,7 @@ pub enum Authentication {
         path: PathBuf,
         passphrase: Option<String>,
     },
+    Agent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +97,7 @@ impl fmt::Debug for Authentication {
                 .field("path", path)
                 .field("passphrase", &passphrase.as_ref().map(|_| "***"))
                 .finish(),
+            Self::Agent => formatter.write_str("Agent"),
         }
     }
 }
@@ -116,20 +118,8 @@ pub async fn connect_with(
     trust_store: &TrustStore,
     trust: Option<HostKeyTrust>,
 ) -> Result<Arc<dyn FileSystem>> {
-    match params.protocol {
-        Protocol::Sftp => {
-            let file_system =
-                SftpFileSystem::connect_with(params, options, &trust_store.known_hosts, trust)
-                    .await?;
-            Ok(Arc::new(file_system))
-        }
-        Protocol::Ftp | Protocol::FtpsExplicit | Protocol::FtpsImplicit => {
-            let file_system =
-                FtpFileSystem::connect_with(params, options, &trust_store.certificates, trust)
-                    .await?;
-            Ok(Arc::new(file_system))
-        }
-    }
+    let trusted: Vec<HostKeyTrust> = trust.into_iter().collect();
+    connect_via_with(params, &Route::default(), options, trust_store, &trusted).await
 }
 
 #[cfg(test)]

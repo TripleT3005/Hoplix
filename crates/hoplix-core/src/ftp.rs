@@ -15,12 +15,14 @@ use suppaftp::tokio::{
 use suppaftp::types::FileType;
 use suppaftp::{Encoding, FtpError, Mode, Status};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, MutexGuard};
 use tokio_rustls::TlsConnector;
 
 use crate::connection::{Authentication, ConnectionParams, HostKeyTrust, Protocol};
 use crate::file_system::{Reader, Writer};
 use crate::options::{ConnectionOptions, FileNameEncoding, FtpMode};
+use crate::proxy::Proxy;
 use crate::sftp::{join_posix, parent_posix};
 use crate::{
     BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Result, certificates,
@@ -55,6 +57,7 @@ struct Session {
     options: ConnectionOptions,
     tls: Option<Arc<ClientConfig>>,
     rejection: Arc<StdMutex<Option<Error>>>,
+    proxy: Option<Proxy>,
 }
 
 struct Control {
@@ -96,15 +99,33 @@ impl FtpFileSystem {
         certificates: &Path,
         trust: Option<HostKeyTrust>,
     ) -> Result<Self> {
-        Self::connect_with(params, &ConnectionOptions::default(), certificates, trust).await
+        Self::connect_via(params, None, certificates, trust).await
     }
 
-    pub async fn connect_with(
+    pub async fn connect_via(
         params: &ConnectionParams,
+        proxy: Option<&Proxy>,
+        certificates: &Path,
+        trust: Option<HostKeyTrust>,
+    ) -> Result<Self> {
+        Self::connect_via_with(
+            params,
+            proxy,
+            &ConnectionOptions::default(),
+            certificates,
+            trust,
+        )
+        .await
+    }
+
+    pub async fn connect_via_with(
+        params: &ConnectionParams,
+        proxy: Option<&Proxy>,
         options: &ConnectionOptions,
         certificates: &Path,
         trust: Option<HostKeyTrust>,
     ) -> Result<Self> {
+        ensure_passive_mode(proxy, options.ftp_mode == FtpMode::Active)?;
         let rejection = Arc::new(StdMutex::new(None));
         let tls = if params.protocol.uses_tls() {
             Some(certificates::client_config(
@@ -122,6 +143,7 @@ impl FtpFileSystem {
             options: options.clone(),
             tls,
             rejection,
+            proxy: proxy.cloned(),
         };
         let (client, capabilities) = session.open().await?;
         let control = Arc::new(Mutex::new(Control {
@@ -184,7 +206,18 @@ impl Session {
                     format!("{}: FTP does not support key files", path.display()),
                 ));
             }
+            Authentication::Agent => {
+                return Err(Error::new(
+                    ErrorKind::AuthenticationFailed,
+                    format!("{}: FTP does not support SSH agents", params.label()),
+                ));
+            }
         };
+        if let Some(proxy) = &self.proxy {
+            return self
+                .finish(self.connect_proxied(proxy).await?, &password)
+                .await;
+        }
         let address = (params.host.as_str(), params.port);
         let connected = match (params.protocol, &self.tls) {
             (Protocol::FtpsImplicit, Some(config)) => {
@@ -201,15 +234,52 @@ impl Session {
             },
             _ => Client::connect(address).await,
         };
-        let mut client = connected.map_err(|error| self.connect_error(&error))?;
+        let client = connected.map_err(|error| self.connect_error(&error))?;
+        self.finish(client, &password).await
+    }
+
+    async fn connect_proxied(&self, proxy: &Proxy) -> Result<Client> {
+        let params = &self.params;
+        let stream = proxy.connect(&params.host, params.port).await?;
+        let connected = match (params.protocol, &self.tls) {
+            (Protocol::FtpsImplicit, Some(config)) => {
+                let relay = relay(stream).await?;
+                match Client::connect_secure_implicit(relay, connector(config), &params.host).await
+                {
+                    Ok(mut client) => protect_data(&mut client).await.map(|()| client),
+                    Err(error) => Err(error),
+                }
+            }
+            (Protocol::FtpsExplicit, Some(config)) => {
+                match Client::connect_with_stream(stream).await {
+                    Ok(client) => client.into_secure(connector(config), &params.host).await,
+                    Err(error) => Err(error),
+                }
+            }
+            _ => Client::connect_with_stream(stream).await,
+        };
+        let client = connected.map_err(|error| self.connect_error(&error))?;
+        let proxy = proxy.clone();
+        let host = params.host.clone();
+        Ok(client.passive_stream_builder(move |address| {
+            let proxy = proxy.clone();
+            let host = host.clone();
+            Box::pin(async move {
+                proxy
+                    .connect(&host, address.port())
+                    .await
+                    .map_err(|error| FtpError::ConnectionError(io::Error::other(error.to_string())))
+            })
+        }))
+    }
+
+    async fn finish(&self, mut client: Client, password: &str) -> Result<(Client, Capabilities)> {
+        let params = &self.params;
         let encoding = self.options.ftp_encoding;
         if encoding == FileNameEncoding::Windows1252 {
             client.set_encoding(Windows1252).await;
         }
-        match client
-            .login(params.username.as_str(), password.as_str())
-            .await
-        {
+        match client.login(params.username.as_str(), password).await {
             Ok(()) => {}
             Err(FtpError::UnexpectedResponse(response))
                 if response.status == Status::NotLoggedIn =>
@@ -297,6 +367,37 @@ async fn protect_data(client: &mut Client) -> std::result::Result<(), FtpError> 
         .custom_command("PROT P", &[Status::CommandOk])
         .await?;
     Ok(())
+}
+
+async fn relay(stream: TcpStream) -> Result<std::net::SocketAddr> {
+    let relay_error = |error: io::Error| Error::new(ErrorKind::ConnectionFailed, error.to_string());
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .map_err(relay_error)?;
+    let address = listener.local_addr().map_err(relay_error)?;
+    tokio::spawn(async move {
+        let mut upstream = stream;
+        if let Ok(Ok((mut local, _))) =
+            tokio::time::timeout(CONNECT_TIMEOUT, listener.accept()).await
+        {
+            drop(listener);
+            let _ = tokio::io::copy_bidirectional(&mut local, &mut upstream).await;
+        }
+    });
+    Ok(address)
+}
+
+pub fn ensure_passive_mode(proxy: Option<&Proxy>, active: bool) -> Result<()> {
+    match proxy {
+        Some(proxy) if active => Err(Error::new(
+            ErrorKind::ConnectionFailed,
+            format!(
+                "active FTP mode does not work through the proxy {}, use passive mode",
+                proxy.label()
+            ),
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn connector(config: &Arc<ClientConfig>) -> AsyncRustlsConnector {
@@ -756,7 +857,7 @@ fn timestamp(time: SystemTime) -> Option<String> {
 // Errors
 
 fn is_unencodable(error: &FtpError) -> bool {
-    matches!(error, FtpError::ConnectionError(io) if io.kind() == io::ErrorKind::InvalidInput)
+    matches!(error, FtpError::ConnectionError(source) if source.kind() == io::ErrorKind::InvalidInput)
 }
 
 fn ftp_error(error: &FtpError, path: &str) -> Error {
@@ -817,6 +918,42 @@ mod tests {
             .filter_map(|line| parse_line(line, machine_readable))
             .map(|entry| (entry.name, entry.kind, entry.size, entry.is_link))
             .collect()
+    }
+
+    // Proxies
+
+    #[test]
+    fn active_mode_is_refused_through_a_proxy() {
+        let proxy = Proxy {
+            kind: crate::ProxyKind::Socks5,
+            host: "proxy.test".to_string(),
+            port: 1080,
+            credentials: None,
+        };
+        assert!(ensure_passive_mode(None, true).is_ok());
+        assert!(ensure_passive_mode(Some(&proxy), false).is_ok());
+        let error = ensure_passive_mode(Some(&proxy), true).expect_err("refused");
+        assert!(error.detail().contains("socks5://proxy.test:1080"));
+    }
+
+    #[tokio::test]
+    async fn the_relay_forwards_one_connection() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let server = TcpListener::bind("127.0.0.1:0").await.expect("bound");
+        let upstream = TcpStream::connect(server.local_addr().expect("address"))
+            .await
+            .expect("connected");
+        let (mut remote, _) = server.accept().await.expect("accepted");
+        let address = relay(upstream).await.expect("relay");
+        let mut local = TcpStream::connect(address).await.expect("connected");
+        local.write_all(b"hello").await.expect("written");
+        let mut received = [0u8; 5];
+        remote.read_exact(&mut received).await.expect("read");
+        assert_eq!(&received, b"hello");
+        remote.write_all(b"world").await.expect("written");
+        local.read_exact(&mut received).await.expect("read");
+        assert_eq!(&received, b"world");
+        assert!(TcpStream::connect(address).await.is_err());
     }
 
     // Listings
@@ -1247,7 +1384,7 @@ mod tests {
             authentication: Authentication::Password(test_password()),
         };
         let certificates = std::env::temp_dir().join("hoplix-mock-certificates");
-        FtpFileSystem::connect_with(&params, options, &certificates, None)
+        FtpFileSystem::connect_via_with(&params, None, options, &certificates, None)
             .await
             .expect("connecting failed")
     }

@@ -11,12 +11,16 @@ use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertific
 use russh_sftp::client::SftpSession;
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::protocol::{FileAttributes, OpenFlags, StatusCode};
-use tokio::io::AsyncSeekExt;
+use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWrite};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::connection::{Authentication, ConnectionParams, HostKeyTrust};
 use crate::file_system::{Reader, Writer};
-use crate::{BoxFuture, ConnectionOptions, Entry, EntryKind, Error, ErrorKind, FileSystem, Result};
+use crate::route::Route;
+use crate::{
+    BoxFuture, ConnectionOptions, Entry, EntryKind, Error, ErrorKind, FileSystem, Result, proxy,
+    ssh_agent,
+};
 
 // Constants
 
@@ -40,9 +44,10 @@ pub fn auto_reconnect() -> bool {
 
 pub struct SftpFileSystem {
     params: ConnectionParams,
+    route: Route,
     options: ConnectionOptions,
     known_hosts: PathBuf,
-    host_fingerprint: String,
+    host_fingerprints: Vec<String>,
     connection: AsyncMutex<Arc<Connection>>,
     label: String,
 }
@@ -50,13 +55,14 @@ pub struct SftpFileSystem {
 struct Connection {
     session: SftpSession,
     handle: Handle<HostKeyCheck>,
+    jumps: Vec<Handle<HostKeyCheck>>,
 }
 
 struct HostKeyCheck {
     host: String,
     port: u16,
     known_hosts: PathBuf,
-    trust: Option<HostKeyTrust>,
+    trusted: Vec<HostKeyTrust>,
     rejection: Arc<Mutex<Option<Error>>>,
     accepted: Arc<Mutex<Option<String>>>,
 }
@@ -76,8 +82,12 @@ impl HostKeyCheck {
                 Err(Error::new(ErrorKind::HostKeyChanged, fingerprint))
             }
             Err(error) => Err(Error::new(ErrorKind::Other, error.to_string())),
-            Ok(false) => match &self.trust {
-                Some(trust) if trust.fingerprint == fingerprint => {
+            Ok(false) => match self
+                .trusted
+                .iter()
+                .find(|trust| trust.fingerprint == fingerprint)
+            {
+                Some(trust) => {
                     if trust.remember {
                         russh::keys::known_hosts::learn_known_hosts_path(
                             &self.host,
@@ -89,7 +99,7 @@ impl HostKeyCheck {
                     }
                     Ok(())
                 }
-                _ => Err(Error::new(ErrorKind::UnknownHostKey, fingerprint)),
+                None => Err(Error::new(ErrorKind::UnknownHostKey, fingerprint)),
             },
         }
     }
@@ -133,21 +143,41 @@ impl SftpFileSystem {
         known_hosts: &Path,
         trust: Option<HostKeyTrust>,
     ) -> Result<Self> {
-        Self::connect_with(params, &ConnectionOptions::default(), known_hosts, trust).await
+        let trusted: Vec<HostKeyTrust> = trust.into_iter().collect();
+        Self::connect_via(params, &Route::default(), known_hosts, &trusted).await
     }
 
-    pub async fn connect_with(
+    pub async fn connect_via(
         params: &ConnectionParams,
+        route: &Route,
+        known_hosts: &Path,
+        trusted: &[HostKeyTrust],
+    ) -> Result<Self> {
+        Self::connect_via_with(
+            params,
+            route,
+            &ConnectionOptions::default(),
+            known_hosts,
+            trusted,
+        )
+        .await
+    }
+
+    pub async fn connect_via_with(
+        params: &ConnectionParams,
+        route: &Route,
         options: &ConnectionOptions,
         known_hosts: &Path,
-        trust: Option<HostKeyTrust>,
+        trusted: &[HostKeyTrust],
     ) -> Result<Self> {
-        let (connection, host_fingerprint) = establish(params, options, known_hosts, trust).await?;
+        let (connection, host_fingerprints) =
+            establish(params, route, options, known_hosts, trusted.to_vec()).await?;
         Ok(Self {
             params: params.clone(),
+            route: route.clone(),
             options: options.clone(),
             known_hosts: known_hosts.to_path_buf(),
-            host_fingerprint,
+            host_fingerprints,
             connection: AsyncMutex::new(Arc::new(connection)),
             label: params.label(),
         })
@@ -176,13 +206,23 @@ impl SftpFileSystem {
     }
 
     async fn reestablish(&self) -> Result<Connection> {
-        let trust = HostKeyTrust {
-            fingerprint: self.host_fingerprint.clone(),
-            remember: false,
-        };
-        establish(&self.params, &self.options, &self.known_hosts, Some(trust))
-            .await
-            .map(|(connection, _)| connection)
+        let trusted = self
+            .host_fingerprints
+            .iter()
+            .map(|fingerprint| HostKeyTrust {
+                fingerprint: fingerprint.clone(),
+                remember: false,
+            })
+            .collect();
+        establish(
+            &self.params,
+            &self.route,
+            &self.options,
+            &self.known_hosts,
+            trusted,
+        )
+        .await
+        .map(|(connection, _)| connection)
     }
 
     async fn run<T, F, Fut>(&self, operation: F) -> Result<T>
@@ -203,49 +243,102 @@ impl SftpFileSystem {
 
 async fn establish(
     params: &ConnectionParams,
+    route: &Route,
     options: &ConnectionOptions,
     known_hosts: &Path,
-    trust: Option<HostKeyTrust>,
-) -> Result<(Connection, String)> {
-    let timeout = options.timeout_or(CONNECT_TIMEOUT);
+    trusted: Vec<HostKeyTrust>,
+) -> Result<(Connection, Vec<String>)> {
     tokio::time::timeout(
-        timeout,
-        open_connection(params, options, known_hosts, trust),
+        options.timeout_or(CONNECT_TIMEOUT),
+        open_connection(params, route, options, known_hosts, trusted),
     )
     .await
     .map_err(|_| Error::new(ErrorKind::ConnectionFailed, params.host.clone()))?
 }
 
+struct Hop<'a> {
+    host: &'a str,
+    port: u16,
+    username: &'a str,
+    authentication: &'a Authentication,
+    label: String,
+    is_target: bool,
+}
+
+type Slot<T> = Arc<Mutex<Option<T>>>;
+
+fn hops<'a>(params: &'a ConnectionParams, route: &'a Route) -> Vec<Hop<'a>> {
+    let mut hops: Vec<Hop<'a>> = route
+        .jump_hosts
+        .iter()
+        .map(|jump| Hop {
+            host: &jump.host,
+            port: jump.port,
+            username: &jump.username,
+            authentication: &jump.authentication,
+            label: jump.label(),
+            is_target: false,
+        })
+        .collect();
+    hops.push(Hop {
+        host: &params.host,
+        port: params.port,
+        username: &params.username,
+        authentication: &params.authentication,
+        label: params.label(),
+        is_target: true,
+    });
+    hops
+}
+
 async fn open_connection(
     params: &ConnectionParams,
+    route: &Route,
     options: &ConnectionOptions,
     known_hosts: &Path,
-    trust: Option<HostKeyTrust>,
-) -> Result<(Connection, String)> {
-    let rejection = Arc::new(Mutex::new(None));
-    let accepted = Arc::new(Mutex::new(None));
-    let check = HostKeyCheck {
-        host: params.host.clone(),
-        port: params.port,
-        known_hosts: known_hosts.to_path_buf(),
-        trust,
-        rejection: Arc::clone(&rejection),
-        accepted: Arc::clone(&accepted),
-    };
+    trusted: Vec<HostKeyTrust>,
+) -> Result<(Connection, Vec<String>)> {
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(INACTIVITY_TIMEOUT),
         keepalive_interval: Some(options.keepalive().unwrap_or(KEEPALIVE_INTERVAL)),
         ..client::Config::default()
     });
-    let connected = client::connect(config, (params.host.as_str(), params.port), check).await;
-    let mut handle = match connected {
-        Ok(handle) => handle,
-        Err(error) => {
-            let rejected = rejection.lock().ok().and_then(|mut slot| slot.take());
-            return Err(rejected.unwrap_or_else(|| connection_error(&params.host, &error)));
+    let mut fingerprints = Vec::new();
+    let mut jumps: Vec<Handle<HostKeyCheck>> = Vec::new();
+    let mut target = None;
+    for hop in hops(params, route) {
+        let (check, rejection, accepted) = host_key_check(&hop, known_hosts, &trusted);
+        let connected = match jumps.last() {
+            None => {
+                let stream = proxy::open_tcp(route.proxy.as_ref(), hop.host, hop.port)
+                    .await
+                    .map_err(|error| at_hop(error, &hop))?;
+                start_session(&config, stream, check, &hop, &rejection).await
+            }
+            Some(previous) => {
+                let channel = previous
+                    .channel_open_direct_tcpip(hop.host, u32::from(hop.port), "127.0.0.1", 0)
+                    .await
+                    .map_err(|error| at_hop(connection_error(hop.host, &error), &hop))?;
+                start_session(&config, channel.into_stream(), check, &hop, &rejection).await
+            }
+        };
+        let mut handle = connected?;
+        if let Some(fingerprint) = accepted.lock().ok().and_then(|mut slot| slot.take()) {
+            fingerprints.push(fingerprint);
         }
+        authenticate(&mut handle, &hop)
+            .await
+            .map_err(|error| at_hop(error, &hop))?;
+        if hop.is_target {
+            target = Some(handle);
+        } else {
+            jumps.push(handle);
+        }
+    }
+    let Some(handle) = target else {
+        return Err(Error::new(ErrorKind::ConnectionFailed, params.host.clone()));
     };
-    authenticate(&mut handle, params).await?;
     let channel = handle
         .channel_open_session()
         .await
@@ -257,21 +350,70 @@ async fn open_connection(
     let session = SftpSession::new(channel.into_stream())
         .await
         .map_err(|error| sftp_error(&error, &params.host))?;
-    let host_fingerprint = accepted
-        .lock()
-        .ok()
-        .and_then(|mut slot| slot.take())
-        .unwrap_or_default();
-    Ok((Connection { session, handle }, host_fingerprint))
+    Ok((
+        Connection {
+            session,
+            handle,
+            jumps,
+        },
+        fingerprints,
+    ))
 }
 
-async fn authenticate(handle: &mut Handle<HostKeyCheck>, params: &ConnectionParams) -> Result<()> {
-    let user = params.username.clone();
-    let result = match &params.authentication {
+fn host_key_check(
+    hop: &Hop<'_>,
+    known_hosts: &Path,
+    trusted: &[HostKeyTrust],
+) -> (HostKeyCheck, Slot<Error>, Slot<String>) {
+    let rejection = Arc::new(Mutex::new(None));
+    let accepted = Arc::new(Mutex::new(None));
+    let check = HostKeyCheck {
+        host: hop.host.to_string(),
+        port: hop.port,
+        known_hosts: known_hosts.to_path_buf(),
+        trusted: trusted.to_vec(),
+        rejection: Arc::clone(&rejection),
+        accepted: Arc::clone(&accepted),
+    };
+    (check, rejection, accepted)
+}
+
+async fn start_session<S>(
+    config: &Arc<client::Config>,
+    stream: S,
+    check: HostKeyCheck,
+    hop: &Hop<'_>,
+    rejection: &Slot<Error>,
+) -> Result<Handle<HostKeyCheck>>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    client::connect_stream(Arc::clone(config), stream, check)
+        .await
+        .map_err(|error| {
+            let rejected = rejection.lock().ok().and_then(|mut slot| slot.take());
+            at_hop(
+                rejected.unwrap_or_else(|| connection_error(hop.host, &error)),
+                hop,
+            )
+        })
+}
+
+fn at_hop(error: Error, hop: &Hop<'_>) -> Error {
+    if hop.is_target || error.hop().is_some() {
+        error
+    } else {
+        error.at_hop(hop.label.clone())
+    }
+}
+
+async fn authenticate(handle: &mut Handle<HostKeyCheck>, hop: &Hop<'_>) -> Result<()> {
+    let user = hop.username.to_string();
+    let result = match hop.authentication {
         Authentication::Password(password) => handle
             .authenticate_password(user, password.clone())
             .await
-            .map_err(|error| connection_error(&params.host, &error))?,
+            .map_err(|error| connection_error(hop.host, &error))?,
         Authentication::KeyFile { path, passphrase } => {
             let key =
                 russh::keys::load_secret_key(path, passphrase.as_deref()).map_err(|error| {
@@ -289,13 +431,19 @@ async fn authenticate(handle: &mut Handle<HostKeyCheck>, params: &ConnectionPara
             handle
                 .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
                 .await
-                .map_err(|error| connection_error(&params.host, &error))?
+                .map_err(|error| connection_error(hop.host, &error))?
+        }
+        Authentication::Agent => {
+            return ssh_agent::authenticate(handle, &user, &hop.label).await;
         }
     };
     if result.success() {
         Ok(())
     } else {
-        Err(Error::new(ErrorKind::AuthenticationFailed, params.label()))
+        Err(Error::new(
+            ErrorKind::AuthenticationFailed,
+            hop.label.clone(),
+        ))
     }
 }
 
@@ -507,6 +655,11 @@ impl FileSystem for SftpFileSystem {
                 .handle
                 .disconnect(russh::Disconnect::ByApplication, "", "en")
                 .await;
+            for jump in connection.jumps.iter().rev() {
+                let _ = jump
+                    .disconnect(russh::Disconnect::ByApplication, "", "en")
+                    .await;
+            }
         })
     }
 

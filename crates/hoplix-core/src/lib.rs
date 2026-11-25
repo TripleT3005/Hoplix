@@ -10,12 +10,15 @@ pub mod language;
 mod local;
 mod options;
 mod paths;
+mod proxy;
 mod rate;
 mod recent;
+mod route;
 mod secrets;
 mod sftp;
 mod site_export;
 mod sites;
+mod ssh_agent;
 mod sync;
 mod transfer;
 pub mod update;
@@ -33,19 +36,21 @@ pub use error::{Error, ErrorKind, Result};
 pub use file_system::{
     BoxFuture, FileSystem, Reader, Writer, copy_file, is_valid_name, remove_recursive,
 };
-pub use ftp::FtpFileSystem;
+pub use ftp::{FtpFileSystem, ensure_passive_mode};
 pub use local::LocalFileSystem;
 pub use options::{
     ConnectionOptions, FileNameEncoding, FtpMode, MAX_TIMEOUT_SECONDS, seconds_from_text,
     seconds_text,
 };
 pub use paths::{TrustStore, config_dir};
+pub use proxy::{Proxy, ProxyCredentials, ProxyKind};
 pub use rate::RateLimiter;
 pub use recent::{MAX_RECENT, RECENT_FILE, RecentConnection, RecentList};
+pub use route::{JumpHost, Route, connect_via, connect_via_with};
 pub use secrets::{
     DEFAULT_ITERATIONS, Keyring, Moved, SecretBackend, SecretStore, VAULT_FILE, Vault,
-    change_master_password, create_vault, move_to_keyring, move_to_vault, secret_name, site_id_of,
-    unlock_vault,
+    change_master_password, create_vault, jump_secret_name, move_to_keyring, move_to_vault,
+    proxy_secret_name, secret_name, site_id_of, unlock_vault,
 };
 pub use sftp::{SftpFileSystem, auto_reconnect, fingerprint, set_auto_reconnect};
 pub use site_export::{

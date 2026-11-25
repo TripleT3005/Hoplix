@@ -11,6 +11,8 @@ use crate::{Error, ErrorKind, Result};
 // Constants
 
 const SITE_PREFIX: &str = "site/";
+const PROXY_PREFIX: &str = "proxy/";
+const JUMP_PREFIX: &str = "jump/";
 
 // Types
 
@@ -53,8 +55,25 @@ pub fn secret_name(site_id: &str) -> String {
     format!("{SITE_PREFIX}{site_id}")
 }
 
+pub fn proxy_secret_name(site_id: &str) -> String {
+    format!("{PROXY_PREFIX}{site_id}")
+}
+
+pub fn jump_secret_name(site_id: &str, hop: usize) -> String {
+    format!("{JUMP_PREFIX}{site_id}/{hop}")
+}
+
 pub fn site_id_of(name: &str) -> Option<&str> {
-    name.strip_prefix(SITE_PREFIX)
+    if let Some(site_id) = name.strip_prefix(SITE_PREFIX) {
+        return Some(site_id);
+    }
+    if let Some(site_id) = name.strip_prefix(PROXY_PREFIX) {
+        return Some(site_id);
+    }
+    name.strip_prefix(JUMP_PREFIX)
+        .and_then(|rest| rest.rsplit_once('/'))
+        .filter(|(_, hop)| hop.parse::<usize>().is_ok())
+        .map(|(site_id, _)| site_id)
 }
 
 // Stores
@@ -159,6 +178,16 @@ mod tests {
         assert_eq!(secret_name("abc123"), "site/abc123");
         assert_eq!(site_id_of("site/abc123"), Some("abc123"));
         assert_eq!(site_id_of("other"), None);
+    }
+
+    #[test]
+    fn proxy_and_jump_secrets_belong_to_their_site() {
+        assert_eq!(proxy_secret_name("abc123"), "proxy/abc123");
+        assert_eq!(jump_secret_name("abc123", 0), "jump/abc123/0");
+        assert_eq!(site_id_of(&proxy_secret_name("abc123")), Some("abc123"));
+        assert_eq!(site_id_of(&jump_secret_name("abc123", 1)), Some("abc123"));
+        assert_eq!(site_id_of("jump/abc123"), None);
+        assert_eq!(site_id_of("jump/abc123/x"), None);
     }
 
     #[test]
