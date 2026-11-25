@@ -8,6 +8,7 @@ use iced::{Alignment, Element, Length};
 use crate::app::{Hoplix, Message, SiteSelection};
 use crate::connect_form::Field;
 use crate::i18n::Strings;
+use crate::site_exchange::ExchangeMessage;
 use crate::site_form::{OptionField, SiteField, SiteForm};
 use crate::theme;
 use crate::ui::connect_page::{LABEL_WIDTH, connection_fields, save_secret_checkbox, setting};
@@ -79,6 +80,16 @@ fn tree(app: &Hoplix) -> Element<'_, Message> {
             button(text(strings.get("sites.new_folder")))
                 .style(theme::secondary_button)
                 .on_press(Message::SiteFolderNew),
+            Space::new().width(Length::Fill),
+            button(text(strings.get("sites.import")))
+                .style(button::text)
+                .on_press(Message::SiteExchange(ExchangeMessage::OpenImport)),
+            button(text(strings.get("sites.export")))
+                .style(button::text)
+                .on_press_maybe(
+                    (!app.sites.sites.is_empty())
+                        .then_some(Message::SiteExchange(ExchangeMessage::OpenExport))
+                ),
         ]
         .spacing(6),
         container(list)
@@ -284,7 +295,7 @@ fn advanced<'a>(app: &'a Hoplix, form: &'a SiteForm) -> Element<'a, Message> {
     content.into()
 }
 
-pub fn connection_options<'a>(
+fn connection_options<'a>(
     strings: &'a Strings,
     form: &'a SiteForm,
 ) -> Vec<Element<'a, Message>> {

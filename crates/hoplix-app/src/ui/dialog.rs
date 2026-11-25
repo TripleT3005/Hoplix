@@ -144,6 +144,8 @@ pub fn view<'a>(app: &'a Hoplix, dialog: &'a Dialog) -> Element<'a, Message> {
             "update.open",
             false,
         ),
+        Dialog::ExportSites(export) => ui::exchange::export_body(app, export),
+        Dialog::ImportSites(import) => ui::exchange::import_body(app, import),
     };
 
     let buttons = if let Dialog::Conflict { conflict, .. } = dialog {
@@ -344,4 +346,8 @@ fn name_input<'a>(placeholder: &'a str, value: &'a str, valid: bool) -> Element<
 
 pub fn focus_input<T>() -> iced::Task<T> {
     iced::widget::operation::focus(INPUT_ID)
+}
+
+pub fn focus_id<T>(id: &'static str) -> iced::Task<T> {
+    iced::widget::operation::focus(id)
 }

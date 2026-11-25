@@ -23,6 +23,7 @@ use crate::i18n::{self, LanguageInfo, Strings};
 use crate::session::{Offline, SavedTab, Session, TabOrigin, WindowState};
 use crate::settings::{Layout, Settings, ThemePreference};
 use crate::site_actions::PendingAction;
+use crate::site_exchange::{ExchangeMessage, ExportDialog, ImportDialog};
 use crate::site_form::{SiteField, SiteForm};
 use crate::transfer_settings::TransferSetting;
 use crate::transfers::{Drag, DropTarget, TransferAction, TransferTarget};
@@ -136,6 +137,8 @@ pub enum Dialog {
         version: String,
         url: String,
     },
+    ExportSites(Box<ExportDialog>),
+    ImportSites(Box<ImportDialog>),
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +217,7 @@ pub enum Message {
     RecentRemoved(usize),
     RecentCleared,
     RememberRecent(bool),
+    SiteExchange(ExchangeMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -363,6 +367,8 @@ impl Dialog {
                     && (*mode == MasterMode::Unlock || password == confirm)
             }
             Self::Sync(dialog) => dialog.can_start(),
+            Self::ExportSites(dialog) => dialog.can_confirm(),
+            Self::ImportSites(dialog) => dialog.can_confirm(),
             Self::Delete { .. }
             | Self::Conflict { .. }
             | Self::HostKey { .. }
@@ -626,6 +632,7 @@ impl Hoplix {
             | Message::CursorMoved(_)
             | Message::MouseReleased) => return self.update_transfers(message),
             Message::Edit(message) => return self.update_edits(message),
+            Message::SiteExchange(message) => return self.update_exchange(message),
             message @ (Message::RecentSelected(_)
             | Message::RecentRemoved(_)
             | Message::RecentCleared
@@ -957,6 +964,9 @@ impl Hoplix {
                 self.dialog = None;
                 self.open_release_page(&url);
                 return Task::none();
+            }
+            Dialog::ExportSites(_) | Dialog::ImportSites(_) => {
+                return self.confirm_exchange_dialog();
             }
             Dialog::NewSiteFolder { .. }
             | Dialog::DeleteSite { .. }

@@ -9,6 +9,7 @@ use iced::Task;
 use crate::app::{Dialog, Hoplix, MasterMode, Message, Page, SiteSelection};
 use crate::connect_form::AuthMethod;
 use crate::session::TabOrigin;
+use crate::site_exchange::ExportDialog;
 use crate::site_form::SiteForm;
 use crate::ui;
 
@@ -18,6 +19,8 @@ use crate::ui;
 pub enum PendingAction {
     Connect(String),
     StoreSecret { site: String, secret: String },
+    StoreSecrets(Vec<(String, String)>),
+    Export(Box<ExportDialog>),
     SwitchToKeyring,
     ChangePassword,
 }
@@ -202,7 +205,7 @@ impl Hoplix {
         }
     }
 
-    fn open_master_dialog(&mut self, mode: MasterMode) {
+    pub(crate) fn open_master_dialog(&mut self, mode: MasterMode) {
         self.dialog = Some(Dialog::MasterPassword {
             mode,
             password: String::new(),
@@ -288,6 +291,12 @@ impl Hoplix {
             Some(PendingAction::Connect(id)) => self.load_secret(&id),
             Some(PendingAction::StoreSecret { site, secret }) => {
                 self.store_secret(&site, Some(secret))
+            }
+            Some(PendingAction::StoreSecrets(secrets)) => self.store_secrets(secrets),
+            Some(PendingAction::Export(mut dialog)) => {
+                dialog.busy = false;
+                self.dialog = Some(Dialog::ExportSites(dialog));
+                self.start_export()
             }
             Some(PendingAction::SwitchToKeyring) => self.restore_keyring(),
             Some(PendingAction::ChangePassword) => {

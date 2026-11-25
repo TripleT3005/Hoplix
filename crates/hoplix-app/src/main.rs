@@ -14,6 +14,7 @@ mod recent_actions;
 mod session;
 mod settings;
 mod site_actions;
+mod site_exchange;
 mod site_form;
 mod theme;
 mod title_bar;
