@@ -2,6 +2,48 @@
 
 All notable changes are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.0] – 2026-11-26
+
+### English
+
+#### Added
+
+- Sign in to SFTP servers with the SSH agent (Windows OpenSSH agent, Pageant or `SSH_AUTH_SOCK`), on the Connect page and in the site editor, with clear messages when no agent runs or no key is accepted.
+- Connect through an SSH jump host (SFTP) and through a SOCKS5 or HTTP CONNECT proxy (SFTP, FTP and FTPS in passive mode), on the Connect page and in the site editor; their passwords can be saved like the site password and are included when switching the password store, exporting and deleting sites.
+- Advanced site settings: connection timeout, keep-alive interval, FTP active or passive mode, "use the server's address for passive mode", file name encoding UTF-8 or Windows-1252/Latin-1, and parallel transfers per site.
+- Recent connections on the Connect page (last 10, never passwords), also in the command palette; they include jump host and proxy and can be switched off in *Settings → Connections*.
+- Export and import of the site list, optionally with saved passwords in an encrypted file.
+- `hoplix-cli`: `--agent`, `--jump`, `--jump-key`, `--jump-password-env`, `--jump-agent`, `--proxy`, `--proxy-user`, `--proxy-password-env`, and `sites export` / `sites import`; saved sites use their jump host and proxy.
+
+#### Changed
+
+- The transfer queue respects a per-site limit in addition to the overall and per-direction limits; waiting transfers show why.
+- In the site manager, Import and Export have their own row below the list.
+
+#### Security
+
+- A server key or certificate you confirm only applies to the host and port it was shown for; with a jump host, every hop is confirmed separately and "Always trust" only saves the confirmed host.
+
+### Deutsch
+
+#### Neu
+
+- Anmeldung an SFTP-Servern über den SSH-Agenten (Windows-OpenSSH-Agent, Pageant oder `SSH_AUTH_SOCK`) auf der Verbindungsseite und im Server-Editor, mit klaren Meldungen, wenn kein Agent läuft oder kein Schlüssel angenommen wird.
+- Verbindung über einen SSH-Jump-Host (SFTP) und über einen SOCKS5- oder HTTP-CONNECT-Proxy (SFTP, FTP und FTPS im passiven Modus), auf der Verbindungsseite und im Server-Editor; ihre Passwörter lassen sich wie das Server-Passwort speichern und werden beim Wechsel des Passwortspeichers, beim Export und beim Löschen berücksichtigt.
+- Erweiterte Server-Einstellungen: Verbindungs-Timeout, Keep-alive-Abstand, aktiver oder passiver FTP-Modus, „Adresse des Servers für den passiven Modus verwenden“, Zeichensatz der Dateinamen UTF-8 oder Windows-1252/Latin-1 und gleichzeitige Übertragungen pro Server.
+- Letzte Verbindungen auf der Seite „Verbinden“ (die letzten 10, nie Passwörter), auch in der Befehlspalette; sie enthalten Jump-Host und Proxy und lassen sich unter *Einstellungen → Verbindungen* abschalten.
+- Export und Import der Serverliste, wahlweise mit gespeicherten Passwörtern in einer verschlüsselten Datei.
+- `hoplix-cli`: `--agent`, `--jump`, `--jump-key`, `--jump-password-env`, `--jump-agent`, `--proxy`, `--proxy-user`, `--proxy-password-env` sowie `sites export` / `sites import`; gespeicherte Server nutzen ihren Jump-Host und Proxy.
+
+#### Geändert
+
+- Die Übertragungswarteschlange beachtet zusätzlich zur Gesamtgrenze und zu den Grenzen je Richtung eine Grenze pro Server; wartende Übertragungen zeigen den Grund.
+- In der Server-Verwaltung haben Importieren und Exportieren eine eigene Zeile unter der Liste.
+
+#### Sicherheit
+
+- Ein bestätigter Serverschlüssel oder ein bestätigtes Zertifikat gilt nur für den Host und Port, für den es angezeigt wurde; bei einem Jump-Host wird jeder Hop einzeln bestätigt, und „Immer vertrauen“ speichert nur den bestätigten Host.
+
 ## [0.3.0] – 2026-11-24
 
 ### English
