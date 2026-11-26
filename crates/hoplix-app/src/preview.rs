@@ -327,22 +327,22 @@ impl Hoplix {
         Task::none()
     }
 
-    pub(crate) fn sync_preview(&mut self) -> Task<Message> {
+    pub(crate) fn sync_preview(&mut self) -> Option<Task<Message>> {
         let (wanted, empty) = if self.preview.open {
             self.preview_subject()
         } else {
             (None, Content::Nothing)
         };
         if !self.preview.follow(wanted, empty) {
-            return Task::none();
+            return None;
         }
         let Some(subject) = &self.preview.subject else {
-            return Task::none();
+            return None;
         };
         match plan(subject, limit_bytes(self.settings.preview_limit)) {
             Plan::Show(content) => {
                 self.preview.content = content;
-                Task::none()
+                None
             }
             Plan::Load { delay } => {
                 self.preview.content = Content::Waiting;
@@ -362,7 +362,7 @@ impl Hoplix {
                 })
                 .abortable();
                 self.preview.handle = Some(handle);
-                task
+                Some(task)
             }
         }
     }

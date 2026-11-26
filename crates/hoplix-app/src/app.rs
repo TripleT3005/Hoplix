@@ -567,8 +567,10 @@ impl Hoplix {
             Some(follow) => Task::batch([task, follow]),
             None => task,
         };
-        let preview = self.sync_preview();
-        Task::batch([task, preview])
+        match self.sync_preview() {
+            Some(preview) => Task::batch([task, preview]),
+            None => task,
+        }
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
