@@ -218,6 +218,7 @@ pub fn error_text(strings: &Strings, error: &Error) -> String {
         ErrorKind::WrongMasterPassword => "error.wrong_master_password",
         ErrorKind::VaultLocked => "error.vault_locked",
         ErrorKind::SecretStorage => "error.secret_storage",
+        ErrorKind::ChecksumMismatch => "error.checksum_mismatch",
         ErrorKind::Unsupported => "error.unsupported",
         ErrorKind::Other => "error.other",
     };

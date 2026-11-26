@@ -15,6 +15,7 @@ mod local_time;
 mod opener;
 mod preview;
 mod properties;
+mod queue_store;
 mod recent_actions;
 mod route_form;
 mod search;

@@ -210,7 +210,7 @@ fn panel_buttons_pause_resume_cancel_and_retry() {
     assert_eq!(statuses(&harness), [JobStatus::Completed]);
     harness.click("Remove");
     assert!(harness.app.transfer_jobs.is_empty());
-    assert!(!harness.has("▾ Transfers"));
+    assert!(harness.has("History (2)"));
 }
 
 #[test]

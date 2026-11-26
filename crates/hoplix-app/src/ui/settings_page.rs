@@ -1,7 +1,7 @@
 use std::time::{Duration, UNIX_EPOCH};
 
-use hoplix_core::SecretBackend;
 use hoplix_core::update::CURRENT_VERSION;
+use hoplix_core::{ChecksumMode, MAX_HISTORY_LIMIT, SecretBackend};
 use iced::widget::{
     Column, Space, button, checkbox, column, container, pick_list, row, rule, scrollable, text,
     text_input,
@@ -30,6 +30,7 @@ const PICKER_WIDTH: f32 = 380.0;
 const AMOUNT_WIDTH: f32 = 140.0;
 const UNIT_WIDTH: f32 = 110.0;
 const HINT_SIZE: u32 = 13;
+const HISTORY_LIMITS: [usize; 7] = [100, 250, 500, 1000, 2500, 5000, MAX_HISTORY_LIMIT];
 
 // Page
 
@@ -181,8 +182,69 @@ fn transfers(app: &Hoplix) -> Element<'_, Message> {
                 ),
             ),
             hint(strings.get("settings.transfers.hint")),
+            setting(
+                strings.get("settings.checksum"),
+                checksum_picker(strings, settings.checksum),
+            ),
+            hint(strings.get("settings.checksum.hint")),
+            checkbox_row(
+                checkbox(settings.restore_transfers)
+                    .label(strings.get("settings.restore_transfers"))
+                    .on_toggle(|value| {
+                        Message::TransferSetting(TransferSetting::RestoreTransfers(value))
+                    })
+                    .into(),
+            ),
+            hint(strings.get("settings.restore_transfers.hint")),
+            checkbox_row(
+                checkbox(settings.history_enabled)
+                    .label(strings.get("settings.history"))
+                    .on_toggle(|value| Message::TransferSetting(TransferSetting::History(value)))
+                    .into(),
+            ),
+            setting(
+                strings.get("settings.history_limit"),
+                pick_list(
+                    history_limits(settings.history_limit),
+                    Some(settings.history_limit),
+                    |limit| Message::TransferSetting(TransferSetting::HistoryLimit(limit)),
+                )
+                .width(PICKER_WIDTH)
+                .into(),
+            ),
+            hint(strings.get("settings.history.hint")),
         ],
     )
+}
+
+fn checksum_picker(strings: &Strings, current: ChecksumMode) -> Element<'_, Message> {
+    let modes: Vec<Choice<ChecksumMode>> = ChecksumMode::ALL
+        .into_iter()
+        .map(|value| Choice {
+            value,
+            label: strings
+                .get(match value {
+                    ChecksumMode::Off => "settings.checksum.off",
+                    ChecksumMode::WhenSupported => "settings.checksum.supported",
+                })
+                .to_string(),
+        })
+        .collect();
+    let current = selected(&modes, &current);
+    pick_list(modes, current, |choice| {
+        Message::TransferSetting(TransferSetting::Checksum(choice.value))
+    })
+    .width(PICKER_WIDTH)
+    .into()
+}
+
+fn history_limits(current: usize) -> Vec<usize> {
+    let mut limits = HISTORY_LIMITS.to_vec();
+    if !limits.contains(&current) {
+        limits.push(current);
+        limits.sort_unstable();
+    }
+    limits
 }
 
 fn connections(app: &Hoplix) -> Element<'_, Message> {

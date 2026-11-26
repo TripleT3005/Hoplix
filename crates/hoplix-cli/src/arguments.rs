@@ -97,6 +97,7 @@ pub struct Options {
     pub retry_delay: Option<u32>,
     pub limit_download: Option<u64>,
     pub limit_upload: Option<u64>,
+    pub verify: bool,
     pub include_passwords: bool,
     pub folder: Option<String>,
     pub depth: Option<usize>,
@@ -178,6 +179,7 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
             "--limit-upload" => {
                 options.limit_upload = Some(rate("--limit-upload", &value("--limit-upload")?)?);
             }
+            "--verify" => options.verify = true,
             "--include-passwords" => options.include_passwords = true,
             "--folder" => options.folder = Some(value("--folder")?),
             "--depth" => {
@@ -237,6 +239,9 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
             "--retries, --retry-delay, --limit-download and --limit-upload only work with get, put, cp and sync"
                 .to_string(),
         );
+    }
+    if options.verify && !transferring {
+        return Err("--verify only works with get, put, cp and sync".to_string());
     }
     let exchanging = matches!(command, Command::ExportSites(_) | Command::ImportSites(_));
     if options.folder.is_some() && !exchanging {
@@ -556,6 +561,9 @@ Transfers:
                             without unit means KiB/s, 0 means no limit
   --limit-upload <rate>     Limit the upload speed in the same way
                             (a copy between two servers is limited by both)
+  --verify                  Compare checksums of each copied file with the original
+                            (SHA-256 locally, on servers the best algorithm both
+                            sides offer, otherwise the size)
 
 Site lists:
   --folder <name>           sites export: only export this folder;
@@ -783,6 +791,8 @@ mod tests {
             &["get", "a", "b", "--limit-upload", "M"],
             &["get", "a", "b", "--limit-upload", "9999999M"],
             &["ls", "a", "--retries", "2"],
+            &["ls", "a", "--verify"],
+            &["compare", "a", "b", "--verify"],
             &["compare", "a", "b", "--limit-download", "1M"],
             &["rm", "a", "--retry-delay", "5"],
         ] {
@@ -790,6 +800,15 @@ mod tests {
         }
         let error = run(&["get", "a", "b", "--retries", "11"]).expect_err("accepted");
         assert!(error.contains("0 to 10"), "{error}");
+    }
+
+    #[test]
+    fn verification_is_offered_for_transfers() {
+        for command in ["get", "put", "cp", "sync"] {
+            let invocation = run(&[command, "a", "b", "--verify"]).expect("valid");
+            assert!(invocation.options.verify, "{command}");
+        }
+        assert!(!run(&["get", "a", "b"]).expect("valid").options.verify);
     }
 
     #[test]

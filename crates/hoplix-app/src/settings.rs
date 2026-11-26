@@ -7,7 +7,8 @@ use hoplix_core::update::{self, Version};
 
 use crate::preview::DEFAULT_LIMIT_MIB;
 use hoplix_core::{
-    DEFAULT_PARALLELISM, DEFAULT_RETRIES, DEFAULT_RETRY_DELAY, RetryPolicy, SpeedLimits, key_value,
+    ChecksumMode, DEFAULT_HISTORY_LIMIT, DEFAULT_PARALLELISM, DEFAULT_RETRIES, DEFAULT_RETRY_DELAY,
+    MAX_HISTORY_LIMIT, RetryPolicy, SpeedLimits, key_value,
 };
 
 // Constants
@@ -67,6 +68,10 @@ pub struct Settings {
     pub retry_delay: u32,
     pub auto_reconnect: bool,
     pub remember_recent: bool,
+    pub restore_transfers: bool,
+    pub checksum: ChecksumMode,
+    pub history_enabled: bool,
+    pub history_limit: usize,
     pub editor: String,
     pub upload_changes_automatically: bool,
     pub update_check: bool,
@@ -92,6 +97,10 @@ impl Default for Settings {
             retry_delay: u32::try_from(DEFAULT_RETRY_DELAY.as_secs()).unwrap_or(MIN_RETRY_DELAY),
             auto_reconnect: true,
             remember_recent: true,
+            restore_transfers: true,
+            checksum: ChecksumMode::WhenSupported,
+            history_enabled: true,
+            history_limit: DEFAULT_HISTORY_LIMIT,
             editor: String::new(),
             upload_changes_automatically: false,
             update_check: true,
@@ -276,6 +285,26 @@ impl Settings {
                         settings.remember_recent = enabled;
                     }
                 }
+                "restore_unfinished_transfers" => {
+                    if let Ok(enabled) = value.parse::<bool>() {
+                        settings.restore_transfers = enabled;
+                    }
+                }
+                "verify_checksums" => {
+                    if let Some(mode) = ChecksumMode::from_key(&value) {
+                        settings.checksum = mode;
+                    }
+                }
+                "transfer_history" => {
+                    if let Ok(enabled) = value.parse::<bool>() {
+                        settings.history_enabled = enabled;
+                    }
+                }
+                "transfer_history_limit" => {
+                    if let Some(limit) = parse_in(&value, (1, MAX_HISTORY_LIMIT)) {
+                        settings.history_limit = limit;
+                    }
+                }
                 "editor" => settings.editor = value,
                 "upload_changes_automatically" => {
                     settings.upload_changes_automatically = value == "true";
@@ -336,6 +365,13 @@ impl Settings {
                 "remember_recent_connections",
                 self.remember_recent.to_string(),
             ),
+            (
+                "restore_unfinished_transfers",
+                self.restore_transfers.to_string(),
+            ),
+            ("verify_checksums", self.checksum.key().to_string()),
+            ("transfer_history", self.history_enabled.to_string()),
+            ("transfer_history_limit", self.history_limit.to_string()),
             ("editor", self.editor.clone()),
             (
                 "upload_changes_automatically",
@@ -409,6 +445,10 @@ mod tests {
             retry_delay: 30,
             auto_reconnect: false,
             remember_recent: false,
+            restore_transfers: false,
+            checksum: ChecksumMode::Off,
+            history_enabled: false,
+            history_limit: 42,
             editor: r#"C:\Tools\My Editor = "new".exe"#.to_string(),
             upload_changes_automatically: true,
             update_check: false,
@@ -433,6 +473,8 @@ mod tests {
              retry_delay = 0\nreconnect_automatically = maybe\nupdate_check = maybe\n\
              update_last_check = soon\nupdate_notified_version = new\n\
              remember_recent_connections = sometimes\n\
+             restore_unfinished_transfers = perhaps\nverify_checksums = always\n\
+             transfer_history = yes\ntransfer_history_limit = 0\n\
              update_latest_version = 1.0\nupdate_latest_url = https://example.com/\n",
         );
         assert_eq!(settings, Settings::default());
@@ -450,6 +492,10 @@ mod tests {
         assert_eq!(settings.retry_delay, 1);
         assert!(settings.auto_reconnect);
         assert!(settings.remember_recent);
+        assert!(settings.restore_transfers);
+        assert_eq!(settings.checksum, ChecksumMode::WhenSupported);
+        assert!(settings.history_enabled);
+        assert_eq!(settings.history_limit, 500);
         assert!(settings.update_check);
         assert_eq!(settings.update_last_check, None);
         assert_eq!(settings.speed_limits(), SpeedLimits::default());
