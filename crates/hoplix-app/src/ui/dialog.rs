@@ -149,6 +149,24 @@ pub fn view<'a>(app: &'a Hoplix, dialog: &'a Dialog) -> Element<'a, Message> {
         ),
         Dialog::ExportSites(export) => ui::exchange::export_body(app, export),
         Dialog::ImportSites(import) => ui::exchange::import_body(app, import),
+        Dialog::Search(search) => (
+            strings.get("search.title").to_string(),
+            ui::file_list::search_body(app, search),
+            "search.start",
+            false,
+        ),
+        Dialog::Properties(properties) => (
+            strings.format("properties.title", &[("name", &properties.name)]),
+            ui::file_list::properties_body(app, properties),
+            ui::file_list::properties_confirm(properties),
+            false,
+        ),
+        Dialog::Bookmarks(bookmarks) => (
+            strings.get("bookmarks.edit_title").to_string(),
+            ui::file_list::bookmarks_body(app, bookmarks),
+            "bookmarks.save",
+            false,
+        ),
     };
 
     let buttons = if let Dialog::Conflict { conflict, .. } = dialog {
@@ -164,7 +182,10 @@ pub fn view<'a>(app: &'a Hoplix, dialog: &'a Dialog) -> Element<'a, Message> {
     )
     .padding(20)
     .width(
-        if matches!(dialog, Dialog::Conflict { .. } | Dialog::Sync(_)) {
+        if matches!(
+            dialog,
+            Dialog::Conflict { .. } | Dialog::Sync(_) | Dialog::Properties(_)
+        ) {
             CONFLICT_WIDTH
         } else {
             DIALOG_WIDTH
@@ -345,6 +366,10 @@ fn name_input<'a>(placeholder: &'a str, value: &'a str, valid: bool) -> Element<
         .on_submit_maybe(valid.then_some(Message::DialogConfirmed))
         .padding(8)
         .into()
+}
+
+pub fn dialog_input_id() -> &'static str {
+    INPUT_ID
 }
 
 pub fn focus_input<T>() -> iced::Task<T> {

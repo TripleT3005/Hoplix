@@ -6,8 +6,8 @@ use std::time::SystemTime;
 
 use hoplix_core::{
     AGENT_MISSING, Authentication, BoxFuture, ConnectionOptions, ConnectionParams, Entry, Error,
-    ErrorKind, FileSystem, FtpMode, HostKeyTrust, LocalFileSystem, Protocol, Reader, Result, Route,
-    TrustStore, Writer, ensure_passive_mode,
+    ErrorKind, FileSystem, FtpMode, HostKeyTrust, LocalFileSystem, Properties, Protocol, Reader,
+    Result, Route, TrustStore, Writer, ensure_passive_mode,
 };
 
 use super::test_password;
@@ -20,6 +20,26 @@ use crate::updates::UpdateSource;
 pub fn password() -> &'static str {
     static PASSWORD: OnceLock<String> = OnceLock::new();
     PASSWORD.get_or_init(test_password)
+}
+
+// Permissions
+
+pub const FAKE_OWNER: &str = "demo";
+pub const FAKE_GROUP: &str = "staff";
+
+pub fn permissions() -> &'static Mutex<Vec<(String, u32)>> {
+    static PERMISSIONS: OnceLock<Mutex<Vec<(String, u32)>>> = OnceLock::new();
+    PERMISSIONS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub fn permission_of(path: &str) -> Option<u32> {
+    permissions()
+        .lock()
+        .expect("the permission log is poisoned")
+        .iter()
+        .rev()
+        .find(|(changed, _)| changed == path)
+        .map(|(_, mode)| *mode)
 }
 
 // Local file system
@@ -93,6 +113,37 @@ impl FileSystem for Folder {
 
     fn set_modified(&self, path: &str, modified: SystemTime) -> BoxFuture<'_, Result<()>> {
         self.inner.set_modified(path, modified)
+    }
+
+    fn properties(&self, path: &str) -> BoxFuture<'_, Result<Properties>> {
+        if self.label.is_none() {
+            return self.inner.properties(path);
+        }
+        let path = path.to_string();
+        Box::pin(async move {
+            let entry = self.inner.metadata(&path).await?;
+            let default = if entry.is_directory() { 0o755 } else { 0o644 };
+            let mut properties = Properties::from_entry(entry);
+            properties.permissions = Some(permission_of(&path).unwrap_or(default));
+            properties.owner = Some(FAKE_OWNER.to_string());
+            properties.group = Some(FAKE_GROUP.to_string());
+            Ok(properties)
+        })
+    }
+
+    fn can_set_permissions(&self) -> bool {
+        self.label.is_some()
+    }
+
+    fn set_permissions(&self, path: &str, mode: u32) -> BoxFuture<'_, Result<()>> {
+        if self.label.is_none() {
+            return self.inner.set_permissions(path, mode);
+        }
+        permissions()
+            .lock()
+            .expect("the permission log is poisoned")
+            .push((path.to_string(), mode));
+        Box::pin(async { Ok(()) })
     }
 
     fn join(&self, base: &str, name: &str) -> String {

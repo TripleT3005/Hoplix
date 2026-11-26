@@ -3,6 +3,7 @@ mod compare;
 mod connect;
 mod edit;
 mod fakes;
+mod file_list;
 mod palette;
 mod queue;
 mod routes;
@@ -316,6 +317,11 @@ impl Harness {
             .unwrap_or(iced::event::Status::Ignored);
         let mut subscribed: Vec<Message> = input_event(event.clone(), status, self.window)
             .into_iter()
+            .chain(crate::file_list::mouse_event(
+                event.clone(),
+                status,
+                self.window,
+            ))
             .collect();
         if self.app.drag.is_some() {
             subscribed.extend(cursor_event(event, status, self.window));
