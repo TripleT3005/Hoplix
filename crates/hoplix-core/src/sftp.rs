@@ -8,18 +8,18 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use russh::client::{self, Handle};
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
-use russh_sftp::client::SftpSession;
 use russh_sftp::client::error::Error as SftpError;
-use russh_sftp::protocol::{FileAttributes, OpenFlags, StatusCode};
+use russh_sftp::client::{RawSftpSession, SftpSession};
+use russh_sftp::protocol::{FileAttributes, OpenFlags, Packet, StatusCode};
 use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWrite};
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 
 use crate::connection::{Authentication, ConnectionParams, HostAddress, HostKeyTrust};
 use crate::file_system::{Reader, Writer};
 use crate::route::Route;
 use crate::{
-    BoxFuture, ConnectionOptions, Entry, EntryKind, Error, ErrorKind, FileSystem, Result, proxy,
-    ssh_agent,
+    BoxFuture, ConnectionOptions, Entry, EntryKind, Error, ErrorKind, FileSystem, HashAlgorithm,
+    Result, proxy, ssh_agent,
 };
 
 // Constants
@@ -56,6 +56,14 @@ struct Connection {
     session: SftpSession,
     handle: Handle<HostKeyCheck>,
     jumps: Vec<Handle<HostKeyCheck>>,
+    hashes: OnceCell<HashChannel>,
+}
+
+#[derive(Default)]
+struct HashChannel {
+    session: Option<RawSftpSession>,
+    check_file: Vec<HashAlgorithm>,
+    md5_hash: bool,
 }
 
 struct HostKeyCheck {
@@ -349,6 +357,7 @@ async fn open_connection(
             session,
             handle,
             jumps,
+            hashes: OnceCell::new(),
         },
         accepted_keys,
     ))
@@ -665,6 +674,44 @@ impl FileSystem for SftpFileSystem {
         })
     }
 
+    fn checksum_algorithms(&self) -> BoxFuture<'_, Vec<HashAlgorithm>> {
+        Box::pin(async {
+            let Ok(connection) = self.current().await else {
+                return Vec::new();
+            };
+            connection.hash_channel().await.algorithms()
+        })
+    }
+
+    fn checksum(&self, path: &str, algorithm: HashAlgorithm) -> BoxFuture<'_, Result<Vec<u8>>> {
+        let path = path.to_string();
+        Box::pin(async move {
+            let connection = self.current().await?;
+            let channel = connection.hash_channel().await;
+            let Some(session) = &channel.session else {
+                return Err(crate::checksum::unsupported(&path));
+            };
+            let (request, data) = if channel.check_file.contains(&algorithm) {
+                (CHECK_FILE, check_file_request(&path, algorithm))
+            } else if algorithm == HashAlgorithm::Md5 && channel.md5_hash {
+                (MD5_HASH, md5_hash_request(&path))
+            } else {
+                return Err(crate::checksum::unsupported(&path));
+            };
+            let reply = match session.extended(request, data).await {
+                Ok(Packet::ExtendedReply(reply)) => reply.data,
+                Ok(_) => return Err(crate::checksum::unsupported(&path)),
+                Err(error) => return Err(sftp_error(&error, &path)),
+            };
+            let parsed = if request == CHECK_FILE {
+                parse_check_file_reply(&reply, algorithm)
+            } else {
+                parse_md5_hash_reply(&reply)
+            };
+            parsed.ok_or_else(|| crate::checksum::unsupported(&path))
+        })
+    }
+
     fn join(&self, base: &str, name: &str) -> String {
         join_posix(base, name)
     }
@@ -676,6 +723,121 @@ impl FileSystem for SftpFileSystem {
     fn file_name<'a>(&self, path: &'a str) -> &'a str {
         file_name_posix(path)
     }
+}
+
+// Checksums
+
+const CHECK_FILE: &str = "check-file-name";
+const CHECK_FILE_SHORT: &str = "check-file";
+const MD5_HASH: &str = "md5-hash";
+
+impl Connection {
+    async fn hash_channel(&self) -> &HashChannel {
+        self.hashes
+            .get_or_init(|| async { probe_hash_channel(&self.handle).await.unwrap_or_default() })
+            .await
+    }
+}
+
+impl HashChannel {
+    fn algorithms(&self) -> Vec<HashAlgorithm> {
+        HashAlgorithm::PREFERENCE
+            .into_iter()
+            .filter(|algorithm| {
+                self.check_file.contains(algorithm)
+                    || (*algorithm == HashAlgorithm::Md5 && self.md5_hash)
+            })
+            .collect()
+    }
+}
+
+async fn probe_hash_channel(handle: &Handle<HostKeyCheck>) -> Option<HashChannel> {
+    let channel = handle.channel_open_session().await.ok()?;
+    channel.request_subsystem(true, "sftp").await.ok()?;
+    let session = RawSftpSession::new(channel.into_stream());
+    let version = session.init().await.ok()?;
+    let check_file = [CHECK_FILE, CHECK_FILE_SHORT]
+        .into_iter()
+        .find_map(|name| version.extensions.get(name))
+        .map(|value| check_file_algorithms(value))
+        .unwrap_or_default();
+    let md5_hash = version.extensions.contains_key(MD5_HASH);
+    if check_file.is_empty() && !md5_hash {
+        drop(session);
+        return None;
+    }
+    Some(HashChannel {
+        session: Some(session),
+        check_file,
+        md5_hash,
+    })
+}
+
+fn check_file_algorithms(value: &str) -> Vec<HashAlgorithm> {
+    let named: Vec<HashAlgorithm> = value
+        .split(',')
+        .filter_map(HashAlgorithm::from_name)
+        .collect();
+    if named.is_empty() {
+        HashAlgorithm::PREFERENCE.to_vec()
+    } else {
+        HashAlgorithm::PREFERENCE
+            .into_iter()
+            .filter(|algorithm| named.contains(algorithm))
+            .collect()
+    }
+}
+
+fn put_string(buffer: &mut Vec<u8>, value: &[u8]) {
+    let length = u32::try_from(value.len()).unwrap_or(u32::MAX);
+    buffer.extend_from_slice(&length.to_be_bytes());
+    buffer.extend_from_slice(value);
+}
+
+fn take_string<'a>(data: &mut &'a [u8]) -> Option<&'a [u8]> {
+    let length = usize::try_from(u32::from_be_bytes(data.get(..4)?.try_into().ok()?)).ok()?;
+    let value = data.get(4..4 + length)?;
+    *data = &data[4 + length..];
+    Some(value)
+}
+
+fn check_file_request(path: &str, algorithm: HashAlgorithm) -> Vec<u8> {
+    let mut data = Vec::new();
+    put_string(&mut data, path.as_bytes());
+    put_string(&mut data, algorithm.key().as_bytes());
+    data.extend_from_slice(&0u64.to_be_bytes());
+    data.extend_from_slice(&0u64.to_be_bytes());
+    data.extend_from_slice(&0u32.to_be_bytes());
+    data
+}
+
+fn parse_check_file_reply(reply: &[u8], algorithm: HashAlgorithm) -> Option<Vec<u8>> {
+    let mut data = reply;
+    let mut used = take_string(&mut data)?;
+    if used == CHECK_FILE_SHORT.as_bytes() {
+        used = take_string(&mut data)?;
+    }
+    let used = HashAlgorithm::from_name(std::str::from_utf8(used).ok()?)?;
+    let expected = algorithm.digest(b"").len();
+    (used == algorithm && data.len() >= expected).then(|| data[..expected].to_vec())
+}
+
+fn md5_hash_request(path: &str) -> Vec<u8> {
+    let mut data = Vec::new();
+    put_string(&mut data, path.as_bytes());
+    data.extend_from_slice(&0u64.to_be_bytes());
+    data.extend_from_slice(&0u64.to_be_bytes());
+    put_string(&mut data, b"");
+    data
+}
+
+fn parse_md5_hash_reply(reply: &[u8]) -> Option<Vec<u8>> {
+    let mut data = reply;
+    let mut hash = take_string(&mut data)?;
+    if hash == MD5_HASH.as_bytes() {
+        hash = take_string(&mut data)?;
+    }
+    (hash.len() == 16).then(|| hash.to_vec())
 }
 
 async fn list_directory(session: &SftpSession, path: &str) -> Result<Vec<Entry>> {
@@ -785,6 +947,53 @@ fn connection_error(host: &str, error: &russh::Error) -> Error {
 mod tests {
     use super::*;
     use crate::{JumpHost, Protocol};
+
+    // Checksums
+
+    #[test]
+    fn check_file_requests_and_replies_follow_the_draft() {
+        let request = check_file_request("/a", HashAlgorithm::Sha256);
+        assert_eq!(&request[..4], &2u32.to_be_bytes());
+        assert_eq!(&request[4..6], b"/a");
+        assert_eq!(&request[10..16], b"sha256");
+        assert_eq!(request.len(), 6 + 4 + 6 + 8 + 8 + 4);
+
+        let digest = HashAlgorithm::Sha1.digest(b"abc");
+        let mut reply = Vec::new();
+        put_string(&mut reply, b"sha1");
+        reply.extend_from_slice(&digest);
+        assert_eq!(
+            parse_check_file_reply(&reply, HashAlgorithm::Sha1),
+            Some(digest.clone())
+        );
+        assert_eq!(parse_check_file_reply(&reply, HashAlgorithm::Md5), None);
+        let mut prefixed = Vec::new();
+        put_string(&mut prefixed, b"check-file");
+        prefixed.extend_from_slice(&reply);
+        assert_eq!(
+            parse_check_file_reply(&prefixed, HashAlgorithm::Sha1),
+            Some(digest)
+        );
+        assert_eq!(parse_check_file_reply(&[0, 0], HashAlgorithm::Sha1), None);
+        assert_eq!(
+            check_file_algorithms("md5,sha256,whirlpool"),
+            [HashAlgorithm::Sha256, HashAlgorithm::Md5]
+        );
+        assert_eq!(check_file_algorithms("1").len(), 4);
+    }
+
+    #[test]
+    fn md5_hash_requests_and_replies_follow_the_draft() {
+        let request = md5_hash_request("/f");
+        assert_eq!(request.len(), 4 + 2 + 8 + 8 + 4);
+        let digest = HashAlgorithm::Md5.digest(b"abc");
+        let mut reply = Vec::new();
+        put_string(&mut reply, &digest);
+        assert_eq!(parse_md5_hash_reply(&reply), Some(digest));
+        let mut empty = Vec::new();
+        put_string(&mut empty, b"");
+        assert_eq!(parse_md5_hash_reply(&empty), None);
+    }
 
     // Host keys
 
