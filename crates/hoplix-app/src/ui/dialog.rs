@@ -56,6 +56,7 @@ pub fn view<'a>(app: &'a Hoplix, dialog: &'a Dialog) -> Element<'a, Message> {
             certificate,
             host,
             jump,
+            ..
         } => (
             strings
                 .get(match (*certificate, *jump) {

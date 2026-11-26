@@ -3,8 +3,8 @@ mod common;
 use std::path::PathBuf;
 
 use hoplix_core::{
-    Authentication, ConnectionParams, ErrorKind, FileSystem, HostKeyTrust, Protocol, TrustStore,
-    connect, remove_recursive,
+    Authentication, ConnectionParams, ErrorKind, FileSystem, HostAddress, HostKeyTrust, Protocol,
+    TrustStore, connect, remove_recursive,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -59,21 +59,31 @@ async fn host_keys_are_verified_and_remembered() {
     assert_eq!(error.kind(), ErrorKind::UnknownHostKey);
     let fingerprint = error.detail().to_string();
     assert!(fingerprint.starts_with("SHA256:"), "{fingerprint}");
+    let once = HostKeyTrust::for_error(&error, false).expect("no trust");
+    assert_eq!(once.address, HostAddress::new(&params.host, params.port));
 
     let wrong = HostKeyTrust {
         fingerprint: "SHA256:wrong".to_string(),
         remember: true,
+        ..once.clone()
     };
     let error = connect(&params, &known_hosts, Some(wrong))
         .await
         .expect_err("wrong key accepted");
     assert_eq!(error.kind(), ErrorKind::UnknownHostKey);
 
-    let once = HostKeyTrust {
-        fingerprint: fingerprint.clone(),
-        remember: false,
+    let elsewhere = HostKeyTrust {
+        address: HostAddress::new("elsewhere.example.test", params.port),
+        remember: true,
+        ..once.clone()
     };
-    connect(&params, &known_hosts, Some(once))
+    let error = connect(&params, &known_hosts, Some(elsewhere))
+        .await
+        .expect_err("a trust for another host was accepted");
+    assert_eq!(error.kind(), ErrorKind::UnknownHostKey);
+    assert!(!known_hosts.known_hosts.exists());
+
+    connect(&params, &known_hosts, Some(once.clone()))
         .await
         .expect("trusted once")
         .close()
@@ -83,6 +93,7 @@ async fn host_keys_are_verified_and_remembered() {
     let always = HostKeyTrust {
         fingerprint,
         remember: true,
+        ..once
     };
     connect(&params, &known_hosts, Some(always))
         .await
@@ -117,15 +128,10 @@ async fn wrong_credentials_are_rejected() {
     params.authentication = Authentication::Password(test_password());
     params.username = format!("{}-missing", params.username);
     let known_hosts = known_hosts_file();
-    let fingerprint = connect(&params, &known_hosts, None)
+    let error = connect(&params, &known_hosts, None)
         .await
-        .expect_err("connected")
-        .detail()
-        .to_string();
-    let trust = HostKeyTrust {
-        fingerprint,
-        remember: false,
-    };
+        .expect_err("connected");
+    let trust = HostKeyTrust::for_error(&error, false).expect("no trust");
     let error = connect(&params, &known_hosts, Some(trust))
         .await
         .expect_err("logged in");
@@ -139,15 +145,10 @@ async fn wrong_credentials_are_rejected() {
 async fn file_operations_work_remotely() {
     let params = params();
     let known_hosts = known_hosts_file();
-    let fingerprint = connect(&params, &known_hosts, None)
+    let error = connect(&params, &known_hosts, None)
         .await
-        .expect_err("connected")
-        .detail()
-        .to_string();
-    let trust = HostKeyTrust {
-        fingerprint,
-        remember: false,
-    };
+        .expect_err("connected");
+    let trust = HostKeyTrust::for_error(&error, false).expect("no trust");
     let remote = connect(&params, &known_hosts, Some(trust))
         .await
         .expect("connecting failed");

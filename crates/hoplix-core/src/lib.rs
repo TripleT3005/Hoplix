@@ -29,7 +29,7 @@ mod test_support;
 
 pub use certificates::certificate_fingerprint;
 pub use connection::{
-    Authentication, ConnectionParams, HostKeyTrust, Protocol, connect, connect_with,
+    Authentication, ConnectionParams, HostAddress, HostKeyTrust, Protocol, connect, connect_with,
 };
 pub use encoding::{decode_windows_1252, encode_windows_1252};
 pub use entry::{Entry, EntryKind, SortKey, SortOrder, compare_names, sort_entries};

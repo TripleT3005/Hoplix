@@ -2,7 +2,9 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::{ConnectionOptions, FileSystem, Result, Route, TrustStore, connect_via_with};
+use crate::{
+    ConnectionOptions, Error, ErrorKind, FileSystem, Result, Route, TrustStore, connect_via_with,
+};
 
 // Types
 
@@ -35,9 +37,55 @@ pub struct ConnectionParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostAddress {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostKeyTrust {
+    pub address: HostAddress,
     pub fingerprint: String,
     pub remember: bool,
+}
+
+impl HostAddress {
+    pub fn new(host: impl Into<String>, port: u16) -> Self {
+        Self {
+            host: host.into(),
+            port,
+        }
+    }
+
+    pub fn is(&self, host: &str, port: u16) -> bool {
+        self.port == port && self.host.eq_ignore_ascii_case(host)
+    }
+}
+
+impl HostKeyTrust {
+    pub fn for_error(error: &Error, remember: bool) -> Option<Self> {
+        if !matches!(
+            error.kind(),
+            ErrorKind::UnknownHostKey | ErrorKind::UntrustedCertificate
+        ) {
+            return None;
+        }
+        Some(Self {
+            address: error.address()?.clone(),
+            fingerprint: error.detail().to_string(),
+            remember,
+        })
+    }
+
+    pub fn applies_to(&self, host: &str, port: u16, fingerprint: &str) -> bool {
+        self.address.is(host, port) && self.fingerprint == fingerprint
+    }
+
+    pub fn answers(&self, error: &Error) -> bool {
+        error
+            .address()
+            .is_some_and(|address| self.applies_to(&address.host, address.port, error.detail()))
+    }
 }
 
 impl Protocol {
@@ -154,6 +202,33 @@ mod tests {
         assert!(Protocol::FtpsImplicit.is_encrypted() && Protocol::FtpsImplicit.uses_tls());
         assert!(!Protocol::Sftp.uses_tls() && Protocol::Sftp.supports_key_files());
         assert!(!Protocol::FtpsExplicit.supports_key_files());
+    }
+
+    #[test]
+    fn trusts_are_built_from_errors_and_bound_to_their_address() {
+        let error = Error::new(ErrorKind::UnknownHostKey, "SHA256:abc").at_address("Jump.test", 22);
+        let trust = HostKeyTrust::for_error(&error, true).expect("no trust");
+        assert_eq!(
+            trust,
+            HostKeyTrust {
+                address: HostAddress::new("Jump.test", 22),
+                fingerprint: "SHA256:abc".to_string(),
+                remember: true,
+            }
+        );
+        assert!(trust.answers(&error));
+        assert!(trust.applies_to("jump.TEST", 22, "SHA256:abc"));
+        assert!(!trust.applies_to("jump.test", 2222, "SHA256:abc"));
+        assert!(!trust.applies_to("target.test", 22, "SHA256:abc"));
+        assert!(!trust.applies_to("jump.test", 22, "SHA256:other"));
+        let target =
+            Error::new(ErrorKind::UnknownHostKey, "SHA256:abc").at_address("target.test", 22);
+        assert!(!trust.answers(&target));
+
+        let unbound = Error::new(ErrorKind::UnknownHostKey, "SHA256:abc");
+        assert_eq!(HostKeyTrust::for_error(&unbound, false), None);
+        let failed = Error::new(ErrorKind::ConnectionFailed, "x").at_address("jump.test", 22);
+        assert_eq!(HostKeyTrust::for_error(&failed, false), None);
     }
 
     #[test]

@@ -1,11 +1,11 @@
 use hoplix_core::{
-    Authentication, FtpMode, JumpHost, Protocol, ProxyCredentials, ProxyKind, RECENT_FILE,
-    SecretBackend, Site, SiteAuth, SiteJump, SiteList, SiteProxy, Vault, jump_secret_name,
-    proxy_secret_name, secret_name,
+    Authentication, FtpMode, HostAddress, JumpHost, Protocol, ProxyCredentials, ProxyKind,
+    RECENT_FILE, SecretBackend, Site, SiteAuth, SiteJump, SiteList, SiteProxy, Vault,
+    jump_secret_name, proxy_secret_name, secret_name,
 };
 use iced::keyboard::key::Named;
 
-use super::fakes::{AGENT_USER, fingerprint, password, route_used_by};
+use super::fakes::{AGENT_USER, SHARED_KEY_DOMAIN, fingerprint, password, route_used_by};
 use super::*;
 use crate::app::{Dialog, LoadState, MasterMode, Page, SiteSelection};
 use crate::connect_form::AuthMethod;
@@ -183,6 +183,7 @@ fn jump_host_keys_are_confirmed_before_the_target() {
             certificate: false,
             host: format!("hop@{JUMP}"),
             jump: true,
+            address: HostAddress::new(JUMP, 22),
         })
     );
     assert!(harness.has("Unknown jump host"));
@@ -195,6 +196,7 @@ fn jump_host_keys_are_confirmed_before_the_target() {
             certificate: false,
             host: HOST.to_string(),
             jump: false,
+            address: HostAddress::new(HOST, 22),
         })
     );
     assert!(harness.has("Unknown server"));
@@ -226,6 +228,65 @@ fn jump_host_keys_are_confirmed_before_the_target() {
     assert!(harness.app.connect_form.jump.enabled);
     assert_eq!(harness.app.connect_form.jump.host, JUMP);
     assert!(harness.app.connect_form.jump.password.is_empty());
+}
+
+#[test]
+fn a_jump_host_and_target_with_the_same_key_are_confirmed_separately() {
+    let jump = format!("bastion{SHARED_KEY_DOMAIN}");
+    let target = format!("inner{SHARED_KEY_DOMAIN}");
+    assert_eq!(fingerprint(&jump), fingerprint(&target));
+    let mut harness = start("jump-shared-key", &[], Vec::new());
+    harness.click("Connect");
+    harness.fill("Server", &target);
+    harness.fill("User name", "demo");
+    harness.fill("Password", password());
+    open_route_area(&mut harness);
+    harness.click("Connect through an SSH jump host");
+    harness.fill("Jump host", &jump);
+    harness.fill("Jump host user", "hop");
+    harness.fill("Jump host password", password());
+    harness.key(Named::Enter);
+    assert_eq!(
+        harness.app.dialog,
+        Some(Dialog::HostKey {
+            fingerprint: fingerprint(&jump),
+            certificate: false,
+            host: format!("hop@{jump}"),
+            jump: true,
+            address: HostAddress::new(&jump, 22),
+        })
+    );
+    assert!(harness.has("Unknown jump host"));
+    harness.click("Always trust");
+    assert_eq!(
+        harness.app.dialog,
+        Some(Dialog::HostKey {
+            fingerprint: fingerprint(&target),
+            certificate: false,
+            host: target.clone(),
+            jump: false,
+            address: HostAddress::new(&target, 22),
+        })
+    );
+    assert!(harness.has("Unknown server"));
+    assert_ne!(harness.app.page, Page::Browser);
+    let known = fs::read_to_string(harness.root.config().join("known_hosts")).expect("known");
+    assert!(known.contains(&jump));
+    assert!(!known.contains(&target));
+
+    harness.click("Cancel");
+    assert!(harness.app.dialog.is_none());
+    assert_ne!(harness.app.page, Page::Browser);
+    submit(&mut harness);
+    assert!(matches!(
+        harness.app.dialog,
+        Some(Dialog::HostKey { jump: false, .. })
+    ));
+    harness.click("Trust once");
+    assert!(harness.app.dialog.is_none());
+    assert_eq!(harness.app.page, Page::Browser);
+    let known = fs::read_to_string(harness.root.config().join("known_hosts")).expect("known");
+    assert!(!known.contains(&target));
 }
 
 #[test]

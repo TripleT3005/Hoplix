@@ -3,8 +3,8 @@ mod common;
 use std::sync::Arc;
 
 use hoplix_core::{
-    Authentication, ConnectionParams, ErrorKind, FileSystem, HostKeyTrust, Protocol, TrustStore,
-    connect, copy_file, remove_recursive,
+    Authentication, ConnectionParams, ErrorKind, FileSystem, HostAddress, HostKeyTrust, Protocol,
+    TrustStore, connect, copy_file, remove_recursive,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -48,10 +48,9 @@ fn trust_store(name: &str) -> TrustStore {
 async fn open(params: &ConnectionParams, store: &TrustStore) -> Arc<dyn FileSystem> {
     let trust = match connect(params, store, None).await {
         Ok(file_system) => return file_system,
-        Err(error) if error.kind() == ErrorKind::UntrustedCertificate => HostKeyTrust {
-            fingerprint: error.detail().to_string(),
-            remember: false,
-        },
+        Err(error) if error.kind() == ErrorKind::UntrustedCertificate => {
+            HostKeyTrust::for_error(&error, false).expect("no trust")
+        }
         Err(error) => panic!("connecting failed: {error}"),
     };
     connect(params, store, Some(trust))
@@ -77,20 +76,26 @@ async fn self_signed_certificates_are_confirmed_and_remembered() {
     assert_eq!(error.kind(), ErrorKind::UntrustedCertificate);
     let fingerprint = error.detail().to_string();
     assert!(fingerprint.starts_with("SHA256:"), "{fingerprint}");
+    let always = HostKeyTrust::for_error(&error, true).expect("no trust");
+    assert_eq!(always.address, HostAddress::new(&params.host, params.port));
 
     let wrong = HostKeyTrust {
         fingerprint: "SHA256:00".to_string(),
-        remember: true,
+        ..always.clone()
     };
     let error = connect(&params, &store, Some(wrong))
         .await
         .expect_err("wrong fingerprint accepted");
     assert_eq!(error.kind(), ErrorKind::UntrustedCertificate);
 
-    let always = HostKeyTrust {
-        fingerprint: fingerprint.clone(),
-        remember: true,
+    let elsewhere = HostKeyTrust {
+        address: HostAddress::new("elsewhere.example.test", params.port),
+        ..always.clone()
     };
+    let error = connect(&params, &store, Some(elsewhere))
+        .await
+        .expect_err("a trust for another host was accepted");
+    assert_eq!(error.kind(), ErrorKind::UntrustedCertificate);
     connect(&params, &store, Some(always))
         .await
         .expect("trusted always")
@@ -123,10 +128,9 @@ async fn wrong_passwords_are_rejected() {
     params.authentication = Authentication::Password(test_password());
     let store = trust_store("password");
     let trust = match connect(&params, &store, None).await {
-        Err(error) if error.kind() == ErrorKind::UntrustedCertificate => Some(HostKeyTrust {
-            fingerprint: error.detail().to_string(),
-            remember: false,
-        }),
+        Err(error) if error.kind() == ErrorKind::UntrustedCertificate => {
+            HostKeyTrust::for_error(&error, false)
+        }
         Err(error) => {
             assert_eq!(error.kind(), ErrorKind::AuthenticationFailed);
             return;

@@ -1,6 +1,8 @@
 use std::fmt;
 use std::io;
 
+use crate::connection::HostAddress;
+
 // Types
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -30,6 +32,7 @@ pub struct Error {
     kind: ErrorKind,
     detail: String,
     hop: Option<String>,
+    address: Option<Box<HostAddress>>,
 }
 
 // Construction
@@ -40,11 +43,17 @@ impl Error {
             kind,
             detail: detail.into(),
             hop: None,
+            address: None,
         }
     }
 
     pub fn at_hop(mut self, hop: impl Into<String>) -> Self {
         self.hop = Some(hop.into());
+        self
+    }
+
+    pub fn at_address(mut self, host: impl Into<String>, port: u16) -> Self {
+        self.address = Some(Box::new(HostAddress::new(host, port)));
         self
     }
 
@@ -77,6 +86,10 @@ impl Error {
 
     pub fn hop(&self) -> Option<&str> {
         self.hop.as_deref()
+    }
+
+    pub fn address(&self) -> Option<&HostAddress> {
+        self.address.as_deref()
     }
 }
 
@@ -115,5 +128,18 @@ mod tests {
         let error = error.at_hop("jump@bastion.test");
         assert_eq!(error.hop(), Some("jump@bastion.test"));
         assert_eq!(error.detail(), "SHA256:abc");
+    }
+
+    #[test]
+    fn errors_can_name_the_address_that_was_checked() {
+        let error = Error::new(ErrorKind::UnknownHostKey, "SHA256:abc");
+        assert_eq!(error.address(), None);
+        let error = error.at_address("bastion.test", 2222);
+        assert_eq!(
+            error.address(),
+            Some(&HostAddress::new("bastion.test", 2222))
+        );
+        assert_eq!(error.detail(), "SHA256:abc");
+        assert_eq!(error.to_string(), "UnknownHostKey: SHA256:abc");
     }
 }

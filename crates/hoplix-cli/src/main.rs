@@ -659,6 +659,7 @@ async fn connect(
     if let Some(path) = &options.trusted_certificates {
         trust_store.certificates.clone_from(path);
     }
+    let hops = route.jump_hosts.len() + 1;
     let mut trusted: Vec<HostKeyTrust> = Vec::new();
     loop {
         let error =
@@ -668,34 +669,38 @@ async fn connect(
                 Ok(file_system) => return Ok(file_system),
                 Err(error) => error,
             };
-        let untrusted = matches!(
-            error.kind(),
-            ErrorKind::UnknownHostKey | ErrorKind::UntrustedCertificate
-        );
-        let fingerprint = error.detail().to_string();
-        if !untrusted
-            || trusted.len() > route.jump_hosts.len()
-            || trusted.iter().any(|trust| trust.fingerprint == fingerprint)
-        {
-            return Err(describe(error));
-        }
-        let what = if error.kind() == ErrorKind::UnknownHostKey {
-            "server key"
-        } else {
-            "certificate"
-        };
-        let host = error.hop().unwrap_or(&params.host);
-        if !options.accept_host_key && !options.remember_host_key {
-            return Err(format!(
-                "the {what} of {host} is not trusted ({fingerprint}). Check it and run again with --accept-host-key or --remember-host-key"
-            ));
-        }
-        eprintln!("Trusting {what} {fingerprint} of {host}");
-        trusted.push(HostKeyTrust {
-            fingerprint,
-            remember: options.remember_host_key,
-        });
+        let (trust, notice) = next_trust(error, &trusted, hops, &params.host, options)?;
+        eprintln!("{notice}");
+        trusted.push(trust);
     }
+}
+
+fn next_trust(
+    error: Error,
+    trusted: &[HostKeyTrust],
+    hops: usize,
+    target: &str,
+    options: &Options,
+) -> Result<(HostKeyTrust, String), String> {
+    let trust = HostKeyTrust::for_error(&error, options.remember_host_key)
+        .filter(|_| trusted.len() < hops && !trusted.iter().any(|trust| trust.answers(&error)));
+    let Some(trust) = trust else {
+        return Err(describe(error));
+    };
+    let what = if error.kind() == ErrorKind::UnknownHostKey {
+        "server key"
+    } else {
+        "certificate"
+    };
+    let host = error.hop().unwrap_or(target);
+    let fingerprint = &trust.fingerprint;
+    if !options.accept_host_key && !options.remember_host_key {
+        return Err(format!(
+            "the {what} of {host} is not trusted ({fingerprint}). Check it and run again with --accept-host-key or --remember-host-key"
+        ));
+    }
+    let notice = format!("Trusting {what} {fingerprint} of {host}");
+    Ok((trust, notice))
 }
 
 fn route(options: &Options) -> Result<Route, String> {
@@ -1035,5 +1040,94 @@ fn describe_kind(error: &hoplix_core::Error) -> String {
         }
         ErrorKind::SecretStorage => format!("the system keyring failed: {detail}"),
         ErrorKind::Other => detail.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hoplix_core::HostAddress;
+
+    // Host key trust
+
+    const JUMP: &str = "bastion.example.test";
+    const TARGET: &str = "127.0.0.1";
+    const SHARED: &str = "SHA256:shared";
+
+    fn unknown(host: &str, hop: Option<&str>) -> Error {
+        let error = Error::new(ErrorKind::UnknownHostKey, SHARED).at_address(host, 22);
+        match hop {
+            Some(label) => error.at_hop(label),
+            None => error,
+        }
+    }
+
+    fn accepting(remember: bool) -> Options {
+        Options {
+            accept_host_key: !remember,
+            remember_host_key: remember,
+            ..Options::default()
+        }
+    }
+
+    #[test]
+    fn every_hop_is_trusted_on_its_own_even_with_the_same_key() {
+        let options = accepting(false);
+        let jump_label = format!("hop@{JUMP}");
+        let (jump, notice) =
+            next_trust(unknown(JUMP, Some(&jump_label)), &[], 2, TARGET, &options).expect("jump");
+        assert_eq!(jump.address, HostAddress::new(JUMP, 22));
+        assert!(!jump.remember);
+        assert_eq!(
+            notice,
+            format!("Trusting server key {SHARED} of {jump_label}")
+        );
+
+        let trusted = vec![jump];
+        let (target, notice) =
+            next_trust(unknown(TARGET, None), &trusted, 2, TARGET, &options).expect("target");
+        assert_eq!(target.address, HostAddress::new(TARGET, 22));
+        assert_eq!(notice, format!("Trusting server key {SHARED} of {TARGET}"));
+
+        let error = next_trust(
+            unknown(JUMP, Some(&jump_label)),
+            &trusted,
+            2,
+            TARGET,
+            &options,
+        )
+        .expect_err("trusted twice");
+        assert_eq!(
+            error,
+            format!("unknown server key: {SHARED} (at {jump_label})")
+        );
+        let trusted = vec![trusted[0].clone(), target];
+        assert!(next_trust(unknown("third.test", None), &trusted, 2, TARGET, &options).is_err());
+    }
+
+    #[test]
+    fn remembering_is_asked_for_and_untrusted_keys_are_refused() {
+        let (trust, _) =
+            next_trust(unknown(TARGET, None), &[], 1, TARGET, &accepting(true)).expect("trust");
+        assert!(trust.remember);
+
+        let error = next_trust(unknown(TARGET, None), &[], 1, TARGET, &Options::default())
+            .expect_err("trusted without asking");
+        assert!(error.starts_with(&format!(
+            "the server key of {TARGET} is not trusted ({SHARED})"
+        )));
+
+        let certificate =
+            Error::new(ErrorKind::UntrustedCertificate, SHARED).at_address(TARGET, 990);
+        let (trust, notice) =
+            next_trust(certificate, &[], 1, TARGET, &accepting(false)).expect("certificate");
+        assert_eq!(trust.address, HostAddress::new(TARGET, 990));
+        assert_eq!(notice, format!("Trusting certificate {SHARED} of {TARGET}"));
+
+        let failed = Error::new(ErrorKind::ConnectionFailed, TARGET).at_address(TARGET, 22);
+        assert_eq!(
+            next_trust(failed, &[], 1, TARGET, &accepting(false)),
+            Err(format!("connection failed: {TARGET}"))
+        );
     }
 }

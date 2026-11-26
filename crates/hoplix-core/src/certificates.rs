@@ -77,24 +77,25 @@ fn tls_error(error: rustls::Error) -> Error {
 
 // Decisions
 
-fn decide(
-    fingerprint: &str,
+struct Offer<'a> {
+    host: &'a str,
+    port: u16,
+    fingerprint: &'a str,
     platform_trusted: bool,
-    stored: Option<&str>,
-    trust: Option<&HostKeyTrust>,
-) -> Decision {
-    if platform_trusted || stored == Some(fingerprint) {
+}
+
+fn decide(offer: &Offer<'_>, stored: Option<&str>, trust: Option<&HostKeyTrust>) -> Decision {
+    let fingerprint = offer.fingerprint;
+    if offer.platform_trusted || stored == Some(fingerprint) {
         return Decision::Accept;
     }
     if stored.is_some() {
         return Decision::Changed;
     }
-    match trust {
-        Some(trust) if trust.fingerprint == fingerprint && trust.remember => {
-            Decision::AcceptAndRemember
-        }
-        Some(trust) if trust.fingerprint == fingerprint => Decision::Accept,
-        _ => Decision::Untrusted,
+    match trust.filter(|trust| trust.applies_to(offer.host, offer.port, fingerprint)) {
+        Some(trust) if trust.remember => Decision::AcceptAndRemember,
+        Some(_) => Decision::Accept,
+        None => Decision::Untrusted,
     }
 }
 
@@ -102,19 +103,22 @@ impl CertificateCheck {
     fn evaluate(&self, end_entity: &CertificateDer<'_>, platform_trusted: bool) -> Result<()> {
         let fingerprint = certificate_fingerprint(end_entity.as_ref());
         let stored = stored_fingerprint(&self.store, &self.host, self.port);
-        match decide(
-            &fingerprint,
+        let offer = Offer {
+            host: &self.host,
+            port: self.port,
+            fingerprint: &fingerprint,
             platform_trusted,
-            stored.as_deref(),
-            self.trust.as_ref(),
-        ) {
+        };
+        match decide(&offer, stored.as_deref(), self.trust.as_ref()) {
             Decision::Accept => Ok(()),
             Decision::AcceptAndRemember => {
                 remember(&self.store, &self.host, self.port, &fingerprint)
                     .map_err(|error| Error::from_io(&error, &self.store.to_string_lossy()))
             }
-            Decision::Untrusted => Err(Error::new(ErrorKind::UntrustedCertificate, fingerprint)),
-            Decision::Changed => Err(Error::new(ErrorKind::CertificateChanged, fingerprint)),
+            Decision::Untrusted => Err(Error::new(ErrorKind::UntrustedCertificate, fingerprint)
+                .at_address(&self.host, self.port)),
+            Decision::Changed => Err(Error::new(ErrorKind::CertificateChanged, fingerprint)
+                .at_address(&self.host, self.port)),
         }
     }
 }
@@ -205,12 +209,36 @@ fn remember(store: &Path, host: &str, port: u16, fingerprint: &str) -> std::io::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connection::HostAddress;
+
+    const HOST: &str = "files.example.test";
+    const PORT: u16 = 990;
 
     fn trust(fingerprint: &str, remember: bool) -> HostKeyTrust {
+        trust_for(HOST, PORT, fingerprint, remember)
+    }
+
+    fn trust_for(host: &str, port: u16, fingerprint: &str, remember: bool) -> HostKeyTrust {
         HostKeyTrust {
+            address: HostAddress::new(host, port),
             fingerprint: fingerprint.to_string(),
             remember,
         }
+    }
+
+    fn decide_for(
+        fingerprint: &str,
+        platform_trusted: bool,
+        stored: Option<&str>,
+        trust: Option<&HostKeyTrust>,
+    ) -> Decision {
+        let offer = Offer {
+            host: HOST,
+            port: PORT,
+            fingerprint,
+            platform_trusted,
+        };
+        decide(&offer, stored, trust)
     }
 
     // Fingerprints
@@ -227,33 +255,49 @@ mod tests {
 
     #[test]
     fn valid_and_known_certificates_are_accepted() {
-        assert_eq!(decide("A", true, None, None), Decision::Accept);
-        assert_eq!(decide("A", true, Some("B"), None), Decision::Accept);
-        assert_eq!(decide("A", false, Some("A"), None), Decision::Accept);
+        assert_eq!(decide_for("A", true, None, None), Decision::Accept);
+        assert_eq!(decide_for("A", true, Some("B"), None), Decision::Accept);
+        assert_eq!(decide_for("A", false, Some("A"), None), Decision::Accept);
     }
 
     #[test]
     fn unknown_certificates_need_trust() {
-        assert_eq!(decide("A", false, None, None), Decision::Untrusted);
+        assert_eq!(decide_for("A", false, None, None), Decision::Untrusted);
         assert_eq!(
-            decide("A", false, None, Some(&trust("B", true))),
+            decide_for("A", false, None, Some(&trust("B", true))),
             Decision::Untrusted
         );
         assert_eq!(
-            decide("A", false, None, Some(&trust("A", false))),
+            decide_for("A", false, None, Some(&trust("A", false))),
             Decision::Accept
         );
         assert_eq!(
-            decide("A", false, None, Some(&trust("A", true))),
+            decide_for("A", false, None, Some(&trust("A", true))),
             Decision::AcceptAndRemember
         );
     }
 
     #[test]
-    fn changed_certificates_are_refused_even_when_trusted() {
-        assert_eq!(decide("A", false, Some("B"), None), Decision::Changed);
+    fn trust_only_applies_to_the_host_and_port_it_was_given_for() {
+        let proxy = trust_for("proxy.example.test", PORT, "A", true);
         assert_eq!(
-            decide("A", false, Some("B"), Some(&trust("A", true))),
+            decide_for("A", false, None, Some(&proxy)),
+            Decision::Untrusted
+        );
+        let other_port = trust_for(HOST, 21, "A", true);
+        assert_eq!(
+            decide_for("A", false, None, Some(&other_port)),
+            Decision::Untrusted
+        );
+        let upper = trust_for("FILES.example.test", PORT, "A", false);
+        assert_eq!(decide_for("A", false, None, Some(&upper)), Decision::Accept);
+    }
+
+    #[test]
+    fn changed_certificates_are_refused_even_when_trusted() {
+        assert_eq!(decide_for("A", false, Some("B"), None), Decision::Changed);
+        assert_eq!(
+            decide_for("A", false, Some("B"), Some(&trust("A", true))),
             Decision::Changed
         );
     }
