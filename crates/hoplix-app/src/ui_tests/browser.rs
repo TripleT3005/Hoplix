@@ -357,13 +357,18 @@ fn the_classic_layout_shows_two_panes() {
 
 // Action row
 
-const ACTION_LINE: f32 = 13.0 * LINE_HEIGHT + 0.5;
+const ACTION_LINE: f32 = FONT_SIZE * LINE_HEIGHT + 0.5;
+const PATH_MIN_WIDTH: f32 = 200.0;
 const OUTER_PADDING: f32 = 8.0;
 const PANE_SPACING: f32 = 8.0;
 
-fn action_labels(language: &str) -> [&'static str; 8] {
+fn action_labels(language: &str) -> [&'static str; 12] {
     if language == "de" {
         [
+            "←",
+            "→",
+            "Nach oben",
+            "Aktualisieren",
             "Neuer Ordner",
             "Umbenennen",
             "Löschen",
@@ -375,6 +380,10 @@ fn action_labels(language: &str) -> [&'static str; 8] {
         ]
     } else {
         [
+            "←",
+            "→",
+            "Up",
+            "Refresh",
             "New folder",
             "Rename",
             "Delete",
@@ -434,7 +443,24 @@ fn assert_actions_fit(harness: &mut Harness, labels: &[&str], case: &str) {
         }
     }
     for (pane, actions) in found.iter().enumerate() {
-        assert!(actions.len() >= 5, "{case}: pane {pane} shows {actions:?}");
+        assert!(actions.len() >= 9, "{case}: pane {pane} shows {actions:?}");
+        let left = OUTER_PADDING + pane as f32 * (pane_width + PANE_SPACING);
+        let tab = harness.app.panes[pane].active_tab().expect("no tab").id;
+        let path = harness.input_bounds(&crate::ui::path_input_id(tab));
+        assert!(
+            path.width >= PATH_MIN_WIDTH,
+            "{case}: the path field of pane {pane} is too narrow: {path:?}"
+        );
+        assert!(
+            path.x >= left && path.x + path.width <= left + pane_width,
+            "{case}: the path field leaves pane {pane}: {path:?}"
+        );
+        assert!(
+            actions
+                .iter()
+                .all(|action| action.intersection(&path).is_none()),
+            "{case}: the path field overlaps a button in pane {pane}"
+        );
     }
 }
 
