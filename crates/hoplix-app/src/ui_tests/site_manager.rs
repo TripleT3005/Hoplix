@@ -362,6 +362,97 @@ fn encrypted_exports_carry_passwords_and_check_the_password() {
     assert!(!wiki.save_secrets);
 }
 
+// Tree buttons
+
+const TREE_RIGHT: f32 = 12.0 + 320.0;
+const SINGLE_LINE: f32 = FONT_SIZE * LINE_HEIGHT + 0.5;
+
+fn sites_page_in(name: &str, language: &str) -> Harness {
+    let language = language.to_string();
+    let mut harness = Harness::start(name, Layout::Modern, move |root| {
+        Settings {
+            language: Some(language),
+            ..Settings::default()
+        }
+        .save(&root.config())
+        .expect("saving the settings failed");
+        let mut list = SiteList::default();
+        list.upsert(site("Web", HOST));
+        list.save(&root.config()).expect("saving the sites failed");
+    });
+    harness.send(Message::ShowPage(Page::Sites));
+    harness
+}
+
+fn assert_tree_buttons_fit(harness: &mut Harness, labels: &[&str]) {
+    let mut found: Vec<Rectangle> = Vec::new();
+    for label in labels {
+        let (bounds, visible) = harness
+            .find_texts(label)
+            .into_iter()
+            .rev()
+            .find(|(bounds, _)| bounds.x < TREE_RIGHT)
+            .unwrap_or_else(|| panic!("{label:?} is missing"));
+        let visible = visible.unwrap_or_else(|| panic!("{label:?} is hidden"));
+        assert!(
+            visible.width + 0.5 >= bounds.width && visible.height + 0.5 >= bounds.height,
+            "{label:?} is cut off: {visible:?} of {bounds:?}"
+        );
+        assert!(bounds.height <= SINGLE_LINE, "{label:?} wraps: {bounds:?}");
+        assert!(bounds.x + bounds.width <= TREE_RIGHT, "{label:?} overflows");
+        assert!(
+            found
+                .iter()
+                .all(|other| other.intersection(&bounds).is_none()),
+            "{label:?} overlaps another button"
+        );
+        found.push(bounds);
+    }
+}
+
+#[test]
+fn all_site_list_actions_fit_and_work_in_german() {
+    let mut harness = sites_page_in("tree-buttons-de", "de");
+    assert_eq!(harness.app.page, Page::Sites);
+    assert_tree_buttons_fit(
+        &mut harness,
+        &[
+            "Neuer Server",
+            "Neuer Ordner",
+            "Verbinden",
+            "Duplizieren",
+            "Löschen",
+            "Importieren …",
+            "Exportieren …",
+        ],
+    );
+    harness.click("Exportieren …");
+    assert!(matches!(harness.app.dialog, Some(Dialog::ExportSites(_))));
+    harness.key(Named::Escape);
+    assert!(harness.app.dialog.is_none());
+    harness.click("Importieren …");
+    assert!(matches!(harness.app.dialog, Some(Dialog::ImportSites(_))));
+}
+
+#[test]
+fn all_site_list_actions_fit_in_english() {
+    let mut harness = sites_page_in("tree-buttons-en", "en");
+    assert_tree_buttons_fit(
+        &mut harness,
+        &[
+            "New site",
+            "New folder",
+            "Connect",
+            "Duplicate",
+            "Delete",
+            "Import…",
+            "Export…",
+        ],
+    );
+    harness.click("Export…");
+    assert!(matches!(harness.app.dialog, Some(Dialog::ExportSites(_))));
+}
+
 // Queue
 
 #[test]

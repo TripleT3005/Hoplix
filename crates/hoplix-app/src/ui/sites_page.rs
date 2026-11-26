@@ -1,7 +1,7 @@
 use hoplix_core::{FileNameEncoding, FtpMode, Protocol, Site};
 use iced::widget::{
-    Column, Space, button, checkbox, column, container, mouse_area, pick_list, row, scrollable,
-    text, text_editor, text_input,
+    Column, Space, Text, button, checkbox, column, container, mouse_area, pick_list, row,
+    scrollable, text, text_editor, text_input,
 };
 use iced::{Alignment, Element, Length};
 
@@ -76,22 +76,12 @@ fn tree(app: &Hoplix) -> Element<'_, Message> {
     let busy = app.connect_form.connecting;
     column![
         row![
-            button(text(strings.get("sites.new")))
+            button(label(strings.get("sites.new")))
                 .style(button::primary)
                 .on_press(Message::SiteNew),
-            button(text(strings.get("sites.new_folder")))
+            button(label(strings.get("sites.new_folder")))
                 .style(theme::secondary_button)
                 .on_press(Message::SiteFolderNew),
-            Space::new().width(Length::Fill),
-            button(text(strings.get("sites.import")))
-                .style(button::text)
-                .on_press(Message::SiteExchange(ExchangeMessage::OpenImport)),
-            button(text(strings.get("sites.export")))
-                .style(button::text)
-                .on_press_maybe(
-                    (!app.sites.sites.is_empty())
-                        .then_some(Message::SiteExchange(ExchangeMessage::OpenExport))
-                ),
         ]
         .spacing(6),
         container(list)
@@ -99,7 +89,7 @@ fn tree(app: &Hoplix) -> Element<'_, Message> {
             .height(Length::Fill)
             .style(|theme| theme::pane(theme, false, false)),
         row![
-            button(text(strings.get("sites.connect")))
+            button(label(strings.get("sites.connect")))
                 .style(button::primary)
                 .on_press_maybe(
                     selected_site
@@ -107,17 +97,33 @@ fn tree(app: &Hoplix) -> Element<'_, Message> {
                         .filter(|_| !busy)
                         .map(Message::SiteConnect)
                 ),
-            button(text(strings.get("sites.duplicate")))
+            button(label(strings.get("sites.duplicate")))
                 .style(theme::secondary_button)
                 .on_press_maybe(selected_site.as_ref().map(|_| Message::SiteDuplicate)),
-            button(text(strings.get("operation.delete")))
+            button(label(strings.get("operation.delete")))
                 .style(theme::secondary_button)
                 .on_press_maybe(app.site_selection.as_ref().map(|_| Message::SiteDelete)),
+        ]
+        .spacing(6),
+        row![
+            button(label(strings.get("sites.import")))
+                .style(theme::secondary_button)
+                .on_press(Message::SiteExchange(ExchangeMessage::OpenImport)),
+            button(label(strings.get("sites.export")))
+                .style(theme::secondary_button)
+                .on_press_maybe(
+                    (!app.sites.sites.is_empty())
+                        .then_some(Message::SiteExchange(ExchangeMessage::OpenExport))
+                ),
         ]
         .spacing(6),
     ]
     .spacing(8)
     .into()
+}
+
+fn label(content: &str) -> Text<'_> {
+    text(content).wrapping(text::Wrapping::None)
 }
 
 fn site_row<'a>(app: &'a Hoplix, site: &'a Site, depth: usize) -> Element<'a, Message> {
