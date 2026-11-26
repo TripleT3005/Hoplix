@@ -14,7 +14,7 @@ use russh_sftp::protocol::{FileAttributes, OpenFlags, StatusCode};
 use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWrite};
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::connection::{Authentication, ConnectionParams, HostKeyTrust};
+use crate::connection::{Authentication, ConnectionParams, HostAddress, HostKeyTrust};
 use crate::file_system::{Reader, Writer};
 use crate::route::Route;
 use crate::{
@@ -47,7 +47,7 @@ pub struct SftpFileSystem {
     route: Route,
     options: ConnectionOptions,
     known_hosts: PathBuf,
-    host_fingerprints: Vec<String>,
+    accepted_keys: Vec<HostKeyTrust>,
     connection: AsyncMutex<Arc<Connection>>,
     label: String,
 }
@@ -79,13 +79,14 @@ impl HostKeyCheck {
         match russh::keys::check_known_hosts_path(&self.host, self.port, key, &self.known_hosts) {
             Ok(true) => Ok(()),
             Err(russh::keys::Error::KeyChanged { .. }) => {
-                Err(Error::new(ErrorKind::HostKeyChanged, fingerprint))
+                Err(Error::new(ErrorKind::HostKeyChanged, fingerprint)
+                    .at_address(&self.host, self.port))
             }
             Err(error) => Err(Error::new(ErrorKind::Other, error.to_string())),
             Ok(false) => match self
                 .trusted
                 .iter()
-                .find(|trust| trust.fingerprint == fingerprint)
+                .find(|trust| trust.applies_to(&self.host, self.port, &fingerprint))
             {
                 Some(trust) => {
                     if trust.remember {
@@ -99,7 +100,8 @@ impl HostKeyCheck {
                     }
                     Ok(())
                 }
-                None => Err(Error::new(ErrorKind::UnknownHostKey, fingerprint)),
+                None => Err(Error::new(ErrorKind::UnknownHostKey, fingerprint)
+                    .at_address(&self.host, self.port)),
             },
         }
     }
@@ -170,14 +172,14 @@ impl SftpFileSystem {
         known_hosts: &Path,
         trusted: &[HostKeyTrust],
     ) -> Result<Self> {
-        let (connection, host_fingerprints) =
+        let (connection, accepted_keys) =
             establish(params, route, options, known_hosts, trusted.to_vec()).await?;
         Ok(Self {
             params: params.clone(),
             route: route.clone(),
             options: options.clone(),
             known_hosts: known_hosts.to_path_buf(),
-            host_fingerprints,
+            accepted_keys,
             connection: AsyncMutex::new(Arc::new(connection)),
             label: params.label(),
         })
@@ -206,20 +208,12 @@ impl SftpFileSystem {
     }
 
     async fn reestablish(&self) -> Result<Connection> {
-        let trusted = self
-            .host_fingerprints
-            .iter()
-            .map(|fingerprint| HostKeyTrust {
-                fingerprint: fingerprint.clone(),
-                remember: false,
-            })
-            .collect();
         establish(
             &self.params,
             &self.route,
             &self.options,
             &self.known_hosts,
-            trusted,
+            self.accepted_keys.clone(),
         )
         .await
         .map(|(connection, _)| connection)
@@ -247,7 +241,7 @@ async fn establish(
     options: &ConnectionOptions,
     known_hosts: &Path,
     trusted: Vec<HostKeyTrust>,
-) -> Result<(Connection, Vec<String>)> {
+) -> Result<(Connection, Vec<HostKeyTrust>)> {
     tokio::time::timeout(
         options.timeout_or(CONNECT_TIMEOUT),
         open_connection(params, route, options, known_hosts, trusted),
@@ -297,13 +291,13 @@ async fn open_connection(
     options: &ConnectionOptions,
     known_hosts: &Path,
     trusted: Vec<HostKeyTrust>,
-) -> Result<(Connection, Vec<String>)> {
+) -> Result<(Connection, Vec<HostKeyTrust>)> {
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(INACTIVITY_TIMEOUT),
         keepalive_interval: Some(options.keepalive().unwrap_or(KEEPALIVE_INTERVAL)),
         ..client::Config::default()
     });
-    let mut fingerprints = Vec::new();
+    let mut accepted_keys = Vec::new();
     let mut jumps: Vec<Handle<HostKeyCheck>> = Vec::new();
     let mut target = None;
     for hop in hops(params, route) {
@@ -325,7 +319,7 @@ async fn open_connection(
         };
         let mut handle = connected?;
         if let Some(fingerprint) = accepted.lock().ok().and_then(|mut slot| slot.take()) {
-            fingerprints.push(fingerprint);
+            accepted_keys.push(accepted_key(&hop, fingerprint));
         }
         authenticate(&mut handle, &hop)
             .await
@@ -356,8 +350,16 @@ async fn open_connection(
             handle,
             jumps,
         },
-        fingerprints,
+        accepted_keys,
     ))
+}
+
+fn accepted_key(hop: &Hop<'_>, fingerprint: String) -> HostKeyTrust {
+    HostKeyTrust {
+        address: HostAddress::new(hop.host, hop.port),
+        fingerprint,
+        remember: false,
+    }
 }
 
 fn host_key_check(
@@ -782,6 +784,129 @@ fn connection_error(host: &str, error: &russh::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{JumpHost, Protocol};
+
+    // Host keys
+
+    const SHARED_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+    const JUMP: &str = "bastion.example.test";
+    const TARGET: &str = "127.0.0.1";
+
+    fn shared_key() -> PublicKey {
+        PublicKey::from_openssh(SHARED_KEY).expect("invalid test key")
+    }
+
+    fn known_hosts(name: &str) -> PathBuf {
+        let directory =
+            std::env::temp_dir().join(format!("hoplix-sftp-hops-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        directory.join("known_hosts")
+    }
+
+    fn routed() -> (ConnectionParams, Route) {
+        let params = ConnectionParams {
+            protocol: Protocol::Sftp,
+            host: TARGET.to_string(),
+            port: 22,
+            username: "demo".to_string(),
+            authentication: Authentication::Agent,
+        };
+        let route = Route {
+            proxy: None,
+            jump_hosts: vec![JumpHost {
+                host: JUMP.to_string(),
+                port: 22,
+                username: "hop".to_string(),
+                authentication: Authentication::Agent,
+            }],
+        };
+        (params, route)
+    }
+
+    fn verify_hops(known_hosts: &Path, trusted: &[HostKeyTrust]) -> Vec<Result<()>> {
+        let (params, route) = routed();
+        hops(&params, &route)
+            .iter()
+            .map(|hop| {
+                host_key_check(hop, known_hosts, trusted)
+                    .0
+                    .verify(&shared_key())
+            })
+            .collect()
+    }
+
+    fn jump_trust(remember: bool) -> HostKeyTrust {
+        HostKeyTrust {
+            address: HostAddress::new(JUMP, 22),
+            fingerprint: fingerprint(&shared_key()),
+            remember,
+        }
+    }
+
+    fn is_known(known_hosts: &Path, host: &str) -> bool {
+        russh::keys::check_known_hosts_path(host, 22, &shared_key(), known_hosts)
+            .is_ok_and(|known| known)
+    }
+
+    #[test]
+    fn a_trusted_jump_host_key_does_not_trust_the_target() {
+        let known_hosts = known_hosts("once");
+        let results = verify_hops(&known_hosts, &[jump_trust(false)]);
+        assert_eq!(results[0], Ok(()));
+        let error = results[1].clone().expect_err("the target was trusted");
+        assert_eq!(error.kind(), ErrorKind::UnknownHostKey);
+        assert_eq!(error.detail(), fingerprint(&shared_key()));
+        assert_eq!(error.address(), Some(&HostAddress::new(TARGET, 22)));
+        assert!(!known_hosts.exists());
+
+        let target = HostKeyTrust::for_error(&error, false).expect("no trust");
+        let results = verify_hops(&known_hosts, &[jump_trust(false), target]);
+        assert!(results.iter().all(Result::is_ok), "{results:?}");
+    }
+
+    #[test]
+    fn remembering_only_learns_the_confirmed_host() {
+        let known_hosts = known_hosts("remember");
+        let results = verify_hops(&known_hosts, &[jump_trust(true)]);
+        assert_eq!(results[0], Ok(()));
+        assert_eq!(
+            results[1].as_ref().map_err(Error::kind),
+            Err(ErrorKind::UnknownHostKey)
+        );
+        assert!(is_known(&known_hosts, JUMP));
+        assert!(!is_known(&known_hosts, TARGET));
+        let results = verify_hops(&known_hosts, &[]);
+        assert_eq!(results[0], Ok(()));
+        assert!(results[1].is_err());
+        if let Some(directory) = known_hosts.parent() {
+            std::fs::remove_dir_all(directory).expect("cleaning up failed");
+        }
+    }
+
+    #[test]
+    fn reconnecting_keeps_the_trust_of_each_hop() {
+        let (params, route) = routed();
+        let accepted: Vec<HostKeyTrust> = hops(&params, &route)
+            .iter()
+            .map(|hop| accepted_key(hop, fingerprint(&shared_key())))
+            .collect();
+        assert_eq!(
+            accepted
+                .iter()
+                .map(|trust| (trust.address.host.as_str(), trust.remember))
+                .collect::<Vec<_>>(),
+            [(JUMP, false), (TARGET, false)]
+        );
+        let known_hosts = known_hosts("reconnect");
+        let results = verify_hops(&known_hosts, &accepted);
+        assert!(results.iter().all(Result::is_ok), "{results:?}");
+        let results = verify_hops(&known_hosts, &accepted[..1]);
+        assert!(results[0].is_ok() && results[1].is_err());
+        assert!(!known_hosts.exists());
+    }
+
+    // Paths
 
     #[test]
     fn posix_paths_join_and_split() {

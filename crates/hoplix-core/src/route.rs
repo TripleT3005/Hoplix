@@ -99,7 +99,11 @@ pub async fn connect_via_with(
                 route.proxy.as_ref(),
                 options,
                 &trust_store.certificates,
-                trusted.last().cloned(),
+                trusted
+                    .iter()
+                    .rev()
+                    .find(|trust| trust.address.is(&params.host, params.port))
+                    .cloned(),
             )
             .await?;
             Ok(Arc::new(file_system))
