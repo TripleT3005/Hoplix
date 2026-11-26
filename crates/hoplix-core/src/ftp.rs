@@ -1103,14 +1103,14 @@ mod tests {
     #[test]
     fn listings_give_permissions_and_owners() {
         let details =
-            list_details("-rwsr-x---    1 ashdeb   www-data      250 Mar 03  2025 report 2026.pdf")
+            list_details("-rwsr-x---    1 demo     www-data      250 Mar 03  2025 report 2026.pdf")
                 .expect("not parsed");
         assert_eq!(
             details,
             UnixDetails {
                 name: "report 2026.pdf".to_string(),
                 permissions: Some(0o4750),
-                owner: Some("ashdeb".to_string()),
+                owner: Some("demo".to_string()),
                 group: Some("www-data".to_string()),
             }
         );
@@ -1593,7 +1593,7 @@ mod tests {
             .await
             .expect("properties failed");
         assert_eq!(properties.permissions, Some(0o640));
-        assert_eq!(properties.owner.as_deref(), Some("ashdeb"));
+        assert_eq!(properties.owner.as_deref(), Some("demo"));
         assert_eq!(properties.group.as_deref(), Some("staff"));
         file_system.close().await;
     }
