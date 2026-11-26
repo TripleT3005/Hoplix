@@ -78,7 +78,10 @@ pub struct TestRoot {
 
 impl TestRoot {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("hoplix-ui-{name}-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("hoplix-ui-{name}-{}-{number}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         for folder in ["config", "data", "remote", "temp"] {
             fs::create_dir_all(path.join(folder)).expect("creating the test folders failed");
