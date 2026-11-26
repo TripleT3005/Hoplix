@@ -24,6 +24,7 @@ pub enum ErrorKind {
     WrongMasterPassword,
     VaultLocked,
     SecretStorage,
+    Unsupported,
     Other,
 }
 

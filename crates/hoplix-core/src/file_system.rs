@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
-use crate::{Entry, Error, ErrorKind, Result};
+use crate::{Entry, Error, ErrorKind, Properties, Result};
 
 // Types
 
@@ -45,6 +45,20 @@ pub trait FileSystem: Debug + Send + Sync {
     fn set_modified(&self, path: &str, _modified: SystemTime) -> BoxFuture<'_, Result<()>> {
         let path = path.to_string();
         Box::pin(async move { Err(Error::new(ErrorKind::Other, format!("{path}: unsupported"))) })
+    }
+
+    fn properties(&self, path: &str) -> BoxFuture<'_, Result<Properties>> {
+        let path = path.to_string();
+        Box::pin(async move { self.metadata(&path).await.map(Properties::from_entry) })
+    }
+
+    fn can_set_permissions(&self) -> bool {
+        false
+    }
+
+    fn set_permissions(&self, path: &str, _mode: u32) -> BoxFuture<'_, Result<()>> {
+        let path = path.to_string();
+        Box::pin(async move { Err(Error::new(ErrorKind::Unsupported, path)) })
     }
 
     fn close(&self) -> BoxFuture<'_, ()> {

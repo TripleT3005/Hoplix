@@ -605,6 +605,7 @@ mod tests {
         assert!(imported.save_secrets);
         assert_eq!(imported.options.ftp_mode, FtpMode::Active);
         assert_eq!(imported.max_transfers, Some(2));
+        assert_eq!(imported.bookmarks, web.bookmarks);
         assert_eq!(summary.stored, [(secret_name(&imported.id), secret)]);
         assert!(
             target

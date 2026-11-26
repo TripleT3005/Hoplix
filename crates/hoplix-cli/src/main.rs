@@ -1039,6 +1039,7 @@ fn describe_kind(error: &hoplix_core::Error) -> String {
             "the saved passwords are locked: pass --master-password-env <name>".to_string()
         }
         ErrorKind::SecretStorage => format!("the system keyring failed: {detail}"),
+        ErrorKind::Unsupported => format!("not supported here: {detail}"),
         ErrorKind::Other => detail.to_string(),
     }
 }
