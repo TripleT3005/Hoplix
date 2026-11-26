@@ -27,6 +27,10 @@ const NAME_GAP: f32 = 8.0;
 const MODIFIED_GAP: f32 = 16.0;
 const SCROLLBAR_GAP: f32 = 12.0;
 const PREVIEW_GAP: f32 = 2.0;
+const PATH_MIN_WIDTH: f32 = 220.0;
+const TOOLBAR_SPACING: f32 = 6.0;
+const BUTTON_PADDING: f32 = 20.0;
+const BUTTON_CHAR_WIDTH: f32 = 16.0 * 0.6;
 
 // Columns
 
@@ -175,38 +179,84 @@ fn tab_bar<'a>(app: &'a Hoplix, index: usize, pane: &'a Pane) -> Element<'a, Mes
     .into()
 }
 
+// Toolbar
+
+fn toolbar<'a>(app: &'a Hoplix, tab: &'a Tab) -> Element<'a, Message> {
+    let strings = &app.strings;
+    let labels = [
+        "←",
+        "→",
+        strings.get("browser.up"),
+        strings.get("browser.refresh"),
+    ];
+    let buttons: f32 = labels
+        .iter()
+        .map(|label| BUTTON_PADDING + label.chars().count() as f32 * BUTTON_CHAR_WIDTH)
+        .sum();
+    let picker = if app.tab_bookmarks(tab).is_some() {
+        ui::file_list::BOOKMARKS_WIDTH + TOOLBAR_SPACING
+    } else {
+        0.0
+    };
+    let needed = buttons + picker + PATH_MIN_WIDTH + labels.len() as f32 * TOOLBAR_SPACING;
+    responsive(move |size| {
+        let id = tab.id;
+        let [back, forward] = ui::file_list::history_buttons(tab);
+        let buttons = row![
+            back,
+            forward,
+            button(action_text(strings.get("browser.up")))
+                .style(theme::secondary_button)
+                .on_press_maybe(
+                    tab.file_system
+                        .parent(&tab.path)
+                        .map(|_| Message::Tab(id, TabMessage::Up))
+                ),
+            button(action_text(strings.get("browser.refresh")))
+                .style(theme::secondary_button)
+                .on_press_maybe(
+                    (!tab.path.is_empty()).then_some(Message::Tab(id, TabMessage::Refresh))
+                ),
+        ]
+        .spacing(TOOLBAR_SPACING)
+        .align_y(Alignment::Center);
+        let input = text_input(strings.get("browser.path"), &tab.path_input)
+            .id(ui::path_input_id(id))
+            .on_input(move |path| Message::Tab(id, TabMessage::PathEdited(path)))
+            .on_submit(Message::Tab(id, TabMessage::PathSubmitted))
+            .padding(6);
+        let picker = ui::file_list::bookmark_picker(app, tab);
+        if size.width >= needed {
+            row![buttons, input]
+                .push(picker)
+                .spacing(TOOLBAR_SPACING)
+                .align_y(Alignment::Center)
+                .into()
+        } else {
+            column![
+                row![buttons, Space::new().width(Length::Fill)]
+                    .push(picker)
+                    .spacing(TOOLBAR_SPACING)
+                    .align_y(Alignment::Center),
+                input,
+            ]
+            .spacing(TOOLBAR_SPACING)
+            .into()
+        }
+    })
+    .height(Length::Shrink)
+    .into()
+}
+
+fn action_text<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
+    text(label).wrapping(text::Wrapping::None)
+}
+
 // Tab content
 
 fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Message> {
     let strings = &app.strings;
     let id = tab.id;
-    let [back, forward] = ui::file_list::history_buttons(tab);
-    let mut toolbar = row![
-        back,
-        forward,
-        button(text(strings.get("browser.up")))
-            .style(theme::secondary_button)
-            .on_press_maybe(
-                tab.file_system
-                    .parent(&tab.path)
-                    .map(|_| Message::Tab(id, TabMessage::Up))
-            ),
-        button(text(strings.get("browser.refresh")))
-            .style(theme::secondary_button)
-            .on_press_maybe(
-                (!tab.path.is_empty()).then_some(Message::Tab(id, TabMessage::Refresh))
-            ),
-        text_input(strings.get("browser.path"), &tab.path_input)
-            .id(ui::path_input_id(id))
-            .on_input(move |path| Message::Tab(id, TabMessage::PathEdited(path)))
-            .on_submit(Message::Tab(id, TabMessage::PathSubmitted))
-            .padding(6),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
-    if let Some(picker) = ui::file_list::bookmark_picker(app, tab) {
-        toolbar = toolbar.push(picker);
-    }
     let ready = !tab.path.is_empty() && tab.state != LoadState::Loading;
     let has_single = ready && tab.selected_entry().is_some();
     let has_any = ready && !tab.selection.is_empty();
@@ -215,26 +265,25 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
             .selected_entry()
             .is_some_and(|entry| !entry.is_directory());
     let mut actions = row![
-        button(text(strings.get("operation.new_folder")).size(13))
+        button(action_label(strings.get("operation.new_folder")))
             .style(button::text)
             .on_press_maybe(ready.then_some(Message::Tab(id, TabMessage::NewFolder))),
-        button(text(strings.get("operation.rename")).size(13))
+        button(action_label(strings.get("operation.rename")))
             .style(button::text)
             .on_press_maybe(has_single.then_some(Message::Tab(id, TabMessage::Rename))),
-        button(text(strings.get("operation.delete")).size(13))
+        button(action_label(strings.get("operation.delete")))
             .style(button::text)
             .on_press_maybe(has_any.then_some(Message::Tab(id, TabMessage::Delete))),
-        button(text(strings.get("operation.edit")).size(13))
+        button(action_label(strings.get("operation.edit")))
             .style(button::text)
             .on_press_maybe(has_file.then_some(Message::Tab(id, TabMessage::Edit))),
-        button(text(strings.get("preview.toggle")).size(13))
+        button(action_label(strings.get("preview.toggle")))
             .style(if app.preview.open {
                 theme::secondary_button
             } else {
                 button::text
             })
             .on_press(Message::Preview(PreviewMessage::Toggle)),
-        Space::new().width(Length::Fill),
     ]
     .spacing(4)
     .align_y(Alignment::Center);
@@ -245,7 +294,7 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
             format!("← {}", strings.get("transfer.copy_to_other"))
         };
         actions = actions.push(
-            button(text(label).size(13))
+            button(action_label(label))
                 .style(theme::secondary_button)
                 .on_press_maybe(has_any.then_some(Message::Tab(id, TabMessage::CopyToOtherPane))),
         );
@@ -269,7 +318,7 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
             Element::from(picker)
         } else {
             Element::from(
-                button(text(strings.get("transfer.copy_to")).size(13))
+                button(action_label(strings.get("transfer.copy_to")))
                     .width(DESTINATION_WIDTH)
                     .style(theme::secondary_button),
             )
@@ -287,12 +336,18 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
         .align_x(Alignment::Center);
         return container(message).center(Length::Fill).into();
     }
-    let mut content = column![toolbar, actions].spacing(6).padding(4);
+    let mut content = column![toolbar(app, tab), actions.wrap().vertical_spacing(4)]
+        .spacing(6)
+        .padding(4);
     if let LoadState::Failed(error) = &tab.state {
         content = content.push(ui::notice(ui::error_text(strings, error)));
     }
     content = content.push(ui::file_list::filter_row(strings, tab));
     content.push(content_area(app, tab)).into()
+}
+
+fn action_label<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
+    text(label).size(13).wrapping(text::Wrapping::None)
 }
 
 // Content area

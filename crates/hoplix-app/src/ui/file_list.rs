@@ -15,7 +15,7 @@ use crate::{format, local_time, theme, ui};
 
 // Constants
 
-const BOOKMARKS_WIDTH: f32 = 150.0;
+pub(super) const BOOKMARKS_WIDTH: f32 = 150.0;
 const RESULT_SIZE_WIDTH: f32 = 90.0;
 const RESULT_MODIFIED_WIDTH: f32 = 130.0;
 const LABEL_WIDTH: f32 = 120.0;

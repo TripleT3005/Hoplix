@@ -354,3 +354,129 @@ fn the_classic_layout_shows_two_panes() {
     assert_eq!(harness.app.panes[0].tabs.len(), 1);
     assert_eq!(harness.app.page, Page::Browser);
 }
+
+// Action row
+
+const ACTION_LINE: f32 = FONT_SIZE * LINE_HEIGHT + 0.5;
+const PATH_MIN_WIDTH: f32 = 200.0;
+const OUTER_PADDING: f32 = 8.0;
+const PANE_SPACING: f32 = 8.0;
+
+fn action_labels(language: &str) -> [&'static str; 12] {
+    if language == "de" {
+        [
+            "←",
+            "→",
+            "Nach oben",
+            "Aktualisieren",
+            "Neuer Ordner",
+            "Umbenennen",
+            "Löschen",
+            "Bearbeiten",
+            "Vorschau (F3)",
+            "Zur anderen Seite kopieren →",
+            "← Zur anderen Seite kopieren",
+            "Kopieren nach …",
+        ]
+    } else {
+        [
+            "←",
+            "→",
+            "Up",
+            "Refresh",
+            "New folder",
+            "Rename",
+            "Delete",
+            "Edit",
+            "Preview (F3)",
+            "Copy to other side →",
+            "← Copy to other side",
+            "Copy to…",
+        ]
+    }
+}
+
+fn browser_in(name: &str, layout: Layout, language: &str) -> Harness {
+    let language = language.to_string();
+    Harness::start(name, layout, move |root| {
+        Settings {
+            language: Some(language),
+            layout,
+            ..Settings::default()
+        }
+        .save(&root.config())
+        .expect("saving the settings failed");
+        write_files(&root.data(), &["a.txt", "docs/"]);
+    })
+}
+
+fn assert_actions_fit(harness: &mut Harness, labels: &[&str], case: &str) {
+    let width = harness.viewport.width;
+    let count = harness.app.panes.len();
+    let pane_width =
+        (width - 2.0 * OUTER_PADDING - PANE_SPACING * (count - 1) as f32) / count as f32;
+    let mut found: Vec<Vec<Rectangle>> = vec![Vec::new(); count];
+    for label in labels {
+        for (bounds, visible) in harness.find_texts(label) {
+            let visible = visible.unwrap_or_else(|| panic!("{case}: {label:?} is hidden"));
+            assert!(
+                visible.width + 0.5 >= bounds.width && visible.height + 0.5 >= bounds.height,
+                "{case}: {label:?} is cut off: {visible:?} of {bounds:?}"
+            );
+            assert!(
+                bounds.height <= ACTION_LINE,
+                "{case}: {label:?} wraps: {bounds:?}"
+            );
+            let pane = ((bounds.x - OUTER_PADDING) / (pane_width + PANE_SPACING)) as usize;
+            let left = OUTER_PADDING + pane as f32 * (pane_width + PANE_SPACING);
+            assert!(
+                bounds.x >= left && bounds.x + bounds.width <= left + pane_width,
+                "{case}: {label:?} leaves pane {pane}: {bounds:?}"
+            );
+            assert!(
+                found[pane]
+                    .iter()
+                    .all(|other| other.intersection(&bounds).is_none()),
+                "{case}: {label:?} overlaps another action"
+            );
+            found[pane].push(bounds);
+        }
+    }
+    for (pane, actions) in found.iter().enumerate() {
+        assert!(actions.len() >= 9, "{case}: pane {pane} shows {actions:?}");
+        let left = OUTER_PADDING + pane as f32 * (pane_width + PANE_SPACING);
+        let tab = harness.app.panes[pane].active_tab().expect("no tab").id;
+        let path = harness.input_bounds(&crate::ui::path_input_id(tab));
+        assert!(
+            path.width >= PATH_MIN_WIDTH,
+            "{case}: the path field of pane {pane} is too narrow: {path:?}"
+        );
+        assert!(
+            path.x >= left && path.x + path.width <= left + pane_width,
+            "{case}: the path field leaves pane {pane}: {path:?}"
+        );
+        assert!(
+            actions
+                .iter()
+                .all(|action| action.intersection(&path).is_none()),
+            "{case}: the path field overlaps a button in pane {pane}"
+        );
+    }
+}
+
+#[test]
+fn the_action_row_fits_its_pane_in_all_layouts_and_languages() {
+    for language in ["en", "de"] {
+        let labels = action_labels(language);
+        for layout in [Layout::Classic, Layout::Modern] {
+            for size in [Size::new(1000.0, 700.0), Size::new(1500.0, 950.0)] {
+                let case = format!("{language}-{layout:?}-{}", size.width);
+                let mut harness = browser_in(&format!("actions-{case}"), layout, language);
+                harness.resize(size);
+                assert_actions_fit(&mut harness, &labels, &case);
+                harness.key(Named::F3);
+                assert_actions_fit(&mut harness, &labels, &case);
+            }
+        }
+    }
+}
