@@ -215,26 +215,25 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
             .selected_entry()
             .is_some_and(|entry| !entry.is_directory());
     let mut actions = row![
-        button(text(strings.get("operation.new_folder")).size(13))
+        button(action_label(strings.get("operation.new_folder")))
             .style(button::text)
             .on_press_maybe(ready.then_some(Message::Tab(id, TabMessage::NewFolder))),
-        button(text(strings.get("operation.rename")).size(13))
+        button(action_label(strings.get("operation.rename")))
             .style(button::text)
             .on_press_maybe(has_single.then_some(Message::Tab(id, TabMessage::Rename))),
-        button(text(strings.get("operation.delete")).size(13))
+        button(action_label(strings.get("operation.delete")))
             .style(button::text)
             .on_press_maybe(has_any.then_some(Message::Tab(id, TabMessage::Delete))),
-        button(text(strings.get("operation.edit")).size(13))
+        button(action_label(strings.get("operation.edit")))
             .style(button::text)
             .on_press_maybe(has_file.then_some(Message::Tab(id, TabMessage::Edit))),
-        button(text(strings.get("preview.toggle")).size(13))
+        button(action_label(strings.get("preview.toggle")))
             .style(if app.preview.open {
                 theme::secondary_button
             } else {
                 button::text
             })
             .on_press(Message::Preview(PreviewMessage::Toggle)),
-        Space::new().width(Length::Fill),
     ]
     .spacing(4)
     .align_y(Alignment::Center);
@@ -245,7 +244,7 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
             format!("← {}", strings.get("transfer.copy_to_other"))
         };
         actions = actions.push(
-            button(text(label).size(13))
+            button(action_label(label))
                 .style(theme::secondary_button)
                 .on_press_maybe(has_any.then_some(Message::Tab(id, TabMessage::CopyToOtherPane))),
         );
@@ -269,7 +268,7 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
             Element::from(picker)
         } else {
             Element::from(
-                button(text(strings.get("transfer.copy_to")).size(13))
+                button(action_label(strings.get("transfer.copy_to")))
                     .width(DESTINATION_WIDTH)
                     .style(theme::secondary_button),
             )
@@ -287,12 +286,18 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
         .align_x(Alignment::Center);
         return container(message).center(Length::Fill).into();
     }
-    let mut content = column![toolbar, actions].spacing(6).padding(4);
+    let mut content = column![toolbar, actions.wrap().vertical_spacing(4)]
+        .spacing(6)
+        .padding(4);
     if let LoadState::Failed(error) = &tab.state {
         content = content.push(ui::notice(ui::error_text(strings, error)));
     }
     content = content.push(ui::file_list::filter_row(strings, tab));
     content.push(content_area(app, tab)).into()
+}
+
+fn action_label<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
+    text(label).size(13).wrapping(text::Wrapping::None)
 }
 
 // Content area
