@@ -12,6 +12,7 @@ use crate::app::{Hoplix, Message};
 use crate::edits::EditMessage;
 use crate::i18n::Strings;
 use crate::local_time;
+use crate::preview::{LIMIT_CHOICES, PreviewMessage};
 use crate::settings::{
     Layout, MAX_PARALLEL_TRANSFERS, MAX_RETRY_ATTEMPTS, MAX_RETRY_DELAY, MIN_RETRY_DELAY, RateUnit,
     SpeedLimit, ThemePreference,
@@ -42,6 +43,7 @@ pub fn view(app: &Hoplix) -> Element<'_, Message> {
         connections(app),
         passwords(app),
         editor(app),
+        preview(app),
         updates(app),
     ]
     .spacing(32)
@@ -373,6 +375,40 @@ fn editor(app: &Hoplix) -> Element<'_, Message> {
                     .into(),
             ),
             hint(strings.get("settings.editor.hint")),
+        ],
+    )
+}
+
+fn preview(app: &Hoplix) -> Element<'_, Message> {
+    let strings = &app.strings;
+    let limits: Vec<Choice<u32>> = LIMIT_CHOICES
+        .into_iter()
+        .map(|value| Choice {
+            value,
+            label: if value == 0 {
+                strings.get("settings.preview.ask").to_string()
+            } else {
+                strings.format("settings.preview.mib", &[("count", &value.to_string())])
+            },
+        })
+        .collect();
+    let current = selected(&limits, &app.settings.preview_limit);
+    section(
+        strings.get("settings.section.preview"),
+        vec![
+            setting(
+                strings.get("settings.preview.limit"),
+                pick_list(limits, current, |choice| {
+                    Message::Preview(PreviewMessage::LimitSelected(choice.value))
+                })
+                .placeholder(strings.format(
+                    "settings.preview.mib",
+                    &[("count", &app.settings.preview_limit.to_string())],
+                ))
+                .width(PICKER_WIDTH)
+                .into(),
+            ),
+            hint(strings.get("settings.preview.hint")),
         ],
     )
 }

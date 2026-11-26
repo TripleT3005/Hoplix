@@ -6,6 +6,10 @@ use std::sync::Arc;
 use hoplix_core::key_value::{self, Section};
 use hoplix_core::{BoxFuture, Entry, Error, ErrorKind, FileSystem, Reader, Result, Writer};
 
+use crate::preview::{
+    DEFAULT_WIDTH, MAX_WIDTH as PREVIEW_MAX_WIDTH, MIN_WIDTH as PREVIEW_MIN_WIDTH,
+};
+
 // Constants
 
 pub const SESSION_FILE: &str = "session.conf";
@@ -39,10 +43,17 @@ pub struct SavedTab {
     pub active: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PreviewLayout {
+    pub open: bool,
+    pub width: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Session {
     pub window: Option<WindowState>,
     pub focused_pane: usize,
+    pub preview: Option<PreviewLayout>,
     pub tabs: Vec<SavedTab>,
 }
 
@@ -72,6 +83,7 @@ impl Session {
         if let Some(top) = sections.first() {
             session.window = window_from(top);
             session.focused_pane = number(top, "focused_pane").unwrap_or(0);
+            session.preview = preview_from(top);
         }
         session.tabs = sections
             .iter()
@@ -93,6 +105,10 @@ impl Session {
             pairs.push(("window.maximized", window.maximized.to_string()));
         }
         pairs.push(("focused_pane", self.focused_pane.to_string()));
+        if let Some(preview) = &self.preview {
+            pairs.push(("preview.open", preview.open.to_string()));
+            pairs.push(("preview.width", format!("{:.0}", preview.width)));
+        }
         let mut text = key_value::write(&pairs);
         for tab in &self.tabs {
             let (kind, site) = match &tab.origin {
@@ -252,6 +268,16 @@ fn window_from(section: &Section) -> Option<WindowState> {
     })
 }
 
+fn preview_from(section: &Section) -> Option<PreviewLayout> {
+    let open = section.get("preview.open")? == "true";
+    let width = number::<f32>(section, "preview.width")
+        .filter(|width| width.is_finite())
+        .map_or(DEFAULT_WIDTH, |width| {
+            width.clamp(PREVIEW_MIN_WIDTH, PREVIEW_MAX_WIDTH)
+        });
+    Some(PreviewLayout { open, width })
+}
+
 fn tab_from(section: &Section) -> Option<SavedTab> {
     let origin = match section.get("kind")? {
         "local" => TabOrigin::Local,
@@ -281,6 +307,10 @@ mod tests {
                 maximized: true,
             }),
             focused_pane: 1,
+            preview: Some(PreviewLayout {
+                open: true,
+                width: 420.0,
+            }),
             tabs: vec![
                 SavedTab {
                     pane: 0,
@@ -305,6 +335,7 @@ mod tests {
         let parsed = Session::parse(&session.to_text());
         assert_eq!(parsed.window, session.window);
         assert_eq!(parsed.focused_pane, 1);
+        assert_eq!(parsed.preview, session.preview);
         assert_eq!(parsed.tabs.len(), 2);
         assert_eq!(parsed.tabs[0], session.tabs[0]);
         assert_eq!(parsed.tabs[1], session.tabs[2]);
@@ -322,6 +353,23 @@ mod tests {
         let tiny = Session::parse("window.width = 10\nwindow.height = 20\n");
         let window = tiny.window.expect("window missing");
         assert_eq!((window.width, window.height), (MIN_WIDTH, MIN_HEIGHT));
+        let preview = Session::parse("preview.open = true\npreview.width = 5\n").preview;
+        assert_eq!(
+            preview,
+            Some(PreviewLayout {
+                open: true,
+                width: PREVIEW_MIN_WIDTH
+            })
+        );
+        let preview = Session::parse("preview.open = no\npreview.width = wide\n").preview;
+        assert_eq!(
+            preview,
+            Some(PreviewLayout {
+                open: false,
+                width: DEFAULT_WIDTH
+            })
+        );
+        assert_eq!(parsed.preview, None);
     }
 
     #[test]

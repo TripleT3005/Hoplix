@@ -592,3 +592,33 @@ properties.apply_folders = Folders
 properties.applying = Changing permissions…
 properties.apply = Apply
 properties.close = Close
+
+# Preview
+preview.toggle = Preview (F3)
+preview.title = Preview
+preview.nothing = Select a file to preview it.
+preview.several = {count} items selected.
+preview.folder = Folders have no preview.
+preview.loading = Loading preview…
+preview.none = No preview for this type of file.
+preview.large = The file is larger than {limit}, so its preview is only loaded on request.
+preview.load = Load preview
+preview.lines.one = 1 line
+preview.lines.other = {count} lines
+preview.truncated = Only the first {size} are shown.
+command.toggle_preview = Show or hide the preview
+settings.section.preview = Preview
+settings.preview.limit = Load from servers
+settings.preview.ask = Only on request
+settings.preview.mib = Files up to {count} MiB
+settings.preview.hint = The preview (F3) shows the beginning of text files, at most 256 KiB. Files on a server are only read while the preview is open and the selection rests for a moment, and only into memory; nothing is saved on disk. Larger files get a Load preview button.
+
+# Dropping files
+drop.hint = Release to copy the files into {folder}.
+drop.unavailable = Files can only be dropped onto an open folder.
+drop.unreadable = The name of a dropped file could not be read.
+
+# Copying paths
+command.copy_path = Copy path
+copy_path.copied.one = Path copied to the clipboard.
+copy_path.copied.other = {count} paths copied to the clipboard.

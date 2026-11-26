@@ -6,6 +6,7 @@ mod fakes;
 mod file_list;
 mod history;
 mod palette;
+mod preview;
 mod queue;
 mod routes;
 mod secrets;
@@ -77,7 +78,10 @@ pub struct TestRoot {
 
 impl TestRoot {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("hoplix-ui-{name}-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("hoplix-ui-{name}-{}-{number}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         for folder in ["config", "data", "remote", "temp"] {
             fs::create_dir_all(path.join(folder)).expect("creating the test folders failed");
@@ -140,6 +144,7 @@ pub struct Harness {
     driving: bool,
     pub opened: Arc<Mutex<Vec<(PathBuf, String)>>>,
     pub updates: Arc<fakes::Updates>,
+    pub clipboard: Vec<String>,
 }
 
 impl Harness {
@@ -175,6 +180,7 @@ impl Harness {
             temp_dir: root.temp(),
             update_source: fakes::update_source(Arc::clone(&updates)),
             update_delay: Duration::ZERO,
+            preview_delay: Duration::ZERO,
         };
         let (app, task) = Hoplix::load(Some(root.config()), services);
         let transfer_events = app.transfers.subscribe();
@@ -200,6 +206,7 @@ impl Harness {
             driving: false,
             opened,
             updates,
+            clipboard: Vec::new(),
         };
         harness.run(task);
         harness.open_window();
@@ -251,6 +258,10 @@ impl Harness {
                     self.run(task);
                 }
                 Some(Action::Widget(operation)) => self.operate(operation),
+                Some(Action::Clipboard(iced_test::runtime::clipboard::Action::Write {
+                    contents,
+                    ..
+                })) => self.clipboard.push(contents),
                 Some(_) => {}
             }
         }

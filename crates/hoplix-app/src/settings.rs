@@ -4,6 +4,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use hoplix_core::update::{self, Version};
+
+use crate::preview::DEFAULT_LIMIT_MIB;
 use hoplix_core::{
     ChecksumMode, DEFAULT_HISTORY_LIMIT, DEFAULT_PARALLELISM, DEFAULT_RETRIES, DEFAULT_RETRY_DELAY,
     MAX_HISTORY_LIMIT, RetryPolicy, SpeedLimits, key_value,
@@ -20,6 +22,7 @@ pub const MAX_RETRY_ATTEMPTS: u32 = 10;
 pub const MIN_RETRY_DELAY: u32 = 1;
 pub const MAX_RETRY_DELAY: u32 = 60;
 pub const MAX_SPEED_LIMIT: u32 = 1_000_000;
+pub const MAX_PREVIEW_LIMIT: u32 = 1024;
 
 // Types
 
@@ -76,6 +79,7 @@ pub struct Settings {
     pub update_notified_version: Option<String>,
     pub update_latest_version: Option<String>,
     pub update_latest_url: Option<String>,
+    pub preview_limit: u32,
 }
 
 impl Default for Settings {
@@ -104,6 +108,7 @@ impl Default for Settings {
             update_notified_version: None,
             update_latest_version: None,
             update_latest_url: None,
+            preview_limit: DEFAULT_LIMIT_MIB,
         }
     }
 }
@@ -318,6 +323,11 @@ impl Settings {
                     settings.update_latest_url =
                         Some(value).filter(|url| update::is_release_page(url));
                 }
+                "preview_limit_mib" => {
+                    if let Some(limit) = parse_in(&value, (0, MAX_PREVIEW_LIMIT)) {
+                        settings.preview_limit = limit;
+                    }
+                }
                 _ => {}
             }
         }
@@ -389,6 +399,7 @@ impl Settings {
                 "update_latest_url",
                 optional_text(self.update_latest_url.as_ref()),
             ),
+            ("preview_limit_mib", self.preview_limit.to_string()),
         ])
     }
 
@@ -447,6 +458,7 @@ mod tests {
             update_latest_url: Some(
                 "https://github.com/TripleT3005/Hoplix/releases/tag/v1.0.0".to_string(),
             ),
+            preview_limit: 0,
         };
         assert_eq!(Settings::parse(&settings.to_text()), settings);
         assert!(settings.to_text().contains("update_check = off"));
@@ -466,7 +478,8 @@ mod tests {
              update_latest_version = 1.0\nupdate_latest_url = https://example.com/\n",
         );
         assert_eq!(settings, Settings::default());
-        let settings = Settings::parse("retry_delay = 61\nretry_attempts = -1\n");
+        let settings =
+            Settings::parse("retry_delay = 61\nretry_attempts = -1\npreview_limit_mib = 1025\n");
         assert_eq!(settings, Settings::default());
     }
 

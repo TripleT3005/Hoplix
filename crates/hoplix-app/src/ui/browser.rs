@@ -8,6 +8,7 @@ use iced::{Alignment, Element, Length};
 use crate::app::{Hoplix, LoadState, Message, Pane, Tab, TabId, TabMessage};
 use crate::compare::{Comparison, Mark};
 use crate::i18n::Strings;
+use crate::preview::PreviewMessage;
 use crate::settings::Layout;
 use crate::transfers::DropTarget;
 use crate::ui::Choice;
@@ -26,15 +27,14 @@ const MARK_WIDTH: f32 = 18.0;
 
 pub fn view(app: &Hoplix) -> Element<'_, Message> {
     let show_focus = app.settings.layout == Layout::Classic;
-    let dragging = app.drag.as_ref().is_some_and(|drag| drag.moved);
+    let highlighted = highlighted_target(app);
     let panes = app.panes.iter().enumerate().map(|(index, pane)| {
         let focused = show_focus && index == app.focused_pane;
-        let dropping = dragging
-            && match app.drop_target {
-                Some(DropTarget::Pane(target)) => target == index,
-                Some(DropTarget::Tab(id)) => pane.tabs.iter().any(|tab| tab.id == id),
-                None => false,
-            };
+        let dropping = match highlighted {
+            Some(DropTarget::Pane(target)) => target == index,
+            Some(DropTarget::Tab(id)) => pane.tabs.iter().any(|tab| tab.id == id),
+            None => false,
+        };
         mouse_area(
             container(view_pane(app, index, pane))
                 .padding(4)
@@ -50,6 +50,14 @@ pub fn view(app: &Hoplix) -> Element<'_, Message> {
     match ui::compare::bar(app) {
         Some(bar) => container(column![bar, panes].spacing(8)).padding(8).into(),
         None => container(panes).padding(8).into(),
+    }
+}
+
+fn highlighted_target(app: &Hoplix) -> Option<DropTarget> {
+    if app.drag.as_ref().is_some_and(|drag| drag.moved) {
+        app.drop_target
+    } else {
+        app.file_drop_target()
     }
 }
 
@@ -70,10 +78,9 @@ fn view_pane<'a>(app: &'a Hoplix, index: usize, pane: &'a Pane) -> Element<'a, M
 
 fn tab_bar<'a>(app: &'a Hoplix, index: usize, pane: &'a Pane) -> Element<'a, Message> {
     let strings = &app.strings;
-    let dragging = app.drag.as_ref().is_some_and(|drag| drag.moved);
+    let highlighted = highlighted_target(app);
     let tabs = pane.tabs.iter().enumerate().map(|(position, tab)| {
-        let active = position == pane.active
-            || (dragging && app.drop_target == Some(DropTarget::Tab(tab.id)));
+        let active = position == pane.active || highlighted == Some(DropTarget::Tab(tab.id));
         let title = if tab.path.is_empty() {
             strings.get("browser.loading").to_string()
         } else {
@@ -170,6 +177,13 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
         button(text(strings.get("operation.edit")).size(13))
             .style(button::text)
             .on_press_maybe(has_file.then_some(Message::Tab(id, TabMessage::Edit))),
+        button(text(strings.get("preview.toggle")).size(13))
+            .style(if app.preview.open {
+                theme::secondary_button
+            } else {
+                button::text
+            })
+            .on_press(Message::Preview(PreviewMessage::Toggle)),
         Space::new().width(Length::Fill),
     ]
     .spacing(4)
@@ -244,15 +258,20 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
             .into()
         }
     };
-    content.push(content_area(list)).into()
+    content.push(content_area(app, tab, list)).into()
 }
 
 // Content area
 
-fn content_area(list: Element<'_, Message>) -> Element<'_, Message> {
+fn content_area<'a>(
+    app: &'a Hoplix,
+    tab: &'a Tab,
+    list: Element<'a, Message>,
+) -> Element<'a, Message> {
     Row::new()
         .push(container(list).width(Length::Fill).height(Length::Fill))
-        .spacing(8)
+        .push(ui::preview::panel(app, tab))
+        .spacing(2)
         .height(Length::Fill)
         .into()
 }
@@ -442,7 +461,7 @@ fn entry_row<'a>(
     .into()
 }
 
-fn kind_label(strings: &Strings, entry: &Entry) -> String {
+pub(super) fn kind_label(strings: &Strings, entry: &Entry) -> String {
     if entry.is_directory() {
         return strings.get("browser.kind.folder").to_string();
     }

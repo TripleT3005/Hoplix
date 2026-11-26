@@ -3,7 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::SystemTime;
 
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{Entry, Error, ErrorKind, HashAlgorithm, Properties, Result};
 
@@ -22,6 +22,10 @@ pub trait FileSystem: Debug + Send + Sync {
 
     fn is_remote(&self) -> bool {
         self.label().is_some()
+    }
+
+    fn url(&self, _path: &str) -> Option<String> {
+        None
     }
 
     fn home(&self) -> BoxFuture<'_, Result<String>>;
@@ -144,6 +148,17 @@ pub async fn copy_file(
     Ok(copied)
 }
 
+pub async fn read_head(file_system: &dyn FileSystem, path: &str, limit: usize) -> Result<Vec<u8>> {
+    let reader = file_system.open_read(path, 0).await?;
+    let mut bytes = Vec::new();
+    reader
+        .take(u64::try_from(limit).unwrap_or(u64::MAX))
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| Error::from_io(&error, path))?;
+    Ok(bytes)
+}
+
 pub fn is_valid_name(name: &str) -> bool {
     let name = name.trim();
     !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0'])
@@ -181,6 +196,25 @@ mod tests {
             copy_file(&local, &source, &local, &target, true).await,
             Ok(0)
         );
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[tokio::test]
+    async fn heads_stop_at_the_limit() {
+        let directory = std::env::temp_dir().join(format!("hoplix-head-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("creating failed");
+        let path = directory.join("data.bin").to_string_lossy().into_owned();
+        std::fs::write(&path, b"0123456789").expect("writing failed");
+
+        let local = LocalFileSystem;
+        assert_eq!(read_head(&local, &path, 4).await, Ok(b"0123".to_vec()));
+        assert_eq!(
+            read_head(&local, &path, 64).await,
+            Ok(b"0123456789".to_vec())
+        );
+        let missing = directory.join("missing").to_string_lossy().into_owned();
+        assert!(read_head(&local, &missing, 4).await.is_err());
         std::fs::remove_dir_all(directory).expect("cleaning up failed");
     }
 

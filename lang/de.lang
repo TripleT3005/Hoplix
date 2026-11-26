@@ -593,3 +593,33 @@ properties.apply_folders = Ordner
 properties.applying = Berechtigungen werden geändert …
 properties.apply = Übernehmen
 properties.close = Schließen
+
+# Preview
+preview.toggle = Vorschau (F3)
+preview.title = Vorschau
+preview.nothing = Wähle eine Datei für die Vorschau aus.
+preview.several = {count} Einträge ausgewählt.
+preview.folder = Für Ordner gibt es keine Vorschau.
+preview.loading = Vorschau wird geladen …
+preview.none = Für diesen Dateityp gibt es keine Vorschau.
+preview.large = Die Datei ist größer als {limit}, ihre Vorschau wird daher nur auf Wunsch geladen.
+preview.load = Vorschau laden
+preview.lines.one = 1 Zeile
+preview.lines.other = {count} Zeilen
+preview.truncated = Nur die ersten {size} werden angezeigt.
+command.toggle_preview = Vorschau ein- oder ausblenden
+settings.section.preview = Vorschau
+settings.preview.limit = Vom Server laden
+settings.preview.ask = Nur auf Wunsch
+settings.preview.mib = Dateien bis {count} MiB
+settings.preview.hint = Die Vorschau (F3) zeigt den Anfang von Textdateien, höchstens 256 KiB. Dateien auf einem Server werden nur gelesen, solange die Vorschau offen ist und die Auswahl einen Moment ruht, und nur in den Arbeitsspeicher; auf der Festplatte wird nichts gespeichert. Größere Dateien erhalten eine Schaltfläche Vorschau laden.
+
+# Dropping files
+drop.hint = Loslassen, um die Dateien nach {folder} zu kopieren.
+drop.unavailable = Dateien lassen sich nur auf einem geöffneten Ordner ablegen.
+drop.unreadable = Der Name einer abgelegten Datei konnte nicht gelesen werden.
+
+# Copying paths
+command.copy_path = Pfad kopieren
+copy_path.copied.one = Pfad in die Zwischenablage kopiert.
+copy_path.copied.other = {count} Pfade in die Zwischenablage kopiert.

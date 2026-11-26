@@ -465,6 +465,10 @@ impl FileSystem for SftpFileSystem {
         Some(self.label.clone())
     }
 
+    fn url(&self, path: &str) -> Option<String> {
+        Some(self.params.url(path))
+    }
+
     fn home(&self) -> BoxFuture<'_, Result<String>> {
         Box::pin(self.run(|connection| async move {
             connection
