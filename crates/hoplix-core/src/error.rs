@@ -25,6 +25,7 @@ pub enum ErrorKind {
     VaultLocked,
     SecretStorage,
     ChecksumMismatch,
+    Unsupported,
     Other,
 }
 

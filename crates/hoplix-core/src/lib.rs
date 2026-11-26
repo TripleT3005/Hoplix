@@ -1,3 +1,4 @@
+mod bookmarks;
 mod certificates;
 mod checksum;
 mod connection;
@@ -12,11 +13,13 @@ pub mod language;
 mod local;
 mod options;
 mod paths;
+mod properties;
 mod proxy;
 mod queue_file;
 mod rate;
 mod recent;
 mod route;
+mod search;
 mod secrets;
 mod sftp;
 mod site_export;
@@ -30,6 +33,7 @@ pub mod update;
 #[cfg(test)]
 mod test_support;
 
+pub use bookmarks::{BOOKMARKS_FILE, Bookmark, Bookmarks};
 pub use certificates::certificate_fingerprint;
 pub use checksum::{
     ChecksumMode, HashAlgorithm, Hasher, Verification, checksum_algorithms, file_checksum,
@@ -55,11 +59,16 @@ pub use options::{
     seconds_text,
 };
 pub use paths::{TrustStore, config_dir};
+pub use properties::{
+    FolderSize, PERMISSION_BITS, PermissionChange, Properties, WindowsAttributes, folder_size,
+    mode_text, parse_mode, parse_permission_text, permission_text, set_permissions_with,
+};
 pub use proxy::{Proxy, ProxyCredentials, ProxyKind};
 pub use queue_file::{Location, QUEUE_FILE, SavedJob, SavedQueue};
 pub use rate::RateLimiter;
 pub use recent::{MAX_RECENT, RECENT_FILE, RecentConnection, RecentList};
 pub use route::{JumpHost, Route, connect_via, connect_via_with};
+pub use search::{NameFilter, Search, SearchBatch, SearchHit, Visited, Walk};
 pub use secrets::{
     DEFAULT_ITERATIONS, Keyring, Moved, SecretBackend, SecretSlot, SecretStore, VAULT_FILE, Vault,
     change_master_password, create_vault, jump_secret_name, move_to_keyring, move_to_vault,

@@ -268,7 +268,7 @@ fn corrupt_queue_files_and_the_setting_are_respected() {
 
 #[test]
 fn history_lists_filters_exports_and_clears_finished_transfers() {
-    let mut harness = local_copy("history");
+    let mut harness = local_copy("transfer-history");
     copy_file(&mut harness, "a.txt");
     harness.drive_transfers_until(finished);
     harness.send(Message::Transfer(

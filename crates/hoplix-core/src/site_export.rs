@@ -584,16 +584,16 @@ mod tests {
             secrets: BTreeMap::from([(secret_name(&web.id), secret.clone())]),
         };
         let mut target = SiteList::default();
-        let mut existing = site("Web", "Imported 2026-11-25/Work/Clients");
+        let mut existing = site("Web", "Imported 2026-03-15/Work/Clients");
         existing.save_secrets = false;
         target.upsert(existing.clone());
 
         let summary = export
             .clone()
-            .import_into(&mut target, "Imported 2026-11-25");
+            .import_into(&mut target, "Imported 2026-03-15");
         assert_eq!(summary.sites, 1);
         assert_eq!(summary.secrets, 1);
-        assert_eq!(summary.folder, "Imported 2026-11-25");
+        assert_eq!(summary.folder, "Imported 2026-03-15");
         let imported = target
             .sites
             .iter()
@@ -601,18 +601,19 @@ mod tests {
             .expect("imported site");
         assert_ne!(imported.id, web.id);
         assert_eq!(imported.name, "Web (2)");
-        assert_eq!(imported.folder, "Imported 2026-11-25/Work/Clients");
+        assert_eq!(imported.folder, "Imported 2026-03-15/Work/Clients");
         assert!(imported.save_secrets);
         assert_eq!(imported.options.ftp_mode, FtpMode::Active);
         assert_eq!(imported.max_transfers, Some(2));
+        assert_eq!(imported.bookmarks, web.bookmarks);
         assert_eq!(summary.stored, [(secret_name(&imported.id), secret)]);
         assert!(
             target
                 .all_folders()
-                .contains(&"Imported 2026-11-25/Work/Clients/Empty".to_string())
+                .contains(&"Imported 2026-03-15/Work/Clients/Empty".to_string())
         );
 
-        let again = export.import_into(&mut target, "Imported 2026-11-25");
+        let again = export.import_into(&mut target, "Imported 2026-03-15");
         assert_eq!(again.sites, 1);
         assert!(
             target

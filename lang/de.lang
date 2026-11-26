@@ -518,3 +518,78 @@ update.open = Release-Seite öffnen
 update.later = Später
 update.hint = Update {version} verfügbar
 update.open_failed = Die Release-Seite konnte nicht geöffnet werden: {detail}
+
+# File list
+status.filtered = {shown} von {count} Einträgen
+error.unsupported = Das wird hier nicht unterstützt: {detail}
+filter.placeholder = Namen filtern (Strg+F), * und ? als Platzhalter
+filter.nothing = Kein Name passt zum Filter.
+command.filter = Liste filtern
+command.search = In Unterordnern suchen
+command.back = Zurück
+command.forward = Vorwärts
+command.add_bookmark = Lesezeichen für diesen Ordner
+command.edit_bookmarks = Lesezeichen bearbeiten
+command.open_bookmark = Zum Lesezeichen {name}
+command.properties = Eigenschaften
+
+# Search
+search.open = In Unterordnern suchen…
+search.title = In Unterordnern suchen
+search.text = Durchsucht {path} und alle Ordner darin.
+search.pattern = Name oder Teil davon
+search.pattern_hint = Ohne * oder ? passt jeder Name, der den Text enthält, unabhängig von Groß- und Kleinschreibung. Leer lassen, um alles aufzulisten.
+search.depth = Ordnerebenen (1 = nur dieser Ordner)
+search.depth_unlimited = Alle Ebenen
+search.depth_invalid = Gib eine ganze Zahl ab 1 ein oder lass das Feld leer.
+search.start = Suchen
+search.running = Suche nach „{pattern}“: bisher {count} gefunden …
+search.done = Ergebnisse für „{pattern}“: {count} gefunden
+search.cancel = Stopp
+search.close = Ergebnisse schließen
+search.unreadable = {count} Ordner konnten nicht gelesen werden.
+search.truncated = Es werden nur die ersten {count} Ergebnisse angezeigt.
+search.nothing = Nichts gefunden.
+search.folder = Ordner
+search.here = (dieser Ordner)
+
+# Bookmarks
+bookmarks.title = Lesezeichen
+bookmarks.add = Lesezeichen für diesen Ordner
+bookmarks.edit = Lesezeichen bearbeiten …
+bookmarks.edit_title = Lesezeichen bearbeiten
+bookmarks.none = Es gibt noch keine Lesezeichen. Mit Strg+B setzt du eins für den aktuellen Ordner.
+bookmarks.remove = Entfernen
+bookmarks.save = Speichern
+bookmarks.save_failed = Die Lesezeichen konnten nicht gespeichert werden: {detail}
+
+# Properties
+properties.title = Eigenschaften von „{name}“
+properties.folder_link = Verknüpfung zu einem Ordner
+properties.file_link = Verknüpfung zu einer Datei
+properties.bytes = {size} ({bytes} Bytes)
+properties.count = Größe berechnen
+properties.counting = Wird berechnet …
+properties.folder_size = {size} in {files} Dateien und {folders} Ordnern
+properties.unreadable = {count} Ordner konnten nicht gelesen werden.
+properties.owner = Besitzer
+properties.group = Gruppe
+properties.read_only = Schreibgeschützt
+properties.hidden = Versteckt
+properties.yes = Ja
+properties.no = Nein
+properties.permissions = Berechtigungen
+properties.read = Lesen
+properties.write = Schreiben
+properties.execute = Ausführen
+properties.owner_access = Besitzer
+properties.group_access = Gruppe
+properties.other_access = Andere
+properties.invalid_mode = Gib die Berechtigungen als drei oder vier Oktalziffern ein, zum Beispiel 644 oder 0755.
+properties.read_only_server = Berechtigungen lassen sich hier nicht ändern.
+properties.recursive = Auch auf alles im Ordner anwenden
+properties.apply_files = Dateien
+properties.apply_folders = Ordner
+properties.applying = Berechtigungen werden geändert …
+properties.apply = Übernehmen
+properties.close = Schließen

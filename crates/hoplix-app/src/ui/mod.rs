@@ -4,6 +4,7 @@ mod connect_page;
 mod dialog;
 mod edits;
 mod exchange;
+mod file_list;
 mod palette;
 mod settings_page;
 mod sites_page;
@@ -20,7 +21,7 @@ use crate::i18n::Strings;
 use crate::theme;
 use crate::updates::UpdateMessage;
 
-pub use dialog::{focus_id, focus_input};
+pub use dialog::{dialog_input_id, focus_id, focus_input};
 #[cfg(test)]
 pub use settings_page::SCROLL_ID as SETTINGS_SCROLL_ID;
 #[cfg(test)]
@@ -124,6 +125,13 @@ fn status_bar(app: &Hoplix) -> Element<'_, Message> {
             Some(tab) if tab.state == LoadState::Loading => {
                 strings.format("status.loading", &[("path", &tab.path_input)])
             }
+            Some(tab) if tab.is_filtered() => strings.format(
+                "status.filtered",
+                &[
+                    ("shown", &tab.visible_count().to_string()),
+                    ("count", &tab.entries.len().to_string()),
+                ],
+            ),
             Some(tab) if tab.entries.len() == 1 => strings.get("status.items.one").to_string(),
             Some(tab) => strings.format(
                 "status.items.other",
@@ -159,6 +167,14 @@ pub fn entry_list_id(tab: TabId) -> String {
     format!("entries-{tab}")
 }
 
+pub fn filter_input_id(tab: TabId) -> String {
+    format!("filter-{tab}")
+}
+
+pub fn results_list_id(tab: TabId) -> String {
+    format!("results-{tab}")
+}
+
 pub fn tab_title(tab: &Tab) -> String {
     let name = tab.file_system.file_name(&tab.path);
     if let Some(title) = &tab.title {
@@ -188,6 +204,7 @@ pub fn error_text(strings: &Strings, error: &Error) -> String {
         ErrorKind::VaultLocked => "error.vault_locked",
         ErrorKind::SecretStorage => "error.secret_storage",
         ErrorKind::ChecksumMismatch => "error.checksum_mismatch",
+        ErrorKind::Unsupported => "error.unsupported",
         ErrorKind::Other => "error.other",
     };
     strings.format(key, &[("detail", error.detail())])

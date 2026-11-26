@@ -359,7 +359,7 @@ fn the_sync_dialog_builds_the_expected_plan() {
     assert!(harness.contains("Skipped: 2"));
 
     harness.click("left → right");
-    harness.fill_input(2, "*.txt");
+    harness.fill_input(4, "*.txt");
     assert!(harness.has("Both sides are already the same."));
     harness.key(Named::Escape);
     assert!(harness.app.dialog.is_none());

@@ -123,7 +123,10 @@ fn tab_bar<'a>(app: &'a Hoplix, index: usize, pane: &'a Pane) -> Element<'a, Mes
 fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Message> {
     let strings = &app.strings;
     let id = tab.id;
-    let toolbar = row![
+    let [back, forward] = ui::file_list::history_buttons(tab);
+    let mut toolbar = row![
+        back,
+        forward,
         button(text(strings.get("browser.up")))
             .style(theme::secondary_button)
             .on_press_maybe(
@@ -144,6 +147,9 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
     ]
     .spacing(6)
     .align_y(Alignment::Center);
+    if let Some(picker) = ui::file_list::bookmark_picker(app, tab) {
+        toolbar = toolbar.push(picker);
+    }
     let ready = !tab.path.is_empty() && tab.state != LoadState::Loading;
     let has_single = ready && tab.selected_entry().is_some();
     let has_any = ready && !tab.selection.is_empty();
@@ -221,14 +227,34 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
     if let LoadState::Failed(error) = &tab.state {
         content = content.push(ui::notice(ui::error_text(strings, error)));
     }
-    let comparison = app
-        .compare
-        .comparison
-        .as_ref()
-        .filter(|comparison| comparison.involves(id));
-    content = content.push(header(strings, tab, comparison.is_some()));
-    content = content.push(entry_list(strings, tab, comparison));
-    content.into()
+    content = content.push(ui::file_list::filter_row(strings, tab));
+    let list: Element<'a, Message> = match &tab.search {
+        Some(results) => ui::file_list::results_view(strings, tab, results),
+        None => {
+            let comparison = app
+                .compare
+                .comparison
+                .as_ref()
+                .filter(|comparison| comparison.involves(id));
+            column![
+                header(strings, tab, comparison.is_some()),
+                entry_list(strings, tab, comparison)
+            ]
+            .spacing(6)
+            .into()
+        }
+    };
+    content.push(content_area(list)).into()
+}
+
+// Content area
+
+fn content_area(list: Element<'_, Message>) -> Element<'_, Message> {
+    Row::new()
+        .push(container(list).width(Length::Fill).height(Length::Fill))
+        .spacing(8)
+        .height(Length::Fill)
+        .into()
 }
 
 fn header<'a>(strings: &'a Strings, tab: &'a Tab, comparing: bool) -> Element<'a, Message> {
@@ -310,8 +336,16 @@ fn entry_list<'a>(
         .entries
         .iter()
         .enumerate()
-        .filter(|(_, entry)| !comparison.is_some_and(|comparison| comparison.hides(tab.id, entry)))
+        .filter(|(_, entry)| {
+            tab.shows(entry)
+                && !comparison.is_some_and(|comparison| comparison.hides(tab.id, entry))
+        })
         .collect();
+    if visible.is_empty() && tab.is_filtered() {
+        return container(text(strings.get("filter.nothing")))
+            .center(Length::Fill)
+            .into();
+    }
     if visible.is_empty() {
         return container(text(strings.get("compare.no_differences")))
             .center(Length::Fill)

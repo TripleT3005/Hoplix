@@ -5,10 +5,11 @@ use std::time::Duration;
 use std::collections::{HashMap, VecDeque};
 
 use hoplix_core::{
-    BoxFuture, Conflict, ConflictDecision, ConnectionOptions, ConnectionParams, Entry, Error,
-    ErrorKind, FileSystem, HostAddress, HostKeyTrust, JobId, JobSnapshot, Keyring, LocalFileSystem,
-    Moved, RecentList, Route, SecretBackend, SiteList, SortKey, SortOrder, TransferEvent,
-    TransferQueue, TrustStore, Vault, config_dir, is_valid_name, remove_recursive, sort_entries,
+    Bookmarks, BoxFuture, Conflict, ConflictDecision, ConnectionOptions, ConnectionParams, Entry,
+    Error, ErrorKind, FileSystem, HostAddress, HostKeyTrust, JobId, JobSnapshot, Keyring,
+    LocalFileSystem, Moved, RecentList, Route, SecretBackend, SiteList, SortKey, SortOrder,
+    TransferEvent, TransferQueue, TrustStore, Vault, config_dir, is_valid_name, remove_recursive,
+    sort_entries,
 };
 use iced::keyboard::{Key, Modifiers};
 use iced::theme::Mode;
@@ -19,8 +20,11 @@ use crate::commands::{Action, Palette};
 use crate::compare::{CompareMessage, CompareState, SyncDialog};
 use crate::connect_form::{ConnectForm, Field};
 use crate::edits::{EditMessage, Edits, Opener};
+use crate::file_list::{BookmarksDialog, ListMessage, ListState};
 use crate::i18n::{self, LanguageInfo, Strings};
+use crate::properties::{PropertiesDialog, PropertiesMessage};
 use crate::queue_store::{HistoryMessage, HistoryView, QueueStore};
+use crate::search::{SearchDialog, SearchMessage, SearchResults};
 use crate::session::{Offline, SavedTab, Session, TabOrigin, WindowState};
 use crate::settings::{Layout, Settings, ThemePreference};
 use crate::site_actions::PendingAction;
@@ -29,7 +33,7 @@ use crate::site_form::{SiteField, SiteForm};
 use crate::transfer_settings::TransferSetting;
 use crate::transfers::{Drag, DropTarget, TransferAction, TransferTarget};
 use crate::updates::{CheckState, UpdateMessage, UpdateSource};
-use crate::{edits, opener, queue_store, theme, title_bar, transfers, ui, updates};
+use crate::{edits, file_list, opener, queue_store, theme, title_bar, transfers, ui, updates};
 
 // Types
 
@@ -59,6 +63,8 @@ pub struct Tab {
     pub title: Option<String>,
     pub origin: TabOrigin,
     pub(crate) viewport: Option<Viewport>,
+    pub list: ListState,
+    pub search: Option<SearchResults>,
     start_path: Option<String>,
     request: u64,
 }
@@ -143,6 +149,9 @@ pub enum Dialog {
     },
     ExportSites(Box<ExportDialog>),
     ImportSites(Box<ImportDialog>),
+    Search(Box<SearchDialog>),
+    Properties(Box<PropertiesDialog>),
+    Bookmarks(Box<BookmarksDialog>),
 }
 
 #[derive(Debug, Clone)]
@@ -223,6 +232,9 @@ pub enum Message {
     RememberRecent(bool),
     SiteExchange(ExchangeMessage),
     History(HistoryMessage),
+    List(ListMessage),
+    Search(SearchMessage),
+    Properties(PropertiesMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -280,6 +292,10 @@ pub struct Hoplix {
     pub(crate) services: Services,
     pub edits: Edits,
     pub update_state: CheckState,
+    pub bookmarks: Bookmarks,
+    pub(crate) search_handles: HashMap<TabId, iced::task::Handle>,
+    pub(crate) search_generation: u64,
+    pub(crate) properties_task: Option<iced::task::Handle>,
     next_tab_id: TabId,
 }
 
@@ -379,6 +395,9 @@ impl Dialog {
             Self::Sync(dialog) => dialog.can_start(),
             Self::ExportSites(dialog) => dialog.can_confirm(),
             Self::ImportSites(dialog) => dialog.can_confirm(),
+            Self::Search(dialog) => dialog.can_start(),
+            Self::Properties(dialog) => dialog.can_confirm(),
+            Self::Bookmarks(_) => true,
             Self::Delete { .. }
             | Self::Conflict { .. }
             | Self::HostKey { .. }
@@ -421,6 +440,9 @@ impl Hoplix {
         app.load_recent();
         app.load_history();
         app.restore_queue();
+        if let Some(directory) = &app.config_dir {
+            app.bookmarks = Bookmarks::load(directory).unwrap_or_default();
+        }
         let session = app
             .config_dir
             .as_deref()
@@ -476,6 +498,10 @@ impl Hoplix {
             services: Services::default(),
             edits: Edits::default(),
             update_state: CheckState::default(),
+            bookmarks: Bookmarks::default(),
+            search_handles: HashMap::new(),
+            search_generation: 0,
+            properties_task: None,
             settings,
         }
     }
@@ -510,6 +536,7 @@ impl Hoplix {
             transfers::subscription(self),
             edits::subscription(self),
             queue_store::subscription(self),
+            file_list::subscription(),
         ])
     }
 
@@ -564,8 +591,15 @@ impl Hoplix {
             Message::Tab(id, message) => return self.update_tab(id, message),
             Message::HomeResolved(id, result) => return self.resolve_home(id, result),
             Message::Listed(id, request, path, result) => {
-                self.finish_listing(id, request, path, result);
-                return self.tab_listed(id);
+                let revealed = self.finish_listing(id, request, path, result);
+                if self.tab_by_id(id).is_some_and(|tab| tab.search.is_none()) {
+                    self.stop_search(id);
+                }
+                let listed = self.tab_listed(id);
+                return match revealed {
+                    Some(position) => Task::batch([listed, Self::scroll_to_revealed(id, position)]),
+                    None => listed,
+                };
             }
             Message::Compare(message) => return self.update_compare(message),
             Message::ConnectField(field) => self.connect_form.edit(field),
@@ -605,6 +639,9 @@ impl Hoplix {
                 }
                 if matches!(self.dialog, Some(Dialog::MasterPassword { .. })) {
                     self.pending = None;
+                }
+                if matches!(self.dialog, Some(Dialog::Properties(_))) {
+                    self.stop_properties_task();
                 }
                 self.dialog = None;
             }
@@ -656,6 +693,9 @@ impl Hoplix {
             | Message::RecentCleared
             | Message::RememberRecent(_)) => return self.update_recent(message),
             Message::Update(message) => return self.update_updates(message),
+            Message::List(message) => return self.update_list(message),
+            Message::Search(message) => return self.update_search(message),
+            Message::Properties(message) => return self.update_properties(message),
             Message::TransferSetting(setting) => self.update_transfer_setting(setting),
             message => return self.update_sites(message),
         }
@@ -673,6 +713,7 @@ impl Hoplix {
             self.focused_pane = pane;
         }
         let modifiers = self.modifiers;
+        let visible = self.tab_by_id(id).and_then(|tab| self.visible_indices(tab));
         let Some(tab) = self.tab_mut(id) else {
             return Task::none();
         };
@@ -680,6 +721,9 @@ impl Hoplix {
             TabMessage::Select(index) => {
                 tab.cursor = Some(index);
                 let collapse = transfers::select(tab, index, modifiers);
+                if let Some(visible) = &visible {
+                    tab.selection.retain(|item| visible.contains(item));
+                }
                 self.drag = Some(Drag::new(id, collapse));
             }
             TabMessage::Scrolled(_) => {}
@@ -795,6 +839,8 @@ impl Hoplix {
             title,
             origin,
             viewport: None,
+            list: ListState::default(),
+            search: None,
             start_path: start,
             request: 0,
         });
@@ -816,6 +862,7 @@ impl Hoplix {
         }
         self.stop_edits_for_tab(id);
         self.store.connections.remove(&id);
+        self.stop_search(id);
         let file_system = tab.file_system;
         Task::future(async move { file_system.close().await }).discard()
     }
@@ -851,6 +898,7 @@ impl Hoplix {
         };
         tab.request += 1;
         tab.state = LoadState::Loading;
+        tab.list.step = None;
         let request = tab.request;
         let file_system = Arc::clone(&tab.file_system);
         Task::perform(
@@ -868,16 +916,17 @@ impl Hoplix {
         request: u64,
         path: String,
         result: Result<Vec<Entry>, Error>,
-    ) {
-        let Some(tab) = self.tab_mut(id).filter(|tab| tab.request == request) else {
-            return;
-        };
+    ) -> Option<(usize, usize)> {
+        let tab = self.tab_mut(id).filter(|tab| tab.request == request)?;
         match result {
             Ok(mut entries) => {
                 sort_entries(&mut entries, tab.sort_key, tab.sort_order);
                 tab.path_input.clone_from(&path);
                 if tab.path != path {
                     tab.clear_selection();
+                    tab.arrive();
+                    tab.set_filter(String::new());
+                    tab.search = None;
                 } else {
                     let names: Vec<String> = tab
                         .selected_entries()
@@ -895,10 +944,13 @@ impl Hoplix {
                 tab.entries = entries;
                 tab.path = path;
                 tab.state = LoadState::Ready;
+                tab.reveal_pending()
             }
             Err(error) => {
+                tab.forget_pending();
                 tab.path_input.clone_from(&tab.path);
                 tab.state = LoadState::Failed(error);
+                None
             }
         }
     }
@@ -1015,6 +1067,16 @@ impl Hoplix {
             }
             Dialog::ExportSites(_) | Dialog::ImportSites(_) => {
                 return self.confirm_exchange_dialog();
+            }
+            Dialog::Search(search) => {
+                self.dialog = None;
+                return self.start_search(&search);
+            }
+            Dialog::Properties(_) => return self.confirm_properties(),
+            Dialog::Bookmarks(bookmarks) => {
+                self.dialog = None;
+                self.confirm_bookmarks(&bookmarks);
+                return Task::none();
             }
             Dialog::NewSiteFolder { .. }
             | Dialog::DeleteSite { .. }
@@ -1162,6 +1224,8 @@ impl Hoplix {
             title: Some(site.name.clone()),
             origin: TabOrigin::Site(site.id.clone()),
             viewport: None,
+            list: ListState::default(),
+            search: None,
             start_path: None,
             request: 0,
         });
