@@ -216,6 +216,7 @@ fn restored_site_tabs_reconnect_in_place() {
         Session {
             window: None,
             focused_pane: 0,
+            preview: None,
             tabs: vec![
                 SavedTab {
                     pane: 0,

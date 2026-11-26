@@ -20,11 +20,13 @@ use crate::commands::{Action, Palette};
 use crate::compare::{CompareMessage, CompareState, SyncDialog};
 use crate::connect_form::{ConnectForm, Field};
 use crate::edits::{EditMessage, Edits, Opener};
+use crate::file_drop::FileDrop;
 use crate::file_list::{BookmarksDialog, ListMessage, ListState};
 use crate::i18n::{self, LanguageInfo, Strings};
+use crate::preview::{PreviewMessage, PreviewState};
 use crate::properties::{PropertiesDialog, PropertiesMessage};
 use crate::search::{SearchDialog, SearchMessage, SearchResults};
-use crate::session::{Offline, SavedTab, Session, TabOrigin, WindowState};
+use crate::session::{Offline, PreviewLayout, SavedTab, Session, TabOrigin, WindowState};
 use crate::settings::{Layout, Settings, ThemePreference};
 use crate::site_actions::PendingAction;
 use crate::site_exchange::{ExchangeMessage, ExportDialog, ImportDialog};
@@ -32,7 +34,7 @@ use crate::site_form::{SiteField, SiteForm};
 use crate::transfer_settings::TransferSetting;
 use crate::transfers::{Drag, DropTarget, TransferAction, TransferTarget};
 use crate::updates::{CheckState, UpdateMessage, UpdateSource};
-use crate::{edits, file_list, opener, theme, title_bar, transfers, ui, updates};
+use crate::{edits, file_list, opener, preview, theme, title_bar, transfers, ui, updates};
 
 // Types
 
@@ -233,6 +235,7 @@ pub enum Message {
     List(ListMessage),
     Search(SearchMessage),
     Properties(PropertiesMessage),
+    Preview(PreviewMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -292,6 +295,9 @@ pub struct Hoplix {
     pub(crate) search_handles: HashMap<TabId, iced::task::Handle>,
     pub(crate) search_generation: u64,
     pub(crate) properties_task: Option<iced::task::Handle>,
+    pub preview: PreviewState,
+    pub pointer: Option<DropTarget>,
+    pub file_drop: Option<FileDrop>,
     next_tab_id: TabId,
 }
 
@@ -316,6 +322,7 @@ pub(crate) struct Services {
     pub temp_dir: PathBuf,
     pub update_source: UpdateSource,
     pub update_delay: Duration,
+    pub preview_delay: Duration,
 }
 
 impl Default for Services {
@@ -333,6 +340,7 @@ impl Default for Services {
             temp_dir: std::env::temp_dir(),
             update_source: updates::github_source(),
             update_delay: updates::STARTUP_DELAY,
+            preview_delay: preview::DEBOUNCE,
         }
     }
 }
@@ -494,6 +502,9 @@ impl Hoplix {
             search_handles: HashMap::new(),
             search_generation: 0,
             properties_task: None,
+            preview: PreviewState::default(),
+            pointer: None,
+            file_drop: None,
             settings,
         }
     }
@@ -528,6 +539,7 @@ impl Hoplix {
             transfers::subscription(self),
             edits::subscription(self),
             file_list::subscription(),
+            preview::subscription(self),
         ])
     }
 
@@ -540,10 +552,12 @@ impl Hoplix {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let active = self.active_tabs();
         let task = self.handle(message);
-        match self.follow_active_tabs(&active) {
+        let task = match self.follow_active_tabs(&active) {
             Some(follow) => Task::batch([task, follow]),
             None => task,
-        }
+        };
+        let preview = self.sync_preview();
+        Task::batch([task, preview])
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
@@ -674,7 +688,10 @@ impl Hoplix {
             | Message::DragEntered(_)
             | Message::DragLeft(..)
             | Message::CursorMoved(_)
-            | Message::MouseReleased) => return self.update_transfers(message),
+            | Message::MouseReleased) => {
+                self.track_pointer(&message);
+                return self.update_transfers(message);
+            }
             Message::Edit(message) => return self.update_edits(message),
             Message::SiteExchange(message) => return self.update_exchange(message),
             message @ (Message::RecentSelected(_)
@@ -685,6 +702,7 @@ impl Hoplix {
             Message::List(message) => return self.update_list(message),
             Message::Search(message) => return self.update_search(message),
             Message::Properties(message) => return self.update_properties(message),
+            Message::Preview(message) => return self.update_preview(message),
             Message::TransferSetting(setting) => self.update_transfer_setting(setting),
             message => return self.update_sites(message),
         }
@@ -1155,6 +1173,10 @@ impl Hoplix {
         if let Some(window) = session.window {
             self.window = window;
         }
+        if let Some(layout) = session.preview {
+            self.preview.open = layout.open;
+            self.preview.width = layout.width;
+        }
         let pane_count = self.settings.layout.pane_count();
         self.panes = (0..pane_count).map(|_| Pane::default()).collect();
         let mut tasks = Vec::new();
@@ -1295,6 +1317,10 @@ impl Hoplix {
         Session {
             window: Some(self.window),
             focused_pane: self.focused_pane,
+            preview: Some(PreviewLayout {
+                open: self.preview.open,
+                width: self.preview.width,
+            }),
             tabs,
         }
     }
@@ -1328,6 +1354,15 @@ impl Hoplix {
             window::Event::CloseRequested => {
                 return window::is_maximized(id)
                     .map(move |maximized| Message::WindowClosing(id, maximized));
+            }
+            window::Event::FileHovered(_)
+            | window::Event::FileDropped(_)
+            | window::Event::FilesHoveredLeft => {
+                if self.page == Page::Browser && self.dialog.is_none() {
+                    self.file_event(&event);
+                } else {
+                    self.file_drop = None;
+                }
             }
             _ => {}
         }
@@ -1584,6 +1619,7 @@ mod tests {
         let session = Session {
             window: None,
             focused_pane: 1,
+            preview: None,
             tabs: vec![
                 SavedTab {
                     pane: 0,

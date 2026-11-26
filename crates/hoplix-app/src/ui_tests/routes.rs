@@ -594,6 +594,7 @@ fn restored_site_tabs_reconnect_through_the_saved_route() {
         Session {
             window: None,
             focused_pane: 0,
+            preview: None,
             tabs: vec![SavedTab {
                 pane: 0,
                 origin: TabOrigin::Site(prepared_id),

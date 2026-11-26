@@ -7,6 +7,7 @@ use iced::{Task, widget};
 use crate::app::{Hoplix, LoadState, Message, Page, Tab, TabMessage};
 use crate::compare::CompareMessage;
 use crate::file_list::{BookmarkChoice, ListMessage};
+use crate::preview::PreviewMessage;
 use crate::properties::PropertiesMessage;
 use crate::search::SearchMessage;
 use crate::settings::{Layout, ThemePreference};
@@ -52,6 +53,8 @@ pub enum Action {
     EditBookmarks,
     OpenBookmark(String),
     Properties,
+    TogglePreview,
+    CopyPath,
     ConnectSite(String),
     ConnectRecent(usize),
     MoveSelection { delta: isize, extend: bool },
@@ -83,6 +86,7 @@ pub fn action_for_key(key: &Key, modifiers: Modifiers) -> Option<Action> {
             "f" if shift => Some(Action::SearchSubfolders),
             "f" => Some(Action::Filter),
             "b" => Some(Action::AddBookmark),
+            "c" if shift => Some(Action::CopyPath),
             "t" => Some(Action::NewTab),
             "w" => Some(Action::CloseTab),
             "d" if shift => Some(Action::Synchronise),
@@ -103,6 +107,7 @@ pub fn action_for_key(key: &Key, modifiers: Modifiers) -> Option<Action> {
             Named::Backspace => Some(Action::Up),
             Named::F5 => Some(Action::Refresh),
             Named::F2 => Some(Action::Rename),
+            Named::F3 => Some(Action::TogglePreview),
             Named::F4 => Some(Action::Edit),
             Named::Delete => Some(Action::Delete),
             Named::ArrowUp => Some(Action::MoveSelection {
@@ -157,6 +162,8 @@ pub fn shortcut(action: &Action) -> Option<&'static str> {
         Action::Forward => Some("Alt+→"),
         Action::AddBookmark => Some("Ctrl+B"),
         Action::Properties => Some("Alt+Enter"),
+        Action::TogglePreview => Some("F3"),
+        Action::CopyPath => Some("Ctrl+Shift+C"),
         _ => None,
     }
 }
@@ -230,6 +237,8 @@ impl Hoplix {
             (Action::AddBookmark, "command.add_bookmark"),
             (Action::EditBookmarks, "command.edit_bookmarks"),
             (Action::Properties, "command.properties"),
+            (Action::TogglePreview, "command.toggle_preview"),
+            (Action::CopyPath, "command.copy_path"),
         ]
         .into_iter()
         .map(|(action, key)| (action, strings.get(key).to_string()))
@@ -482,6 +491,8 @@ impl Hoplix {
                 }
             }
             Action::Properties => return self.update(Message::Properties(PropertiesMessage::Open)),
+            Action::TogglePreview => return self.update(Message::Preview(PreviewMessage::Toggle)),
+            Action::CopyPath => return self.copy_paths(),
             Action::ConnectSite(id) => return self.update(Message::SiteConnect(id)),
             Action::ConnectRecent(index) => return self.use_recent(index, true),
             Action::MoveSelection { delta, extend } => return self.move_selection(delta, extend),
@@ -699,6 +710,15 @@ mod tests {
             action_for_key(&Key::Named(Named::Delete), none),
             Some(Action::Delete)
         );
+        assert_eq!(
+            action_for_key(&Key::Named(Named::F3), none),
+            Some(Action::TogglePreview)
+        );
+        assert_eq!(
+            action_for_key(&character("C"), Modifiers::CTRL | Modifiers::SHIFT),
+            Some(Action::CopyPath)
+        );
+        assert_eq!(action_for_key(&character("c"), Modifiers::CTRL), None);
     }
 
     #[test]

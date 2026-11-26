@@ -174,6 +174,7 @@ impl Harness {
             temp_dir: root.temp(),
             update_source: fakes::update_source(Arc::clone(&updates)),
             update_delay: Duration::ZERO,
+            preview_delay: Duration::ZERO,
         };
         let (app, task) = Hoplix::load(Some(root.config()), services);
         let transfer_events = app.transfers.subscribe();

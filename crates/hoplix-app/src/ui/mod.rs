@@ -6,6 +6,7 @@ mod edits;
 mod exchange;
 mod file_list;
 mod palette;
+mod preview;
 mod settings_page;
 mod sites_page;
 mod transfers;
@@ -118,6 +119,7 @@ fn status_bar(app: &Hoplix) -> Element<'_, Message> {
             _ if app.drag.as_ref().is_some_and(|drag| drag.moved) => {
                 strings.get("transfer.drag_hint").to_string()
             }
+            _ if app.file_drop.is_some() => drop_hint(app),
             _ if app.connect_form.connecting => strings.get("connect.connecting").to_string(),
             Some(tab) if tab.state == LoadState::Disconnected => {
                 strings.get("session.disconnected").to_string()
@@ -155,6 +157,19 @@ fn status_bar(app: &Hoplix) -> Element<'_, Message> {
         .width(Length::Fill)
         .style(theme::bar)
         .into()
+}
+
+fn drop_hint(app: &Hoplix) -> String {
+    let strings = &app.strings;
+    let target = app
+        .file_drop_target()
+        .and_then(|target| crate::file_drop::target_tab(target, &app.panes))
+        .and_then(|id| app.tab_by_id(id))
+        .filter(|tab| !tab.path.is_empty());
+    match target {
+        Some(tab) => strings.format("drop.hint", &[("folder", &tab_title(tab))]),
+        None => strings.get("drop.unavailable").to_string(),
+    }
 }
 
 // Shared
