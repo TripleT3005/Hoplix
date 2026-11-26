@@ -136,7 +136,7 @@ impl FileSystem for Folder {
     }
 
     fn can_set_permissions(&self) -> bool {
-        self.label.is_some()
+        self.label.is_some() || self.inner.can_set_permissions()
     }
 
     fn set_permissions(&self, path: &str, mode: u32) -> BoxFuture<'_, Result<()>> {
