@@ -4,23 +4,29 @@ use iced::widget::{
 use iced::{Alignment, Element, Font, Length, mouse};
 
 use crate::app::{Hoplix, Message, Tab};
-use crate::preview::{Content, Encoding, PREVIEW_BYTES, PreviewMessage, TextPreview, limit_bytes};
+use crate::preview::{
+    Content, Encoding, Fit, PREVIEW_BYTES, PreviewMessage, TextPreview, limit_bytes,
+};
 use crate::{format, local_time, theme, ui};
 
 // Constants
 
-const DIVIDER_WIDTH: f32 = 6.0;
+pub const DIVIDER_WIDTH: f32 = 6.0;
 const TEXT_SIZE: u32 = 12;
 const INFO_SIZE: u32 = 12;
 pub const TEXT_SCROLL_ID: &str = "preview-text";
 
 // Panel
 
-pub fn panel<'a>(app: &'a Hoplix, tab: &'a Tab) -> Option<Element<'a, Message>> {
+pub fn fit(app: &Hoplix, tab: &Tab, available: f32, list_min: f32) -> Option<Fit> {
     let preview = &app.preview;
     if !preview.open || app.focused_tab().map(|focused| focused.id) != Some(tab.id) {
         return None;
     }
+    Some(Fit::new(preview.width, available - DIVIDER_WIDTH, list_min))
+}
+
+pub fn panel(app: &Hoplix, fit: Fit) -> Element<'_, Message> {
     let divider = mouse_area(
         container(rule::vertical(1))
             .width(DIVIDER_WIDTH)
@@ -28,19 +34,17 @@ pub fn panel<'a>(app: &'a Hoplix, tab: &'a Tab) -> Option<Element<'a, Message>> 
             .center_x(DIVIDER_WIDTH),
     )
     .interaction(mouse::Interaction::ResizingHorizontally)
-    .on_press(Message::Preview(PreviewMessage::ResizeStarted));
+    .on_press(Message::Preview(PreviewMessage::ResizeStarted(fit)));
     let body = column![header(app), body(app)].spacing(8);
-    Some(
-        row![
-            divider,
-            container(body)
-                .padding([4, 6])
-                .width(preview.width)
-                .height(Length::Fill)
-        ]
-        .height(Length::Fill)
-        .into(),
-    )
+    row![
+        divider,
+        container(body)
+            .padding([4, 6])
+            .width(fit.width)
+            .height(Length::Fill)
+    ]
+    .height(Length::Fill)
+    .into()
 }
 
 fn header(app: &Hoplix) -> Element<'_, Message> {

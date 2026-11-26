@@ -1,7 +1,7 @@
 use hoplix_core::{Entry, SortKey, SortOrder};
 use iced::widget::{
-    Column, Row, Space, button, column, container, mouse_area, pick_list, row, scrollable, text,
-    text_input,
+    Column, Row, Space, button, column, container, mouse_area, pick_list, responsive, row,
+    scrollable, text, text_input,
 };
 use iced::{Alignment, Element, Length};
 
@@ -22,6 +22,56 @@ const MODIFIED_WIDTH: f32 = 130.0;
 const ROW_PADDING: [u16; 2] = [3, 8];
 const DESTINATION_WIDTH: f32 = 220.0;
 const MARK_WIDTH: f32 = 18.0;
+const NAME_MIN_WIDTH: f32 = 160.0;
+const NAME_GAP: f32 = 8.0;
+const MODIFIED_GAP: f32 = 16.0;
+const SCROLLBAR_GAP: f32 = 12.0;
+const PREVIEW_GAP: f32 = 2.0;
+
+// Columns
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Columns {
+    pub kind: bool,
+    pub modified: bool,
+}
+
+impl Columns {
+    const ALL: Self = Self {
+        kind: true,
+        modified: true,
+    };
+    const WITHOUT_KIND: Self = Self {
+        kind: false,
+        modified: true,
+    };
+    const NAME_AND_SIZE: Self = Self {
+        kind: false,
+        modified: false,
+    };
+
+    fn fixed_width(self) -> f32 {
+        let mut width = 2.0 * f32::from(ROW_PADDING[1]) + SCROLLBAR_GAP + NAME_GAP + SIZE_WIDTH;
+        if self.kind {
+            width += KIND_WIDTH;
+        }
+        if self.modified {
+            width += MODIFIED_GAP + MODIFIED_WIDTH;
+        }
+        width
+    }
+
+    fn fit(width: f32) -> Self {
+        [Self::ALL, Self::WITHOUT_KIND]
+            .into_iter()
+            .find(|columns| width - columns.fixed_width() >= NAME_MIN_WIDTH)
+            .unwrap_or(Self::NAME_AND_SIZE)
+    }
+
+    fn min_list_width() -> f32 {
+        Self::WITHOUT_KIND.fixed_width() + NAME_MIN_WIDTH
+    }
+}
 
 // Browser
 
@@ -242,41 +292,67 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
         content = content.push(ui::notice(ui::error_text(strings, error)));
     }
     content = content.push(ui::file_list::filter_row(strings, tab));
-    let list: Element<'a, Message> = match &tab.search {
-        Some(results) => ui::file_list::results_view(strings, tab, results),
+    content.push(content_area(app, tab)).into()
+}
+
+// Content area
+
+fn content_area<'a>(app: &'a Hoplix, tab: &'a Tab) -> Element<'a, Message> {
+    responsive(move |size| {
+        let available = size.width - PREVIEW_GAP;
+        let fit = ui::preview::fit(app, tab, available, Columns::min_list_width());
+        let list_width = fit.map_or(size.width, |fit| {
+            available - ui::preview::DIVIDER_WIDTH - fit.width
+        });
+        Row::new()
+            .push(
+                container(list_view(app, tab, list_width))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .push(fit.map(|fit| ui::preview::panel(app, fit)))
+            .spacing(PREVIEW_GAP)
+            .height(Length::Fill)
+            .into()
+    })
+    .into()
+}
+
+fn list_view<'a>(app: &'a Hoplix, tab: &'a Tab, width: f32) -> Element<'a, Message> {
+    let strings = &app.strings;
+    match &tab.search {
+        Some(results) => {
+            let columns = Columns::fit(width);
+            ui::file_list::results_view(strings, tab, results, columns.modified)
+        }
         None => {
             let comparison = app
                 .compare
                 .comparison
                 .as_ref()
-                .filter(|comparison| comparison.involves(id));
+                .filter(|comparison| comparison.involves(tab.id));
+            let mark = if comparison.is_some() {
+                MARK_WIDTH
+            } else {
+                0.0
+            };
+            let columns = Columns::fit(width - mark);
             column![
-                header(strings, tab, comparison.is_some()),
-                entry_list(strings, tab, comparison)
+                header(strings, tab, comparison.is_some(), columns),
+                entry_list(strings, tab, comparison, columns)
             ]
             .spacing(6)
             .into()
         }
-    };
-    content.push(content_area(app, tab, list)).into()
+    }
 }
 
-// Content area
-
-fn content_area<'a>(
-    app: &'a Hoplix,
+fn header<'a>(
+    strings: &'a Strings,
     tab: &'a Tab,
-    list: Element<'a, Message>,
+    comparing: bool,
+    columns: Columns,
 ) -> Element<'a, Message> {
-    Row::new()
-        .push(container(list).width(Length::Fill).height(Length::Fill))
-        .push(ui::preview::panel(app, tab))
-        .spacing(2)
-        .height(Length::Fill)
-        .into()
-}
-
-fn header<'a>(strings: &'a Strings, tab: &'a Tab, comparing: bool) -> Element<'a, Message> {
     let id = tab.id;
     let column_button = |key: SortKey, label: &'a str, width: Length, alignment: Alignment| {
         let marker = match (tab.sort_key == key, tab.sort_order) {
@@ -288,51 +364,61 @@ fn header<'a>(strings: &'a Strings, tab: &'a Tab, comparing: bool) -> Element<'a
             text(format!("{label}{marker}"))
                 .size(13)
                 .width(Length::Fill)
-                .align_x(alignment),
+                .align_x(alignment)
+                .wrapping(text::Wrapping::None),
         )
         .padding([ROW_PADDING[0], 0])
         .width(width)
         .style(button::text)
         .on_press(Message::Tab(id, TabMessage::SortBy(key)))
     };
-    row![
+    let mut header = row![
         Space::new().width(if comparing { MARK_WIDTH } else { 0.0 }),
-        column_button(
+        container(column_button(
             SortKey::Name,
             strings.get("browser.name"),
             Length::Fill,
             Alignment::Start
-        ),
-        Space::new().width(8),
-        column_button(
+        ))
+        .width(Length::Fill)
+        .clip(true),
+        Space::new().width(NAME_GAP),
+    ];
+    if columns.kind {
+        header = header.push(column_button(
             SortKey::Kind,
             strings.get("browser.kind"),
             Length::Fixed(KIND_WIDTH),
-            Alignment::Start
-        ),
-        column_button(
-            SortKey::Size,
-            strings.get("browser.size"),
-            Length::Fixed(SIZE_WIDTH),
-            Alignment::End
-        ),
-        Space::new().width(16),
-        column_button(
-            SortKey::Modified,
-            strings.get("browser.modified"),
-            Length::Fixed(MODIFIED_WIDTH),
-            Alignment::Start
-        ),
-        Space::new().width(12),
-    ]
-    .padding([0, ROW_PADDING[1]])
-    .into()
+            Alignment::Start,
+        ));
+    }
+    header = header.push(column_button(
+        SortKey::Size,
+        strings.get("browser.size"),
+        Length::Fixed(SIZE_WIDTH),
+        Alignment::End,
+    ));
+    if columns.modified {
+        header = header
+            .push(Space::new().width(MODIFIED_GAP))
+            .push(column_button(
+                SortKey::Modified,
+                strings.get("browser.modified"),
+                Length::Fixed(MODIFIED_WIDTH),
+                Alignment::Start,
+            ));
+    }
+    header
+        .push(Space::new().width(SCROLLBAR_GAP))
+        .padding([0, ROW_PADDING[1]])
+        .into()
 }
 
 fn entry_list<'a>(
     strings: &'a Strings,
     tab: &'a Tab,
     comparison: Option<&'a Comparison>,
+    columns: Columns,
 ) -> Element<'a, Message> {
     if tab.entries.is_empty() {
         let message = if tab.state == LoadState::Loading {
@@ -380,10 +466,11 @@ fn entry_list<'a>(
             (index, entry),
             tab.is_selected(index),
             mark,
+            columns,
         )
     });
     let id = tab.id;
-    scrollable(Column::with_children(rows).padding(iced::Padding::ZERO.right(12)))
+    scrollable(Column::with_children(rows).padding(iced::Padding::ZERO.right(SCROLLBAR_GAP)))
         .id(ui::entry_list_id(id))
         .on_scroll(move |viewport| Message::Tab(id, TabMessage::Scrolled(viewport)))
         .height(Length::Fill)
@@ -403,6 +490,7 @@ fn entry_row<'a>(
     (index, entry): (usize, &'a Entry),
     selected: bool,
     mark: Option<Mark>,
+    columns: Columns,
 ) -> Element<'a, Message> {
     let size = entry
         .size
@@ -426,25 +514,38 @@ fn entry_row<'a>(
                 color: (!selected).then(|| theme::mark_color(theme, mark)),
             })
     });
+    let mut cells = row![
+        container(text(name).size(14).wrapping(text::Wrapping::None))
+            .width(Length::Fill)
+            .clip(true),
+        Space::new().width(NAME_GAP),
+    ];
+    if columns.kind {
+        cells = cells.push(
+            text(kind_label(strings, entry))
+                .size(13)
+                .width(KIND_WIDTH)
+                .wrapping(text::Wrapping::None),
+        );
+    }
+    cells = cells.push(
+        text(size)
+            .size(13)
+            .width(SIZE_WIDTH)
+            .align_x(Alignment::End)
+            .wrapping(text::Wrapping::None),
+    );
+    if columns.modified {
+        cells = cells.push(Space::new().width(MODIFIED_GAP)).push(
+            text(modified)
+                .size(13)
+                .width(MODIFIED_WIDTH)
+                .wrapping(text::Wrapping::None),
+        );
+    }
     let content = Row::new()
         .push(marker)
-        .push(
-            row![
-                container(text(name).size(14).wrapping(text::Wrapping::None))
-                    .width(Length::Fill)
-                    .clip(true),
-                Space::new().width(8),
-                text(kind_label(strings, entry)).size(13).width(KIND_WIDTH),
-                text(size)
-                    .size(13)
-                    .width(SIZE_WIDTH)
-                    .align_x(Alignment::End),
-                Space::new().width(16),
-                text(modified).size(13).width(MODIFIED_WIDTH),
-            ]
-            .spacing(0)
-            .align_y(Alignment::Center),
-        )
+        .push(cells.align_y(Alignment::Center))
         .align_y(Alignment::Center);
     let even = index.is_multiple_of(2);
     mouse_area(

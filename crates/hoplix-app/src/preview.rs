@@ -13,6 +13,8 @@ pub const DEBOUNCE: Duration = Duration::from_millis(300);
 pub const DEFAULT_WIDTH: f32 = 380.0;
 pub const MIN_WIDTH: f32 = 220.0;
 pub const MAX_WIDTH: f32 = 900.0;
+pub const MAX_SHARE: f32 = 0.45;
+pub const NARROW_SHARE: f32 = 0.5;
 pub const DEFAULT_LIMIT_MIB: u32 = 2;
 pub const LIMIT_CHOICES: [u32; 8] = [0, 1, 2, 5, 10, 20, 50, 100];
 const SNIFF_BYTES: usize = 8 * 1024;
@@ -80,6 +82,28 @@ pub enum Plan {
 struct Resize {
     origin: Option<f32>,
     width: f32,
+    max: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Fit {
+    pub width: f32,
+    pub max: f32,
+}
+
+impl Fit {
+    pub fn new(stored: f32, available: f32, list_min: f32) -> Self {
+        let mut max = (available * MAX_SHARE)
+            .min(available - list_min)
+            .min(MAX_WIDTH);
+        if max < MIN_WIDTH {
+            max = MIN_WIDTH.min(available * NARROW_SHARE).max(0.0);
+        }
+        Self {
+            width: stored.min(max),
+            max,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -99,7 +123,7 @@ pub enum PreviewMessage {
     Settled(u64),
     Loaded(u64, Result<Vec<u8>, Error>),
     LoadRequested,
-    ResizeStarted,
+    ResizeStarted(Fit),
     Resized(f32),
     ResizeEnded,
     LimitSelected(u32),
@@ -155,10 +179,11 @@ impl PreviewState {
         generation == self.generation
     }
 
-    pub(crate) fn start_resize(&mut self) {
+    pub(crate) fn start_resize(&mut self, fit: Fit) {
         self.resize = Some(Resize {
             origin: None,
-            width: self.width,
+            width: fit.width,
+            max: fit.max,
         });
     }
 
@@ -169,7 +194,8 @@ impl PreviewState {
         match resize.origin {
             None => resize.origin = Some(x),
             Some(origin) => {
-                self.width = (resize.width + origin - x).clamp(MIN_WIDTH, MAX_WIDTH);
+                let max = resize.max.min(MAX_WIDTH);
+                self.width = (resize.width + origin - x).clamp(MIN_WIDTH.min(max), max);
             }
         }
     }
@@ -316,7 +342,7 @@ impl Hoplix {
                     return self.load_preview();
                 }
             }
-            PreviewMessage::ResizeStarted => self.preview.start_resize(),
+            PreviewMessage::ResizeStarted(fit) => self.preview.start_resize(fit),
             PreviewMessage::Resized(x) => self.preview.resize_to(x),
             PreviewMessage::ResizeEnded => self.preview.end_resize(),
             PreviewMessage::LimitSelected(mebibytes) => {
@@ -589,7 +615,10 @@ mod tests {
     #[test]
     fn dragging_the_divider_changes_the_width_within_limits() {
         let mut state = PreviewState::default();
-        state.start_resize();
+        state.start_resize(Fit {
+            width: DEFAULT_WIDTH,
+            max: MAX_WIDTH,
+        });
         state.resize_to(500.0);
         assert_eq!(state.width, DEFAULT_WIDTH);
         state.resize_to(450.0);
@@ -602,5 +631,38 @@ mod tests {
         state.resize_to(0.0);
         assert_eq!(state.width, MAX_WIDTH);
         assert!(!state.is_resizing());
+    }
+
+    #[test]
+    fn dragging_starts_from_the_shown_width_and_stops_at_the_list() {
+        let mut state = PreviewState {
+            width: 600.0,
+            ..PreviewState::default()
+        };
+        state.start_resize(Fit {
+            width: 300.0,
+            max: 320.0,
+        });
+        state.resize_to(500.0);
+        assert_eq!(state.width, 600.0);
+        state.resize_to(490.0);
+        assert_eq!(state.width, 310.0);
+        state.resize_to(-5000.0);
+        assert_eq!(state.width, 320.0);
+    }
+
+    #[test]
+    fn the_preview_leaves_room_for_the_file_list() {
+        let wide = Fit::new(DEFAULT_WIDTH, 1800.0, 460.0);
+        assert_eq!(wide.width, DEFAULT_WIDTH);
+        let pane = Fit::new(DEFAULT_WIDTH, 720.0, 460.0);
+        assert_eq!(pane.max, 260.0);
+        assert_eq!(pane.width, 260.0);
+        let shared = Fit::new(MAX_WIDTH, 1200.0, 460.0);
+        assert_eq!(shared.width, 1200.0 * MAX_SHARE);
+        let small = Fit::new(DEFAULT_WIDTH, 460.0, 460.0);
+        assert_eq!(small.width, MIN_WIDTH);
+        let tiny = Fit::new(DEFAULT_WIDTH, 300.0, 460.0);
+        assert_eq!(tiny.width, 150.0);
     }
 }

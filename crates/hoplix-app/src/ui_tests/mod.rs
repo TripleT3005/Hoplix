@@ -138,6 +138,7 @@ pub struct Harness {
     renderer: Renderer,
     cache: Option<Cache>,
     cursor: Point,
+    viewport: Size,
     window: window::Id,
     runtime: tokio::runtime::Runtime,
     transfer_events: UnboundedReceiver<TransferEvent>,
@@ -200,6 +201,7 @@ impl Harness {
             renderer,
             cache: None,
             cursor: Point::ORIGIN,
+            viewport: VIEWPORT,
             window: window::Id::unique(),
             runtime,
             transfer_events,
@@ -229,9 +231,15 @@ impl Harness {
             self.window,
             window::Event::Opened {
                 position: None,
-                size: VIEWPORT,
+                size: self.viewport,
             },
         ));
+    }
+
+    pub fn resize(&mut self, size: Size) {
+        self.viewport = size;
+        self.cache = None;
+        self.send(Message::Window(self.window, window::Event::Resized(size)));
     }
 
     // Messages and tasks
@@ -271,7 +279,7 @@ impl Harness {
         loop {
             let cache = self.cache.take().unwrap_or_default();
             let mut interface =
-                UserInterface::build(self.app.view(), VIEWPORT, cache, &mut self.renderer);
+                UserInterface::build(self.app.view(), self.viewport, cache, &mut self.renderer);
             interface.operate(&self.renderer, operation.as_mut());
             self.cache = Some(interface.into_cache());
             match operation.finish() {
@@ -314,7 +322,7 @@ impl Harness {
         let cache = self.cache.take().unwrap_or_default();
         let mut messages = Vec::new();
         let mut interface =
-            UserInterface::build(self.app.view(), VIEWPORT, cache, &mut self.renderer);
+            UserInterface::build(self.app.view(), self.viewport, cache, &mut self.renderer);
         let (_, statuses) = interface.update(
             std::slice::from_ref(&event),
             mouse::Cursor::Available(self.cursor),
@@ -502,7 +510,7 @@ impl Harness {
         let height = text_size * LINE_HEIGHT + PICK_LIST_PADDING;
         let top = target.y - height / 2.0;
         let bottom = target.y + height / 2.0;
-        let first = if VIEWPORT.height - bottom > top {
+        let first = if self.viewport.height - bottom > top {
             bottom + 1.0
         } else {
             top - 1.0 - height * count as f32
@@ -522,7 +530,7 @@ impl Harness {
     ) -> Vec<T> {
         let cache = self.cache.take().unwrap_or_default();
         let mut interface =
-            UserInterface::build(self.app.view(), VIEWPORT, cache, &mut self.renderer);
+            UserInterface::build(self.app.view(), self.viewport, cache, &mut self.renderer);
         let found = if all {
             let mut operation = selector.find_all();
             interface.operate(

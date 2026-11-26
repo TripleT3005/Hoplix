@@ -119,6 +119,7 @@ pub fn results_view<'a>(
     strings: &'a Strings,
     tab: &'a Tab,
     results: &'a SearchResults,
+    show_modified: bool,
 ) -> Element<'a, Message> {
     let id = tab.id;
     let count = results.hits.len().to_string();
@@ -182,34 +183,41 @@ pub fn results_view<'a>(
             .push(container(text(message)).center(Length::Fill))
             .into();
     }
-    let header = row![
+    let mut header = row![
         text(strings.get("browser.name"))
             .size(13)
-            .width(Length::FillPortion(2)),
+            .width(Length::FillPortion(2))
+            .wrapping(text::Wrapping::None),
         text(strings.get("search.folder"))
             .size(13)
-            .width(Length::FillPortion(3)),
+            .width(Length::FillPortion(3))
+            .wrapping(text::Wrapping::None),
         text(strings.get("browser.size"))
             .size(13)
             .width(RESULT_SIZE_WIDTH)
-            .align_x(Alignment::End),
-        Space::new().width(16),
-        text(strings.get("browser.modified"))
-            .size(13)
-            .width(RESULT_MODIFIED_WIDTH),
-        Space::new().width(12),
-    ]
-    .padding([0, ROW_PADDING[1]]);
+            .align_x(Alignment::End)
+            .wrapping(text::Wrapping::None),
+    ];
+    if show_modified {
+        header = header.push(Space::new().width(16)).push(
+            text(strings.get("browser.modified"))
+                .size(13)
+                .width(RESULT_MODIFIED_WIDTH)
+                .wrapping(text::Wrapping::None),
+        );
+    }
+    let header = header
+        .push(Space::new().width(12))
+        .padding([0, ROW_PADDING[1]]);
     let marker = if tab.file_system.is_remote() {
         '/'
     } else {
         std::path::MAIN_SEPARATOR
     };
-    let rows = results
-        .hits
-        .iter()
-        .enumerate()
-        .map(|(index, hit)| result_row(strings, id, results, (index, hit), marker));
+    let rows =
+        results.hits.iter().enumerate().map(|(index, hit)| {
+            result_row(strings, id, results, (index, hit), marker, show_modified)
+        });
     view.push(header)
         .push(
             scrollable(Column::with_children(rows).padding(iced::Padding::ZERO.right(12)))
@@ -225,6 +233,7 @@ fn result_row<'a>(
     results: &'a SearchResults,
     (index, hit): (usize, &'a SearchHit),
     marker: char,
+    show_modified: bool,
 ) -> Element<'a, Message> {
     let selected = results.selected == Some(index);
     let name = if hit.entry.is_directory() {
@@ -244,7 +253,7 @@ fn result_row<'a>(
         .and_then(local_time::local)
         .map(|time| local_time::format(&time, strings.get("date.format")))
         .unwrap_or_default();
-    let content = row![
+    let mut content = row![
         container(text(name).size(14).wrapping(text::Wrapping::None))
             .width(Length::FillPortion(2))
             .clip(true),
@@ -262,11 +271,18 @@ fn result_row<'a>(
         text(size)
             .size(13)
             .width(RESULT_SIZE_WIDTH)
-            .align_x(Alignment::End),
-        Space::new().width(16),
-        text(modified).size(13).width(RESULT_MODIFIED_WIDTH),
+            .align_x(Alignment::End)
+            .wrapping(text::Wrapping::None),
     ]
     .align_y(Alignment::Center);
+    if show_modified {
+        content = content.push(Space::new().width(16)).push(
+            text(modified)
+                .size(13)
+                .width(RESULT_MODIFIED_WIDTH)
+                .wrapping(text::Wrapping::None),
+        );
+    }
     let even = index.is_multiple_of(2);
     mouse_area(
         container(content)
