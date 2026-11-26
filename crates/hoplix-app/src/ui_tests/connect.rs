@@ -1,4 +1,4 @@
-use hoplix_core::Protocol;
+use hoplix_core::{HostAddress, Protocol};
 use iced::keyboard::key::Named;
 
 use super::fakes::{fingerprint, password};
@@ -125,6 +125,7 @@ fn unknown_host_keys_can_be_trusted_once() {
             certificate: false,
             host: HOST.to_string(),
             jump: false,
+            address: HostAddress::new(HOST, 22),
         })
     );
     assert!(harness.has("Unknown server"));

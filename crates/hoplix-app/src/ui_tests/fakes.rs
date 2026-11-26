@@ -179,6 +179,7 @@ pub fn update_source(updates: Arc<Updates>) -> UpdateSource {
 // Server
 
 pub const AGENT_USER: &str = "agent-user";
+pub const SHARED_KEY_DOMAIN: &str = ".shared-key.test";
 
 pub struct Logged {
     pub remote: PathBuf,
@@ -213,7 +214,11 @@ pub fn route_used_by(remote: &Path) -> Option<Route> {
 }
 
 pub fn fingerprint(host: &str) -> String {
-    format!("SHA256:fake-{host}")
+    if host.ends_with(SHARED_KEY_DOMAIN) {
+        format!("SHA256:fake-shared{SHARED_KEY_DOMAIN}")
+    } else {
+        format!("SHA256:fake-{host}")
+    }
 }
 
 pub fn connector(remote: PathBuf) -> Connector {
@@ -316,7 +321,10 @@ fn check_host_key(
     match entry {
         Some(value) if value == offered => Ok(()),
         Some(_) => Err(Error::new(changed, address)),
-        None => match trusted.iter().find(|trust| trust.fingerprint == offered) {
+        None => match trusted
+            .iter()
+            .find(|trust| trust.applies_to(host, port, &offered))
+        {
             Some(trust) => {
                 if trust.remember {
                     fs::write(file, format!("{saved}{address} {offered}\n"))
@@ -324,7 +332,7 @@ fn check_host_key(
                 }
                 Ok(())
             }
-            None => Err(Error::new(unknown, offered)),
+            None => Err(Error::new(unknown, offered).at_address(host, port)),
         },
     }
 }

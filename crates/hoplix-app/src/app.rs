@@ -6,9 +6,9 @@ use std::collections::{HashMap, VecDeque};
 
 use hoplix_core::{
     BoxFuture, Conflict, ConflictDecision, ConnectionOptions, ConnectionParams, Entry, Error,
-    ErrorKind, FileSystem, HostKeyTrust, JobId, JobSnapshot, Keyring, LocalFileSystem, Moved,
-    RecentList, Route, SecretBackend, SiteList, SortKey, SortOrder, TransferEvent, TransferQueue,
-    TrustStore, Vault, config_dir, is_valid_name, remove_recursive, sort_entries,
+    ErrorKind, FileSystem, HostAddress, HostKeyTrust, JobId, JobSnapshot, Keyring, LocalFileSystem,
+    Moved, RecentList, Route, SecretBackend, SiteList, SortKey, SortOrder, TransferEvent,
+    TransferQueue, TrustStore, Vault, config_dir, is_valid_name, remove_recursive, sort_entries,
 };
 use iced::keyboard::{Key, Modifiers};
 use iced::theme::Mode;
@@ -114,6 +114,7 @@ pub enum Dialog {
         certificate: bool,
         host: String,
         jump: bool,
+        address: HostAddress,
     },
     NewSiteFolder {
         parent: String,
@@ -941,23 +942,19 @@ impl Hoplix {
             }
             Err(error) => error,
         };
-        let untrusted = matches!(
-            error.kind(),
-            ErrorKind::UnknownHostKey | ErrorKind::UntrustedCertificate
-        );
         let jumps = usize::from(self.connect_form.uses_jump());
-        let repeated = self
-            .trusted
-            .iter()
-            .any(|trust| trust.fingerprint == error.detail());
-        if untrusted && !repeated && self.trusted.len() <= jumps {
+        let repeated = self.trusted.iter().any(|trust| trust.answers(&error));
+        if let Some(pending) = HostKeyTrust::for_error(&error, false)
+            .filter(|_| !repeated && self.trusted.len() <= jumps)
+        {
             self.dialog = Some(Dialog::HostKey {
-                fingerprint: error.detail().to_string(),
+                fingerprint: pending.fingerprint,
                 certificate: error.kind() == ErrorKind::UntrustedCertificate,
                 host: error
                     .hop()
                     .map_or_else(|| self.connect_form.host.trim().to_string(), str::to_string),
                 jump: error.hop().is_some(),
+                address: pending.address,
             });
             return Task::none();
         }
@@ -968,11 +965,17 @@ impl Hoplix {
     }
 
     fn answer_host_key(&mut self, answer: Option<bool>) -> Task<Message> {
-        let Some(Dialog::HostKey { fingerprint, .. }) = self.dialog.take() else {
+        let Some(Dialog::HostKey {
+            fingerprint,
+            address,
+            ..
+        }) = self.dialog.take()
+        else {
             return Task::none();
         };
         match answer {
             Some(remember) => self.connect(Some(HostKeyTrust {
+                address,
                 fingerprint,
                 remember,
             })),
@@ -1458,7 +1461,7 @@ mod tests {
     #[test]
     fn host_key_answers_close_the_prompt() {
         let mut app = app_with_layout(Layout::Modern);
-        let error = Error::new(ErrorKind::UnknownHostKey, "SHA256:abc");
+        let error = Error::new(ErrorKind::UnknownHostKey, "SHA256:abc").at_address("host.test", 22);
         let _ = app.update(Message::Connected(Err(error)));
         assert_eq!(
             app.dialog,
@@ -1467,12 +1470,14 @@ mod tests {
                 certificate: false,
                 host: String::new(),
                 jump: false,
+                address: HostAddress::new("host.test", 22),
             })
         );
         let _ = app.update(Message::DialogCancelled);
         assert_eq!(app.dialog, None);
 
-        let error = Error::new(ErrorKind::UntrustedCertificate, "SHA256:AB:CD");
+        let error = Error::new(ErrorKind::UntrustedCertificate, "SHA256:AB:CD")
+            .at_address("host.test", 990);
         let _ = app.update(Message::Connected(Err(error)));
         assert_eq!(
             app.dialog,
@@ -1481,6 +1486,7 @@ mod tests {
                 certificate: true,
                 host: String::new(),
                 jump: false,
+                address: HostAddress::new("host.test", 990),
             })
         );
         let _ = app.update(Message::DialogCancelled);
