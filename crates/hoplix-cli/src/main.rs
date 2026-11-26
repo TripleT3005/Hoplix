@@ -12,11 +12,12 @@ use hoplix_core::{
     Authentication, CompareOptions, CompareStatus, ComparedEntry, ConflictPolicy,
     ConnectionOptions, ConnectionParams, DEFAULT_PARALLELISM, Error, ErrorKind, ExportError,
     ExportFile, ExportScope, FileSystem, HostKeyTrust, JobId, JobSnapshot, JobStatus, JumpHost,
-    Keyring, LocalFileSystem, Pattern, ProxyCredentials, RetryPolicy, Route, SecretBackend, Site,
-    SiteExport, SiteList, SortKey, SortOrder, SpeedLimits, SyncAction, SyncDirection, SyncEndpoint,
-    SyncMode, SyncOptions, SyncPlan, TransferEvent, TransferQueue, TransferRequest, TrustStore,
-    Vault, config_dir, decrypt_export, encrypt_export, jump_secret_name, proxy_secret_name,
-    remove_recursive, secret_name, sort_entries, unlock_vault, utc_date,
+    Keyring, LocalFileSystem, Pattern, PermissionChange, ProxyCredentials, RetryPolicy, Route,
+    Search, SecretBackend, Site, SiteExport, SiteList, SortKey, SortOrder, SpeedLimits, SyncAction,
+    SyncDirection, SyncEndpoint, SyncMode, SyncOptions, SyncPlan, TransferEvent, TransferQueue,
+    TransferRequest, TrustStore, Vault, config_dir, decrypt_export, encrypt_export,
+    jump_secret_name, mode_text, permission_text, proxy_secret_name, remove_recursive, secret_name,
+    set_permissions_with, sort_entries, unlock_vault, utc_date,
 };
 
 use arguments::{Command, Invocation, Options, USAGE};
@@ -108,11 +109,12 @@ async fn run(invocation: Invocation) -> Result<(), String> {
         }
         Command::Stat(target) => {
             let opened = open(&target, options).await?;
-            let entry = opened
+            let properties = opened
                 .file_system
-                .metadata(&opened.path)
+                .properties(&opened.path)
                 .await
                 .map_err(describe)?;
+            let entry = &properties.entry;
             println!("path: {}", opened.path);
             println!(
                 "type: {}",
@@ -132,7 +134,69 @@ async fn run(invocation: Invocation) -> Result<(), String> {
             {
                 println!("modified: {} (Unix time)", seconds.as_secs());
             }
+            if let Some(mode) = properties.permissions {
+                println!(
+                    "permissions: {} ({})",
+                    mode_text(mode),
+                    permission_text(mode)
+                );
+            }
+            if let Some(owner) = &properties.owner {
+                println!("owner: {owner}");
+            }
+            if let Some(group) = &properties.group {
+                println!("group: {group}");
+            }
+            if let Some(attributes) = properties.attributes {
+                let flag = |value: bool| if value { "yes" } else { "no" };
+                println!("read-only: {}", flag(attributes.read_only));
+                println!("hidden: {}", flag(attributes.hidden));
+            }
             opened.file_system.close().await;
+        }
+        Command::Chmod {
+            mode,
+            target,
+            recursive,
+        } => {
+            let opened = open(&target, options).await?;
+            let change = PermissionChange {
+                mode,
+                recursive,
+                files: true,
+                folders: true,
+            };
+            let result =
+                set_permissions_with(Arc::clone(&opened.file_system), &opened.path, change).await;
+            opened.file_system.close().await;
+            let changed = result.map_err(describe)?;
+            if recursive {
+                println!("{changed} changed");
+            }
+        }
+        Command::Find { target, pattern } => {
+            let opened = open(&target, options).await?;
+            let mut search = Search::new(
+                Arc::clone(&opened.file_system),
+                &opened.path,
+                &pattern,
+                options.depth,
+            );
+            let mut unreadable = 0;
+            while let Some(batch) = search.next_batch().await {
+                if let Some(error) = batch.error {
+                    unreadable += 1;
+                    eprintln!("hoplix-cli: {}", describe(error));
+                }
+                for hit in batch.hits {
+                    let marker = if hit.entry.is_directory() { "/" } else { "" };
+                    println!("{}{marker}", hit.path);
+                }
+            }
+            opened.file_system.close().await;
+            if unreadable > 0 {
+                return Err(format!("{unreadable} folder(s) could not be read"));
+            }
         }
         Command::MakeDirectory(target) => {
             let opened = open(&target, options).await?;

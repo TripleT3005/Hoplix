@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use hoplix_core::{JumpHost, Proxy, ProxyKind};
+use hoplix_core::{JumpHost, Proxy, ProxyKind, parse_mode};
 
 use crate::target::{Target, split_host_port};
 
@@ -47,6 +47,15 @@ pub enum Command {
         to: Target,
         recursive: bool,
     },
+    Chmod {
+        mode: u32,
+        target: Target,
+        recursive: bool,
+    },
+    Find {
+        target: Target,
+        pattern: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +99,7 @@ pub struct Options {
     pub limit_upload: Option<u64>,
     pub include_passwords: bool,
     pub folder: Option<String>,
+    pub depth: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +180,10 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
             }
             "--include-passwords" => options.include_passwords = true,
             "--folder" => options.folder = Some(value("--folder")?),
+            "--depth" => {
+                let depth = number("--depth", &value("--depth")?, 1, u32::MAX)?;
+                options.depth = Some(usize::try_from(depth).unwrap_or(usize::MAX));
+            }
             "-r" | "--recursive" => recursive = true,
             "-h" | "--help" => positional.insert(0, "help".to_string()),
             "-V" | "--version" => positional.insert(0, "version".to_string()),
@@ -194,9 +208,13 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
                 | Command::Copy { .. }
                 | Command::Compare { .. }
                 | Command::Sync { .. }
+                | Command::Chmod { .. }
         )
     {
-        return Err("-r only works with get, put, cp, rm, compare and sync".to_string());
+        return Err("-r only works with get, put, cp, rm, chmod, compare and sync".to_string());
+    }
+    if options.depth.is_some() && !matches!(command, Command::Find { .. }) {
+        return Err("--depth only works with find".to_string());
     }
     let comparing = matches!(command, Command::Compare { .. } | Command::Sync { .. });
     if !comparing && (options.size_only || options.skip_hidden || !options.exclude.is_empty()) {
@@ -426,6 +444,24 @@ fn command_from(positional: &[String], recursive: bool) -> Result<Command, Strin
                 recursive,
             })
         }),
+        "chmod" => expect(2).and_then(|()| {
+            Ok(Command::Chmod {
+                mode: parse_mode(&rest[0]).ok_or_else(|| {
+                    format!(
+                        "chmod: {} is not a mode, use three or four octal digits like 644",
+                        rest[0]
+                    )
+                })?,
+                target: target(1)?,
+                recursive,
+            })
+        }),
+        "find" => expect(2).and_then(|()| {
+            Ok(Command::Find {
+                target: target(0)?,
+                pattern: rest[1].clone(),
+            })
+        }),
         "mv" => expect(2).and_then(|()| {
             Ok(Command::Move {
                 from: target(0)?,
@@ -452,6 +488,14 @@ Commands:
   mkdir <target>          Create a folder
   rm [-r] <target>        Delete a file, or a folder with everything in it (-r)
   mv <from> <to>          Rename or move within the same server
+  chmod [-r] <mode> <target>
+                          Change the permissions (octal, e.g. 644) of a file or
+                          folder (-r: also everything inside); SFTP, FTP with
+                          SITE CHMOD and local folders on Linux and macOS
+  find <target> <pattern> [--depth <n>]
+                          Search the folder and its subfolders for names that
+                          contain the pattern, or match it with * and ? (quote
+                          it); --depth 1 searches only the folder itself
   compare [-r] <a> <b>    Show the differences between two folders
   sync [-r] <from> <to>   Copy new and newer files so that <to> matches <from>
   sites                   List the sites saved in Hoplix
@@ -952,5 +996,35 @@ mod tests {
         ] {
             assert!(USAGE.contains(option), "{option}");
         }
+    }
+
+    #[test]
+    fn chmod_and_find_parse() {
+        assert_eq!(
+            run(&["chmod", "-r", "0755", "sftp://demo@host/www"])
+                .expect("chmod")
+                .command,
+            Command::Chmod {
+                mode: 0o755,
+                target: remote("sftp://demo@host/www"),
+                recursive: true,
+            }
+        );
+        let found = run(&["find", "sftp://demo@host/www", "*.log", "--depth", "2"]).expect("find");
+        assert_eq!(
+            found.command,
+            Command::Find {
+                target: remote("sftp://demo@host/www"),
+                pattern: "*.log".to_string(),
+            }
+        );
+        assert_eq!(found.options.depth, Some(2));
+        assert!(run(&["chmod", "rwx", "/tmp/a"]).is_err());
+        assert!(run(&["chmod", "644"]).is_err());
+        assert!(run(&["find", "/tmp", "x", "--depth", "0"]).is_err());
+        assert!(run(&["ls", "/tmp", "--depth", "2"]).is_err());
+        assert!(run(&["find", "-r", "/tmp", "x"]).is_err());
+        assert!(USAGE.contains("chmod [-r] <mode> <target>"));
+        assert!(USAGE.contains("find <target> <pattern>"));
     }
 }
