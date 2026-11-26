@@ -5,6 +5,7 @@ mod edit;
 mod fakes;
 mod file_list;
 mod palette;
+mod preview;
 mod queue;
 mod routes;
 mod secrets;
@@ -139,6 +140,7 @@ pub struct Harness {
     driving: bool,
     pub opened: Arc<Mutex<Vec<(PathBuf, String)>>>,
     pub updates: Arc<fakes::Updates>,
+    pub clipboard: Vec<String>,
 }
 
 impl Harness {
@@ -200,6 +202,7 @@ impl Harness {
             driving: false,
             opened,
             updates,
+            clipboard: Vec::new(),
         };
         harness.run(task);
         harness.open_window();
@@ -251,6 +254,10 @@ impl Harness {
                     self.run(task);
                 }
                 Some(Action::Widget(operation)) => self.operate(operation),
+                Some(Action::Clipboard(iced_test::runtime::clipboard::Action::Write {
+                    contents,
+                    ..
+                })) => self.clipboard.push(contents),
                 Some(_) => {}
             }
         }

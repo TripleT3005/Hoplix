@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use hoplix_core::{
     AGENT_MISSING, Authentication, BoxFuture, ConnectionOptions, ConnectionParams, Entry, Error,
     ErrorKind, FileSystem, FtpMode, HostKeyTrust, LocalFileSystem, Properties, Protocol, Reader,
-    Result, Route, TrustStore, Writer, ensure_passive_mode,
+    Result, Route, TrustStore, Writer, encode_url_path, ensure_passive_mode,
 };
 
 use super::test_password;
@@ -72,6 +72,10 @@ impl Folder {
 impl FileSystem for Folder {
     fn label(&self) -> Option<String> {
         self.label.clone()
+    }
+
+    fn url(&self, path: &str) -> Option<String> {
+        self.label.as_ref().map(|label| server_url(label, path))
     }
 
     fn home(&self) -> BoxFuture<'_, Result<String>> {
@@ -153,6 +157,13 @@ impl FileSystem for Folder {
     fn parent(&self, path: &str) -> Option<String> {
         self.inner.parent(path)
     }
+}
+
+pub fn server_url(label: &str, path: &str) -> String {
+    format!(
+        "sftp://{label}/{}",
+        encode_url_path(path.trim_start_matches('/'))
+    )
 }
 
 // Opener

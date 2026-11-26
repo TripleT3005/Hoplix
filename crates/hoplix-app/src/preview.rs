@@ -122,6 +122,11 @@ impl Default for PreviewState {
 // State
 
 impl PreviewState {
+    #[cfg(test)]
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn is_resizing(&self) -> bool {
         self.resize.is_some()
     }
@@ -250,7 +255,7 @@ fn decode_utf8(bytes: &[u8]) -> String {
 }
 
 fn decode_utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> String {
-    let units = bytes.chunks_exact(2).map(|pair| unit([pair[0], pair[1]]));
+    let units = bytes.as_chunks::<2>().0.iter().map(|&pair| unit(pair));
     char::decode_utf16(units)
         .map(|character| character.unwrap_or(char::REPLACEMENT_CHARACTER))
         .collect()
@@ -347,7 +352,12 @@ impl Hoplix {
                 } else {
                     Duration::ZERO
                 };
-                let (task, handle) = Task::perform(tokio::time::sleep(wait), move |()| {
+                let settle = async move {
+                    if !wait.is_zero() {
+                        tokio::time::sleep(wait).await;
+                    }
+                };
+                let (task, handle) = Task::perform(settle, move |()| {
                     Message::Preview(PreviewMessage::Settled(generation))
                 })
                 .abortable();
@@ -561,12 +571,12 @@ mod tests {
     fn new_subjects_cancel_older_loads() {
         let mut state = PreviewState::default();
         assert!(state.follow(Some(subject("a.txt", 1, true)), Content::Nothing));
-        let first = state.generation;
+        let first = state.generation();
         assert!(!state.follow(Some(subject("a.txt", 1, true)), Content::Nothing));
         assert_eq!(state.generation, first);
         assert!(state.follow(Some(subject("b.txt", 1, true)), Content::Nothing));
         assert!(!state.accepts(first));
-        assert!(state.accepts(state.generation));
+        assert!(state.accepts(state.generation()));
         let mut changed = subject("b.txt", 2, true);
         changed.entry.size = Some(3);
         assert!(state.follow(Some(changed), Content::Nothing));
