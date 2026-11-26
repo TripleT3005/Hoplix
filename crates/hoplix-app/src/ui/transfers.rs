@@ -3,8 +3,8 @@ use hoplix_core::{
     TransferDirection,
 };
 use iced::widget::{
-    Column, Space, button, column, container, pick_list, progress_bar, row, scrollable, text,
-    text_input,
+    Column, Space, button, column, container, pick_list, progress_bar, responsive, row, scrollable,
+    text, text_input, tooltip,
 };
 use iced::{Alignment, Element, Length};
 
@@ -22,6 +22,13 @@ const DETAILS_WIDTH: f32 = 300.0;
 const POLICY_WIDTH: f32 = 190.0;
 const EXPORT_WIDTH: f32 = 260.0;
 const TIME_WIDTH: f32 = 130.0;
+const ARROW_WIDTH: f32 = 18.0;
+const ROW_SPACING: f32 = 12.0;
+const SCROLLBAR_GAP: f32 = 12.0;
+const ACTIONS_WIDTH: f32 = 150.0;
+const DETAIL_SIZE: u32 = 12;
+const NAME_SIZE: u32 = 13;
+const CHAR_WIDTH: f32 = 0.6;
 
 // Panel
 
@@ -87,9 +94,13 @@ pub fn view(app: &Hoplix) -> Option<Element<'_, Message>> {
     if app.transfer_panel_open {
         content = content.push(
             scrollable(
-                Column::with_children(queue_rows(app))
-                    .spacing(2)
-                    .padding(iced::Padding::ZERO.right(12)),
+                responsive(move |size| {
+                    Column::with_children(queue_rows(app, size.width - SCROLLBAR_GAP))
+                        .spacing(2)
+                        .padding(iced::Padding::ZERO.right(SCROLLBAR_GAP))
+                        .into()
+                })
+                .height(Length::Shrink),
             )
             .height(Length::Fixed(LIST_HEIGHT)),
         );
@@ -117,7 +128,7 @@ fn tab_button<'a>(label: String, tab: PanelTab, current: PanelTab) -> Element<'a
         .into()
 }
 
-fn queue_rows(app: &Hoplix) -> Vec<Element<'_, Message>> {
+fn queue_rows(app: &Hoplix, width: f32) -> Vec<Element<'_, Message>> {
     let mut groups: Vec<(&Location, Vec<&JobSnapshot>)> = Vec::new();
     let mut others = Vec::new();
     for job in &app.transfer_jobs {
@@ -135,13 +146,17 @@ fn queue_rows(app: &Hoplix) -> Vec<Element<'_, Message>> {
         let first = jobs.first().map(|job| job.id).unwrap_or_default();
         rows.push(
             row![
-                text(strings.format(
-                    "transfer.waiting.title",
-                    &[("name", &app.location_name(location))]
-                ))
-                .size(13)
-                .style(text::primary)
-                .width(Length::Fill),
+                container(
+                    text(strings.format(
+                        "transfer.waiting.title",
+                        &[("name", &app.location_name(location))]
+                    ))
+                    .size(NAME_SIZE)
+                    .style(text::primary)
+                    .wrapping(text::Wrapping::None)
+                )
+                .width(Length::Fill)
+                .clip(true),
                 button(text(strings.get("transfer.waiting.connect")).size(12))
                     .padding([2, 8])
                     .style(theme::secondary_button)
@@ -151,9 +166,9 @@ fn queue_rows(app: &Hoplix) -> Vec<Element<'_, Message>> {
             .align_y(Alignment::Center)
             .into(),
         );
-        rows.extend(jobs.into_iter().map(|job| job_row(app, job)));
+        rows.extend(jobs.into_iter().map(|job| job_row(app, job, width)));
     }
-    rows.extend(others.into_iter().map(|job| job_row(app, job)));
+    rows.extend(others.into_iter().map(|job| job_row(app, job, width)));
     rows
 }
 
@@ -211,12 +226,21 @@ fn history_view(app: &Hoplix) -> Element<'_, Message> {
     if entries.is_empty() {
         list = list.push(text(strings.get("history.empty")).size(13));
     }
-    for entry in entries {
-        list = list.push(history_row(strings, entry));
-    }
+    let rows = responsive(move |size| {
+        let width = size.width - SCROLLBAR_GAP;
+        Column::with_children(
+            entries
+                .iter()
+                .map(|entry| history_row(strings, entry, width)),
+        )
+        .spacing(2)
+        .padding(iced::Padding::ZERO.right(SCROLLBAR_GAP))
+        .into()
+    })
+    .height(Length::Shrink);
     column![
         controls,
-        scrollable(list).height(Length::Fixed(LIST_HEIGHT - 32.0))
+        scrollable(list.push(rows)).height(Length::Fixed(LIST_HEIGHT - 32.0))
     ]
     .spacing(4)
     .into()
@@ -229,7 +253,11 @@ fn history_button(label: &str, message: HistoryMessage) -> Element<'_, Message> 
         .into()
 }
 
-fn history_row<'a>(strings: &'a Strings, entry: &'a HistoryEntry) -> Element<'a, Message> {
+fn history_row<'a>(
+    strings: &'a Strings,
+    entry: &'a HistoryEntry,
+    width: f32,
+) -> Element<'a, Message> {
     let arrow = match entry.direction {
         TransferDirection::Download => "↓",
         TransferDirection::Upload => "↑",
@@ -250,22 +278,73 @@ fn history_row<'a>(strings: &'a Strings, entry: &'a HistoryEntry) -> Element<'a,
     if let Some(speed) = entry.bytes_per_second() {
         details.push(speed_text(strings, speed));
     }
+    let details_width = DETAILS_WIDTH * 0.7;
+    let route_width =
+        width - TIME_WIDTH - ARROW_WIDTH - details_width - DETAILS_WIDTH - 4.0 * ROW_SPACING;
+    let route = format::shorten_route(
+        &entry.source,
+        &entry.target,
+        chars_within(route_width, DETAIL_SIZE),
+    );
     row![
-        text(time_text(strings, entry.finished))
-            .size(12)
-            .width(Length::Fixed(TIME_WIDTH)),
-        text(arrow).size(14).width(18),
-        text(format!("{} → {}", entry.source, entry.target))
-            .size(12)
-            .width(Length::Fill),
-        text(details.join(" · "))
-            .size(12)
-            .width(Length::Fixed(DETAILS_WIDTH * 0.7)),
-        text(outcome).size(12).width(Length::Fixed(DETAILS_WIDTH)),
+        single_line(
+            time_text(strings, entry.finished),
+            None,
+            DETAIL_SIZE,
+            TIME_WIDTH
+        ),
+        text(arrow).size(14).width(ARROW_WIDTH),
+        container(single_line(
+            route,
+            Some(format::route(&entry.source, &entry.target)),
+            DETAIL_SIZE,
+            route_width.max(0.0),
+        ))
+        .width(Length::Fill),
+        single_line(details.join(" · "), None, DETAIL_SIZE, details_width),
+        single_line(
+            format::shorten_end(&outcome, chars_within(DETAILS_WIDTH, DETAIL_SIZE)),
+            Some(outcome),
+            DETAIL_SIZE,
+            DETAILS_WIDTH,
+        ),
     ]
-    .spacing(12)
+    .spacing(ROW_SPACING)
     .align_y(Alignment::Center)
     .into()
+}
+
+// Single lines
+
+fn chars_within(width: f32, size: u32) -> usize {
+    let count = (width / (size as f32 * CHAR_WIDTH)).floor();
+    if count >= 1.0 { count as usize } else { 1 }
+}
+
+fn single_line<'a>(
+    shown: String,
+    full: Option<String>,
+    size: u32,
+    width: f32,
+) -> Element<'a, Message> {
+    let line = container(
+        text(shown.clone())
+            .size(size)
+            .wrapping(text::Wrapping::None),
+    )
+    .width(Length::Fixed(width))
+    .clip(true);
+    match full.filter(|full| *full != shown) {
+        Some(full) => tooltip(
+            line,
+            container(text(full).size(size))
+                .padding([4, 8])
+                .style(container::bordered_box),
+            tooltip::Position::Top,
+        )
+        .into(),
+        None => line.into(),
+    }
 }
 
 fn summary(app: &Hoplix) -> String {
@@ -339,7 +418,7 @@ fn action_button(label: &str, action: TransferAction) -> Element<'_, Message> {
 
 // Jobs
 
-fn job_row<'a>(app: &'a Hoplix, job: &'a JobSnapshot) -> Element<'a, Message> {
+fn job_row<'a>(app: &'a Hoplix, job: &'a JobSnapshot, width: f32) -> Element<'a, Message> {
     let strings = &app.strings;
     let arrow = match app
         .transfer_targets
@@ -357,10 +436,15 @@ fn job_row<'a>(app: &'a Hoplix, job: &'a JobSnapshot) -> Element<'a, Message> {
     {
         name = format!("{name} – {file}");
     }
+    let name_width = width - DETAILS_WIDTH - ACTIONS_WIDTH - 2.0 * ROW_SPACING - ARROW_WIDTH - 4.0;
+    let shown = format::shorten_path(&name, chars_within(name_width, NAME_SIZE));
     let title = column![
-        row![text(arrow).size(14).width(18), text(name).size(13)]
-            .spacing(4)
-            .align_y(Alignment::Center),
+        row![
+            text(arrow).size(14).width(ARROW_WIDTH),
+            single_line(shown, Some(name), NAME_SIZE, name_width.max(0.0)),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center),
         progress_bar(0.0..=1.0, job.fraction()).girth(6),
     ]
     .spacing(3)
@@ -449,12 +533,17 @@ fn job_row<'a>(app: &'a Hoplix, job: &'a JobSnapshot) -> Element<'a, Message> {
     };
     row![
         title,
-        text(status).size(12).width(DETAILS_WIDTH),
+        single_line(
+            format::shorten_end(&status, chars_within(DETAILS_WIDTH, DETAIL_SIZE)),
+            Some(status),
+            DETAIL_SIZE,
+            DETAILS_WIDTH,
+        ),
         container(buttons)
-            .width(Length::Fixed(150.0))
+            .width(Length::Fixed(ACTIONS_WIDTH))
             .align_x(Alignment::End),
     ]
-    .spacing(12)
+    .spacing(ROW_SPACING)
     .align_y(Alignment::Center)
     .into()
 }

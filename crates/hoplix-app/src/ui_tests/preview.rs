@@ -277,3 +277,107 @@ fn ctrl_shift_c_copies_local_paths_and_server_urls() {
     assert!(!expected.contains(fakes::password()));
     assert!(harness.has("2 paths copied to the clipboard."));
 }
+
+// Layout
+
+const REPORT: &str = "quarterly-report-final.txt";
+const HEADERS: [&str; 4] = ["Name", "Type", "Size", "Modified"];
+const HEADER_LINE: f32 = 13.0 * LINE_HEIGHT + 0.5;
+
+fn report_folder(name: &str, layout: Layout, size: Size) -> Harness {
+    let mut harness = Harness::start(name, layout, |root| {
+        fs::write(root.data().join(REPORT), NOTES).expect("writing the report failed");
+        write_files(&root.data(), &["photo.png", "docs/"]);
+    });
+    harness.resize(size);
+    harness.key(Named::F3);
+    harness.click(REPORT);
+    assert_eq!(shown_text(&harness), NOTES);
+    harness
+}
+
+fn assert_list_fits(harness: &mut Harness, case: &str) {
+    let preview = harness.bounds("Preview");
+    let mut labels: Vec<String> = harness
+        .texts()
+        .into_iter()
+        .filter(|text| HEADERS.iter().any(|header| text.starts_with(header)))
+        .collect();
+    labels.sort();
+    labels.dedup();
+    let mut names = 0;
+    for label in &labels {
+        for (bounds, visible) in harness.find_texts(label) {
+            if bounds.x >= preview.x {
+                continue;
+            }
+            let visible = visible.unwrap_or_else(|| panic!("{case}: {label:?} is hidden"));
+            assert!(
+                visible.width + 0.5 >= bounds.width,
+                "{case}: {label:?} is cut off: {visible:?} of {bounds:?}"
+            );
+            assert!(bounds.height <= HEADER_LINE, "{case}: {label:?} wraps");
+            assert!(
+                bounds.x + bounds.width <= preview.x,
+                "{case}: {label:?} reaches into the preview"
+            );
+            names += usize::from(label.starts_with("Name"));
+        }
+    }
+    assert_eq!(names, 1, "{case}: the Name header is missing");
+    let (file, visible) = harness
+        .find_texts(REPORT)
+        .into_iter()
+        .min_by(|first, second| first.0.x.total_cmp(&second.0.x))
+        .unwrap_or_else(|| panic!("{case}: {REPORT} is not listed"));
+    let visible = visible.unwrap_or_else(|| panic!("{case}: {REPORT} is hidden"));
+    assert!(
+        file.x < preview.x,
+        "{case}: {REPORT} is only in the preview"
+    );
+    assert!(
+        visible.width + 0.5 >= file.width,
+        "{case}: the name column cuts {REPORT}: {visible:?} of {file:?}"
+    );
+    assert!(
+        visible.x + visible.width <= preview.x,
+        "{case}: {REPORT} overlaps"
+    );
+}
+
+#[test]
+fn the_file_list_keeps_its_name_column_next_to_the_preview() {
+    let cases = [
+        ("classic-large", Layout::Classic, Size::new(1500.0, 950.0)),
+        ("classic-small", Layout::Classic, Size::new(1000.0, 700.0)),
+        ("modern-small", Layout::Modern, Size::new(1000.0, 700.0)),
+        ("modern-large", Layout::Modern, Size::new(1500.0, 950.0)),
+    ];
+    for (case, layout, size) in cases {
+        let mut harness = report_folder(&format!("preview-fit-{case}"), layout, size);
+        assert_list_fits(&mut harness, case);
+        harness.app.preview.width = crate::preview::MAX_WIDTH;
+        assert_list_fits(&mut harness, case);
+    }
+}
+
+#[test]
+fn dragging_the_divider_stops_before_the_file_list() {
+    let mut harness = report_folder(
+        "preview-drag-limit",
+        Layout::Classic,
+        Size::new(1500.0, 950.0),
+    );
+    let preview = harness.bounds("Preview");
+    let divider = Point::new(preview.x - 9.0, preview.center_y() + 200.0);
+    harness.move_to(divider);
+    harness.press();
+    assert!(harness.app.preview.is_resizing());
+    harness.send(Message::Preview(PreviewMessage::Resized(divider.x)));
+    harness.send(Message::Preview(PreviewMessage::Resized(0.0)));
+    harness.send(Message::Preview(PreviewMessage::ResizeEnded));
+    let width = harness.app.preview.width;
+    assert!(width > crate::preview::MIN_WIDTH, "{width}");
+    assert!(width < crate::preview::DEFAULT_WIDTH, "{width}");
+    assert_list_fits(&mut harness, "dragged");
+}

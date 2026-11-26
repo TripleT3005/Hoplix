@@ -1,13 +1,14 @@
 use hoplix_core::{
-    ChecksumMode, ConflictPolicy, HISTORY_FILE, JobStatus, Location, Protocol, QUEUE_FILE,
-    RecentConnection, ResumePoint, SavedJob, SavedQueue, Site, SiteAuth, SiteList,
+    ChecksumMode, ConflictPolicy, HISTORY_FILE, HistoryEntry, HistoryResult, JobStatus, Location,
+    Protocol, QUEUE_FILE, RecentConnection, ResumePoint, SavedJob, SavedQueue, Site, SiteAuth,
+    SiteList, TransferDirection,
 };
 use iced::keyboard::key::Named;
 
 use super::fakes::{fingerprint, password};
 use super::*;
 use crate::app::Page;
-use crate::queue_store::HistoryMessage;
+use crate::queue_store::{HistoryMessage, PanelTab};
 use crate::transfer_settings::TransferSetting;
 
 // Constants
@@ -288,11 +289,19 @@ fn history_lists_filters_exports_and_clears_finished_transfers() {
     assert!(harness.has("Skipped"));
     assert!(harness.contains("Failed: The path does not exist"));
     assert!(harness.contains("SHA-256 verified"));
-    assert!(harness.contains(&format!(
-        "{} → {}",
-        text_of(&data.join("a.txt")),
-        text_of(&data.join("target").join("a.txt"))
-    )));
+    let tail = format!("{}a.txt", std::path::MAIN_SEPARATOR);
+    assert!(
+        harness
+            .texts()
+            .iter()
+            .any(|text| text.contains("a.txt → ") && text.ends_with(&tail))
+    );
+    assert!(
+        harness
+            .app
+            .history_export(false)
+            .contains(&text_of(&data.join("target").join("a.txt")))
+    );
 
     harness.send(Message::History(HistoryMessage::Filter(Some(
         hoplix_core::HistoryResult::Failed,
@@ -375,4 +384,80 @@ fn checksum_results_are_shown_and_can_be_switched_off() {
     harness.drive_transfers_until(finished);
     assert!(harness.contains("Done · "));
     assert!(!harness.contains("verified"));
+}
+
+// Long paths
+
+const LONG_SOURCE: &str = r"C:\Users\demo\Documents\Projects\Archive\2026\Quarterly\big-upload.bin";
+const LONG_TARGET: &str =
+    "demo@files.example.test:/home/demo/uploads/archive/2026/quarterly/big-upload.bin";
+const FINISHED: u64 = 1_773_576_000;
+const DETAIL_LINE: f32 = 12.0 * LINE_HEIGHT + 0.5;
+
+fn history_entry(source: &str, target: &str, offset: u64) -> HistoryEntry {
+    HistoryEntry {
+        finished: FINISHED + offset,
+        direction: TransferDirection::Upload,
+        source: source.to_string(),
+        target: target.to_string(),
+        size: 48 * 1024 * 1024,
+        duration_ms: 12_000,
+        result: HistoryResult::Done,
+        error: String::new(),
+        checksum: None,
+    }
+}
+
+pub fn long_history(name: &str) -> Harness {
+    let mut harness = Harness::start(name, Layout::Classic, |_| {});
+    harness.resize(Size::new(1500.0, 950.0));
+    let entries = [
+        (r"C:\demo\a.txt", "demo@files.example.test:/a.txt"),
+        (LONG_SOURCE, LONG_TARGET),
+        (r"C:\demo\b.txt", "demo@files.example.test:/b.txt"),
+    ];
+    for (offset, (source, target)) in (0..).zip(entries) {
+        harness
+            .app
+            .history
+            .history
+            .push(history_entry(source, target, offset * 60));
+    }
+    harness.app.transfer_panel_open = true;
+    harness.send(Message::History(HistoryMessage::ShowTab(PanelTab::History)));
+    harness
+}
+
+#[test]
+fn long_history_paths_stay_on_one_line() {
+    let mut harness = long_history("history-long");
+    let short = harness.bounds(r"C:\demo\a.txt → demo@files.example.test:/a.txt");
+    let texts = harness.texts();
+    let long = texts
+        .iter()
+        .find(|text| text.contains("big-upload.bin → ") && text.ends_with("/big-upload.bin"))
+        .unwrap_or_else(|| panic!("the long entry is missing: {texts:?}"));
+    assert!(long.contains('…'), "{long:?} is not shortened");
+    assert!(long.starts_with(r"C:\Users\"), "{long:?}");
+    let (bounds, visible) = harness.find_texts(long)[0];
+    let visible = visible.expect("the long entry is hidden");
+    assert!(bounds.height <= DETAIL_LINE, "{long:?} wraps: {bounds:?}");
+    assert!((bounds.height - short.height).abs() < 0.5, "{bounds:?}");
+    assert!(
+        visible.width + 0.5 >= bounds.width,
+        "{long:?} is cut off: {visible:?} of {bounds:?}"
+    );
+
+    let mut rows: Vec<f32> = texts
+        .iter()
+        .filter(|text| text.contains(" → "))
+        .flat_map(|text| harness.find_texts(text))
+        .map(|(bounds, _)| bounds.y)
+        .collect();
+    rows.sort_by(f32::total_cmp);
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    let first = rows[1] - rows[0];
+    let second = rows[2] - rows[1];
+    assert!((first - second).abs() < 0.5, "rows differ: {rows:?}");
+    assert!(first < 2.0 * DETAIL_LINE, "rows are too tall: {rows:?}");
 }
