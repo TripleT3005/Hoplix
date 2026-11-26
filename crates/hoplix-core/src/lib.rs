@@ -1,4 +1,5 @@
 mod certificates;
+mod checksum;
 mod connection;
 mod encoding;
 mod entry;
@@ -28,6 +29,10 @@ pub mod update;
 mod test_support;
 
 pub use certificates::certificate_fingerprint;
+pub use checksum::{
+    ChecksumMode, HashAlgorithm, Hasher, Verification, checksum_algorithms, file_checksum,
+    hash_file, verify_copy,
+};
 pub use connection::{
     Authentication, ConnectionParams, HostAddress, HostKeyTrust, Protocol, connect, connect_with,
 };
