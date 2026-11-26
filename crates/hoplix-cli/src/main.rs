@@ -9,14 +9,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use hoplix_core::{
-    Authentication, CompareOptions, CompareStatus, ComparedEntry, ConflictPolicy,
+    Authentication, ChecksumMode, CompareOptions, CompareStatus, ComparedEntry, ConflictPolicy,
     ConnectionOptions, ConnectionParams, DEFAULT_PARALLELISM, Error, ErrorKind, ExportError,
     ExportFile, ExportScope, FileSystem, HostKeyTrust, JobId, JobSnapshot, JobStatus, JumpHost,
     Keyring, LocalFileSystem, Pattern, ProxyCredentials, RetryPolicy, Route, SecretBackend, Site,
     SiteExport, SiteList, SortKey, SortOrder, SpeedLimits, SyncAction, SyncDirection, SyncEndpoint,
     SyncMode, SyncOptions, SyncPlan, TransferEvent, TransferQueue, TransferRequest, TrustStore,
-    Vault, config_dir, decrypt_export, encrypt_export, jump_secret_name, proxy_secret_name,
-    remove_recursive, secret_name, sort_entries, unlock_vault, utc_date,
+    Vault, Verification, config_dir, decrypt_export, encrypt_export, jump_secret_name,
+    proxy_secret_name, remove_recursive, secret_name, sort_entries, unlock_vault, utc_date,
 };
 
 use arguments::{Command, Invocation, Options, USAGE};
@@ -268,6 +268,7 @@ async fn transfer(
     });
     let mut events = queue.subscribe();
     let driver = tokio::spawn(queue.clone().drive());
+    let verify = options.verify;
     queue.add(TransferRequest {
         source: Arc::clone(&source.file_system),
         source_path: source.path.clone(),
@@ -281,8 +282,17 @@ async fn transfer(
         let Some(event) = events.recv().await else {
             break Err("the transfer stopped unexpectedly".to_string());
         };
-        let TransferEvent::Updated(job) = event else {
-            continue;
+        let job = match event {
+            TransferEvent::Updated(job) => job,
+            TransferEvent::Verified {
+                path, verification, ..
+            } => {
+                if verify {
+                    report_verification(&path, verification, interactive);
+                }
+                continue;
+            }
+            _ => continue,
         };
         match &job.status {
             JobStatus::Completed => {
@@ -502,8 +512,17 @@ async fn wait_for(
         let Some(event) = events.recv().await else {
             return Err("the transfer stopped unexpectedly".to_string());
         };
-        let TransferEvent::Updated(job) = event else {
-            continue;
+        let job = match event {
+            TransferEvent::Updated(job) => job,
+            TransferEvent::Verified {
+                job,
+                path,
+                verification,
+            } if jobs.contains(&job) => {
+                report_verification(&path, verification, interactive);
+                continue;
+            }
+            _ => continue,
         };
         if !jobs.contains(&job.id) || finished.contains(&job.id) {
             continue;
@@ -555,7 +574,26 @@ fn queue_for(parallelism: usize, options: &Options) -> TransferQueue {
         download: options.limit_download,
         upload: options.limit_upload,
     });
+    if options.verify {
+        queue.set_checksum_mode(ChecksumMode::WhenSupported);
+    }
     queue
+}
+
+fn verification_text(verification: Verification) -> String {
+    match verification {
+        Verification::Matched(algorithm) => format!("verified ({})", algorithm.name()),
+        Verification::SizeChecked => "size checked (no checksum support)".to_string(),
+        Verification::Mismatch(Some(algorithm)) => format!("MISMATCH ({})", algorithm.name()),
+        Verification::Mismatch(None) => "MISMATCH (size)".to_string(),
+    }
+}
+
+fn report_verification(path: &str, verification: Verification, interactive: bool) {
+    if interactive {
+        eprint!("\r\x1b[2K");
+    }
+    println!("{}: {path}", verification_text(verification));
 }
 
 fn split(target: &Opened) -> (String, Option<String>) {
