@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use hoplix_core::{
-    Error, ErrorKind, FileSystem, SecretBackend, SecretSlot, Site, change_master_password,
-    create_vault, jump_secret_name, move_to_keyring, move_to_vault, proxy_secret_name, secret_name,
-    site_id_of, unlock_vault,
+    Error, ErrorKind, FileSystem, Location, SecretBackend, SecretSlot, Site,
+    change_master_password, create_vault, jump_secret_name, move_to_keyring, move_to_vault,
+    proxy_secret_name, secret_name, site_id_of, unlock_vault,
 };
 use iced::Task;
 
@@ -593,6 +593,7 @@ impl Hoplix {
 
     pub(crate) fn open_connection(&mut self, file_system: Arc<dyn FileSystem>) -> Task<Message> {
         self.remember_connection();
+        let direct = self.direct_connection();
         let site = self
             .connect_form
             .site
@@ -653,6 +654,14 @@ impl Hoplix {
             }
             None => (None, None),
         };
+        let location = match (&self.connect_form.site, &direct) {
+            (Some(id), _) => Some(Location::Site(id.clone())),
+            (None, Some(connection)) => Some(Location::Direct(connection.clone())),
+            (None, None) => None,
+        };
+        if let Some(location) = &location {
+            self.bind_connection(location, &file_system);
+        }
         if let Some(task) = self.take_reconnect(&file_system) {
             tasks.push(task);
             return Task::batch(tasks);
@@ -663,6 +672,11 @@ impl Hoplix {
         };
         tasks.push(self.open_tab(pane, file_system, title, start));
         self.set_origin(self.last_tab_id(), origin);
+        if let Some(connection) = direct.filter(|_| self.connect_form.site.is_none()) {
+            self.store
+                .connections
+                .insert(self.last_tab_id(), connection);
+        }
         Task::batch(tasks)
     }
 

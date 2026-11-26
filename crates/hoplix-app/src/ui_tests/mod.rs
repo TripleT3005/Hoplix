@@ -4,6 +4,7 @@ mod connect;
 mod edit;
 mod fakes;
 mod file_list;
+mod history;
 mod palette;
 mod queue;
 mod routes;

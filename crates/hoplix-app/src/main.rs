@@ -12,6 +12,7 @@ mod icon;
 mod local_time;
 mod opener;
 mod properties;
+mod queue_store;
 mod recent_actions;
 mod route_form;
 mod search;

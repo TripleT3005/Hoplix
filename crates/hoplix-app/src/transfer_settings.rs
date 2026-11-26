@@ -1,3 +1,5 @@
+use hoplix_core::{ChecksumMode, MAX_HISTORY_LIMIT};
+
 use crate::app::Hoplix;
 use crate::settings::{
     MAX_PARALLEL_TRANSFERS, MAX_RETRY_ATTEMPTS, MAX_RETRY_DELAY, MAX_SPEED_LIMIT, MIN_RETRY_DELAY,
@@ -18,6 +20,10 @@ pub enum TransferSetting {
     RetryAttempts(u32),
     RetryDelay(u32),
     AutoReconnect(bool),
+    RestoreTransfers(bool),
+    Checksum(ChecksumMode),
+    History(bool),
+    HistoryLimit(usize),
 }
 
 // Messages
@@ -50,8 +56,15 @@ impl Hoplix {
                 settings.retry_delay = seconds.clamp(MIN_RETRY_DELAY, MAX_RETRY_DELAY);
             }
             TransferSetting::AutoReconnect(enabled) => settings.auto_reconnect = enabled,
+            TransferSetting::RestoreTransfers(enabled) => settings.restore_transfers = enabled,
+            TransferSetting::Checksum(mode) => settings.checksum = mode,
+            TransferSetting::History(enabled) => settings.history_enabled = enabled,
+            TransferSetting::HistoryLimit(limit) => {
+                settings.history_limit = limit.clamp(1, MAX_HISTORY_LIMIT);
+            }
         }
         self.apply_transfer_settings();
+        self.apply_store_settings();
         self.save_settings();
     }
 
@@ -62,6 +75,7 @@ impl Hoplix {
         queue.set_direction_limits(settings.parallel_downloads, settings.parallel_uploads);
         queue.set_retry_policy(settings.retry_policy());
         queue.set_speed_limits(settings.speed_limits());
+        queue.set_checksum_mode(settings.checksum);
         hoplix_core::set_auto_reconnect(settings.auto_reconnect);
     }
 }

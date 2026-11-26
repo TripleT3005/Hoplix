@@ -490,7 +490,7 @@ fn today() -> String {
         .unwrap_or_else(|| hoplix_core::utc_date(SystemTime::now()))
 }
 
-fn documents_folder() -> PathBuf {
+pub(crate) fn documents_folder() -> PathBuf {
     known_documents_folder()
         .or_else(|| {
             std::env::home_dir().map(|home| {

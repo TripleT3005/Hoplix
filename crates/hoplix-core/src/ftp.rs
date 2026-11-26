@@ -25,8 +25,9 @@ use crate::options::{ConnectionOptions, FileNameEncoding, FtpMode};
 use crate::proxy::Proxy;
 use crate::sftp::{join_posix, parent_posix};
 use crate::{
-    BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Properties, Result, certificates,
-    decode_windows_1252, encode_windows_1252, mode_text, parse_mode, parse_permission_text,
+    BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, HashAlgorithm, Properties, Result,
+    certificates, decode_windows_1252, encode_windows_1252, mode_text, parse_mode,
+    parse_permission_text,
 };
 
 // Constants
@@ -50,6 +51,19 @@ struct Capabilities {
     epsv: bool,
     utf8: bool,
     mfmt: bool,
+    hashes: HashCommands,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct HashCommands {
+    hash: [bool; 4],
+    legacy: [bool; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HashCommand {
+    Hash,
+    Legacy(&'static str),
 }
 
 struct Session {
@@ -296,14 +310,15 @@ impl Session {
             }
             Err(error) => return Err(self.connect_error(&error)),
         }
+        let features: Vec<(String, Option<String>)> = client
+            .feat()
+            .await
+            .map(|features| features.into_iter().collect())
+            .unwrap_or_default();
         let capabilities = capabilities(
-            client
-                .feat()
-                .await
-                .map(|features| features.into_keys().collect::<Vec<_>>())
-                .unwrap_or_default()
+            features
                 .iter()
-                .map(String::as_str),
+                .map(|(name, value)| (name.as_str(), value.as_deref())),
         );
         if capabilities.utf8 && encoding == FileNameEncoding::Utf8 {
             let _ = client.opts("UTF8", Some("ON")).await;
@@ -412,9 +427,9 @@ fn connector(config: &Arc<ClientConfig>) -> AsyncRustlsConnector {
     AsyncRustlsConnector::from(TlsConnector::from(Arc::clone(config)))
 }
 
-fn capabilities<'a>(features: impl Iterator<Item = &'a str>) -> Capabilities {
+fn capabilities<'a>(features: impl Iterator<Item = (&'a str, Option<&'a str>)>) -> Capabilities {
     let mut capabilities = Capabilities::default();
-    for feature in features {
+    for (feature, value) in features {
         match feature.to_ascii_uppercase().as_str() {
             "MLSD" | "MLST" => {
                 capabilities.mlsd = true;
@@ -424,10 +439,108 @@ fn capabilities<'a>(features: impl Iterator<Item = &'a str>) -> Capabilities {
             "EPSV" => capabilities.epsv = true,
             "UTF8" => capabilities.utf8 = true,
             "MFMT" => capabilities.mfmt = true,
-            _ => {}
+            "HASH" => {
+                for name in value.unwrap_or_default().split(';') {
+                    if let Some(algorithm) = HashAlgorithm::from_name(name.trim_end_matches('*')) {
+                        capabilities.hashes.hash[hash_index(algorithm)] = true;
+                    }
+                }
+            }
+            verb => {
+                if let Some(algorithm) = legacy_algorithm(verb) {
+                    capabilities.hashes.legacy[hash_index(algorithm)] = true;
+                }
+            }
         }
     }
     capabilities
+}
+
+// Checksums
+
+const LEGACY_HASHES: [(&str, HashAlgorithm); 5] = [
+    ("XSHA256", HashAlgorithm::Sha256),
+    ("XSHA1", HashAlgorithm::Sha1),
+    ("XSHA", HashAlgorithm::Sha1),
+    ("XMD5", HashAlgorithm::Md5),
+    ("XCRC", HashAlgorithm::Crc32),
+];
+
+fn hash_index(algorithm: HashAlgorithm) -> usize {
+    HashAlgorithm::PREFERENCE
+        .iter()
+        .position(|candidate| *candidate == algorithm)
+        .unwrap_or(0)
+}
+
+fn legacy_algorithm(verb: &str) -> Option<HashAlgorithm> {
+    LEGACY_HASHES
+        .iter()
+        .find(|(name, _)| *name == verb)
+        .map(|(_, algorithm)| *algorithm)
+}
+
+impl HashCommands {
+    fn algorithms(self) -> Vec<HashAlgorithm> {
+        HashAlgorithm::PREFERENCE
+            .into_iter()
+            .filter(|algorithm| self.command(*algorithm).is_some())
+            .collect()
+    }
+
+    fn command(self, algorithm: HashAlgorithm) -> Option<HashCommand> {
+        let index = hash_index(algorithm);
+        if self.hash[index] {
+            return Some(HashCommand::Hash);
+        }
+        if !self.legacy[index] {
+            return None;
+        }
+        LEGACY_HASHES
+            .iter()
+            .find(|(_, candidate)| *candidate == algorithm)
+            .map(|(verb, _)| HashCommand::Legacy(verb))
+    }
+}
+
+fn parse_hash_reply(reply: &str, algorithm: HashAlgorithm) -> Option<Vec<u8>> {
+    let line = reply.lines().find(|line| line.starts_with('2'))?;
+    line.split_whitespace()
+        .skip(1)
+        .find_map(|token| crate::checksum::parse_hex_digest(token, algorithm))
+}
+
+impl FtpFileSystem {
+    async fn remote_checksum(&self, path: &str, algorithm: HashAlgorithm) -> Result<Vec<u8>> {
+        let command = self
+            .capabilities
+            .hashes
+            .command(algorithm)
+            .ok_or_else(|| crate::checksum::unsupported(path))?;
+        let mut control = self.control().await?;
+        let line = match command {
+            HashCommand::Hash => {
+                let selected = control.client.opts("HASH", Some(algorithm.name())).await;
+                control.check(selected, path)?;
+                format!("HASH {path}")
+            }
+            HashCommand::Legacy(verb) => format!("{verb} {path}"),
+        };
+        let reply = match control
+            .client
+            .custom_command(line, &[Status::File, Status::RequestedFileActionOk])
+            .await
+        {
+            Ok(response) => response,
+            Err(FtpError::UnexpectedResponse(response)) if response.body.starts_with(b"2") => {
+                response
+            }
+            Err(error) => return Err(control.check::<()>(Err(error), path).unwrap_err()),
+        };
+        let text = String::from_utf8_lossy(&reply.body);
+        parse_hash_reply(&text, algorithm)
+            .ok_or_else(|| Error::new(ErrorKind::Other, format!("{path}: {}", text.trim())))
+    }
 }
 
 // Interface
@@ -690,6 +803,16 @@ impl FileSystem for FtpFileSystem {
             }
             let _ = self.control.lock().await.client.quit().await;
         })
+    }
+
+    fn checksum_algorithms(&self) -> BoxFuture<'_, Vec<HashAlgorithm>> {
+        let algorithms = self.capabilities.hashes.algorithms();
+        Box::pin(async move { algorithms })
+    }
+
+    fn checksum(&self, path: &str, algorithm: HashAlgorithm) -> BoxFuture<'_, Result<Vec<u8>>> {
+        let path = path.to_string();
+        Box::pin(async move { self.remote_checksum(&path, algorithm).await })
     }
 
     fn join(&self, base: &str, name: &str) -> String {
@@ -1177,7 +1300,11 @@ mod tests {
 
     #[test]
     fn features_enable_capabilities() {
-        let enabled = capabilities(["MLST", "rest", "EPSV", "UTF8", "SIZE", "MFMT"].into_iter());
+        let enabled = capabilities(
+            ["MLST", "rest", "EPSV", "UTF8", "SIZE", "MFMT"]
+                .into_iter()
+                .map(|name| (name, None)),
+        );
         assert!(
             enabled.mlsd
                 && enabled.mlst
@@ -1186,7 +1313,73 @@ mod tests {
                 && enabled.utf8
                 && enabled.mfmt
         );
-        assert_eq!(capabilities(["SIZE"].into_iter()), Capabilities::default());
+        assert_eq!(
+            capabilities([("SIZE", None)].into_iter()),
+            Capabilities::default()
+        );
+    }
+
+    #[test]
+    fn hash_features_choose_the_best_command() {
+        let found = capabilities(
+            [
+                ("HASH", Some("SHA-1;SHA-256*;SHA-512;MD5")),
+                ("XCRC", None),
+                ("XMD5", None),
+            ]
+            .into_iter(),
+        )
+        .hashes;
+        assert_eq!(
+            found.algorithms(),
+            [
+                HashAlgorithm::Sha256,
+                HashAlgorithm::Sha1,
+                HashAlgorithm::Md5,
+                HashAlgorithm::Crc32
+            ]
+        );
+        assert_eq!(found.command(HashAlgorithm::Md5), Some(HashCommand::Hash));
+        assert_eq!(
+            found.command(HashAlgorithm::Crc32),
+            Some(HashCommand::Legacy("XCRC"))
+        );
+        let legacy = capabilities([("XSHA256", None), ("XMD5", None)].into_iter()).hashes;
+        assert_eq!(
+            legacy.command(HashAlgorithm::Sha256),
+            Some(HashCommand::Legacy("XSHA256"))
+        );
+        assert_eq!(legacy.command(HashAlgorithm::Sha1), None);
+        assert!(
+            capabilities([("SIZE", None)].into_iter())
+                .hashes
+                .algorithms()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn hash_replies_are_parsed() {
+        let sha = HashAlgorithm::Sha256.digest(b"abc");
+        let hex = crate::key_value::to_hex(&sha);
+        assert_eq!(
+            parse_hash_reply(
+                &format!("213 SHA-256 0-3 {hex} file name.txt\r\n"),
+                HashAlgorithm::Sha256
+            ),
+            Some(sha)
+        );
+        let md5 = crate::key_value::to_hex(&HashAlgorithm::Md5.digest(b"abc")).to_uppercase();
+        assert_eq!(
+            parse_hash_reply(&format!("251 {md5}\r\n"), HashAlgorithm::Md5),
+            Some(HashAlgorithm::Md5.digest(b"abc"))
+        );
+        assert_eq!(
+            parse_hash_reply("250 CBF43926\r\n", HashAlgorithm::Crc32),
+            Some(vec![0xcb, 0xf4, 0x39, 0x26])
+        );
+        assert_eq!(parse_hash_reply("550 no\r\n", HashAlgorithm::Md5), None);
+        assert_eq!(parse_hash_reply("213 short\r\n", HashAlgorithm::Md5), None);
     }
 
     #[test]
@@ -1547,6 +1740,168 @@ mod tests {
         FtpFileSystem::connect_via_with(&params, None, options, &certificates, None)
             .await
             .expect("connecting failed")
+    }
+
+    fn hash_server(features: &'static str) -> OptionServer {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("binding failed");
+        let port = listener.local_addr().expect("no address").port();
+        let commands = Arc::new(StdMutex::new(Vec::new()));
+        let log = Arc::clone(&commands);
+        std::thread::spawn(move || {
+            for socket in listener.incoming().filter_map(std::result::Result::ok) {
+                let log = Arc::clone(&log);
+                std::thread::spawn(move || {
+                    let mut writer = socket.try_clone().expect("cloning failed");
+                    let mut reader = BufReader::new(socket);
+                    let mut selected = HashAlgorithm::Sha1;
+                    let _ = writer.write_all(b"220 ready\r\n");
+                    let mut line = Vec::new();
+                    while reader
+                        .read_until(b'\n', &mut line)
+                        .is_ok_and(|read| read > 0)
+                    {
+                        log.lock().expect("poisoned").push(line.clone());
+                        let text = String::from_utf8_lossy(&line).trim_end().to_string();
+                        let (verb, argument) = text.split_once(' ').unwrap_or((&text, ""));
+                        let digest = |algorithm: HashAlgorithm| {
+                            crate::key_value::to_hex(&algorithm.digest(b"abc"))
+                        };
+                        let reply = match verb.to_ascii_uppercase().as_str() {
+                            "USER" => "331 password\r\n".to_string(),
+                            "PASS" => "230 logged in\r\n".to_string(),
+                            "FEAT" => format!("211-Features:\r\n{features}211 End\r\n"),
+                            "CWD" => "550 not a folder\r\n".to_string(),
+                            "SIZE" => "213 3\r\n".to_string(),
+                            "OPTS" if argument.starts_with("HASH ") => {
+                                match HashAlgorithm::from_name(&argument[5..]) {
+                                    Some(algorithm) => {
+                                        selected = algorithm;
+                                        format!("200 {}\r\n", algorithm.name())
+                                    }
+                                    None => "501 unknown\r\n".to_string(),
+                                }
+                            }
+                            "HASH" => format!(
+                                "213 {} 0-2 {} {argument}\r\n",
+                                selected.name(),
+                                digest(selected)
+                            ),
+                            "XSHA256" => format!("213 {}\r\n", digest(HashAlgorithm::Sha256)),
+                            "XMD5" => {
+                                format!("251 {}\r\n", digest(HashAlgorithm::Md5).to_uppercase())
+                            }
+                            "XCRC" => format!("250 {}\r\n", digest(HashAlgorithm::Crc32)),
+                            "QUIT" => {
+                                let _ = writer.write_all(b"221 bye\r\n");
+                                break;
+                            }
+                            _ => "200 ok\r\n".to_string(),
+                        };
+                        let _ = writer.write_all(reply.as_bytes());
+                        line.clear();
+                    }
+                });
+            }
+        });
+        OptionServer { port, commands }
+    }
+
+    #[tokio::test]
+    async fn checksums_use_hash_and_fall_back_to_legacy_commands() {
+        let server = hash_server(" HASH SHA-1*;SHA-256;MD5\r\n XCRC\r\n");
+        let file_system = connect_to(&server, &ConnectionOptions::default()).await;
+        assert_eq!(
+            file_system.checksum_algorithms().await,
+            [
+                HashAlgorithm::Sha256,
+                HashAlgorithm::Sha1,
+                HashAlgorithm::Md5,
+                HashAlgorithm::Crc32
+            ]
+        );
+        assert_eq!(
+            file_system
+                .checksum("/data/a b.txt", HashAlgorithm::Sha256)
+                .await,
+            Ok(HashAlgorithm::Sha256.digest(b"abc"))
+        );
+        assert_eq!(
+            file_system.checksum("/x", HashAlgorithm::Crc32).await,
+            Ok(HashAlgorithm::Crc32.digest(b"abc"))
+        );
+        file_system.close().await;
+        let commands = server.commands();
+        assert!(
+            commands.contains(&"OPTS HASH SHA-256".to_string()),
+            "{commands:?}"
+        );
+        assert!(
+            commands.contains(&"HASH /data/a b.txt".to_string()),
+            "{commands:?}"
+        );
+        assert!(commands.contains(&"XCRC /x".to_string()), "{commands:?}");
+
+        let legacy = hash_server(" XSHA256\r\n XMD5\r\n");
+        let file_system = connect_to(&legacy, &ConnectionOptions::default()).await;
+        assert_eq!(
+            file_system.checksum("/x", HashAlgorithm::Md5).await,
+            Ok(HashAlgorithm::Md5.digest(b"abc"))
+        );
+        assert!(
+            file_system
+                .checksum("/x", HashAlgorithm::Sha1)
+                .await
+                .is_err()
+        );
+        file_system.close().await;
+        assert!(legacy.commands().contains(&"XMD5 /x".to_string()));
+        assert!(
+            !legacy
+                .commands()
+                .iter()
+                .any(|line| line.starts_with("OPTS HASH"))
+        );
+    }
+
+    #[tokio::test]
+    async fn uploads_verify_with_the_best_shared_algorithm() {
+        use crate::Verification;
+
+        let directory =
+            std::env::temp_dir().join(format!("hoplix-ftp-hash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("creating failed");
+        let same = directory.join("same.txt");
+        let other = directory.join("other.txt");
+        std::fs::write(&same, b"abc").expect("writing failed");
+        std::fs::write(&other, b"abd").expect("writing failed");
+        let (same, other) = (
+            same.to_string_lossy().into_owned(),
+            other.to_string_lossy().into_owned(),
+        );
+        let local = crate::LocalFileSystem;
+        for (features, expected) in [
+            (" HASH SHA-256;MD5\r\n", Some(HashAlgorithm::Sha256)),
+            (" XMD5\r\n", Some(HashAlgorithm::Md5)),
+            (" XCRC\r\n", Some(HashAlgorithm::Crc32)),
+            (" UTF8\r\n", None),
+        ] {
+            let server = hash_server(features);
+            let remote = connect_to(&server, &ConnectionOptions::default()).await;
+            let result = crate::verify_copy(&local, &same, &remote, "/same.txt", 3).await;
+            let wanted = expected.map_or(Verification::SizeChecked, Verification::Matched);
+            assert_eq!(result, Ok(wanted), "{features:?}");
+            let result = crate::verify_copy(&local, &other, &remote, "/other.txt", 3).await;
+            let wanted = expected.map_or(Verification::SizeChecked, |algorithm| {
+                Verification::Mismatch(Some(algorithm))
+            });
+            assert_eq!(result, Ok(wanted), "{features:?}");
+            remote.close().await;
+        }
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
     }
 
     const LOOPBACK: [u8; 4] = [127, 0, 0, 1];

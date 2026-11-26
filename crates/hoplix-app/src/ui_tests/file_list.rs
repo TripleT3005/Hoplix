@@ -155,7 +155,7 @@ fn changing_the_folder_clears_the_filter() {
 
 #[test]
 fn back_and_forward_follow_the_visited_folders() {
-    let mut harness = with_files("history", &["docs/old/x.txt", "a.txt"]);
+    let mut harness = with_files("navigation-history", &["docs/old/x.txt", "a.txt"]);
     let root = text_of(&harness.root.data());
     harness.double_click(&folder("docs"));
     harness.double_click(&folder("old"));

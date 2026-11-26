@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
-use crate::{Entry, Error, ErrorKind, Properties, Result};
+use crate::{Entry, Error, ErrorKind, HashAlgorithm, Properties, Result};
 
 // Types
 
@@ -63,6 +63,15 @@ pub trait FileSystem: Debug + Send + Sync {
 
     fn close(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {})
+    }
+
+    fn checksum_algorithms(&self) -> BoxFuture<'_, Vec<HashAlgorithm>> {
+        Box::pin(async { Vec::new() })
+    }
+
+    fn checksum(&self, path: &str, _algorithm: HashAlgorithm) -> BoxFuture<'_, Result<Vec<u8>>> {
+        let error = crate::checksum::unsupported(path);
+        Box::pin(async move { Err(error) })
     }
 
     fn join(&self, base: &str, name: &str) -> String;

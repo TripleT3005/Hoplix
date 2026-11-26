@@ -9,6 +9,7 @@ use iced::keyboard::Modifiers;
 use iced::{Point, Subscription, Task, event, keyboard, mouse};
 
 use crate::app::{Dialog, Hoplix, Message, Tab, TabId};
+use crate::queue_store::Endpoints;
 use crate::session::TabOrigin;
 
 // Constants
@@ -39,6 +40,7 @@ pub enum TransferAction {
     Cancel(JobId),
     Retry(JobId),
     Remove(JobId),
+    Connect(JobId),
     PauseAll,
     ResumeAll,
     CancelAll,
@@ -106,7 +108,7 @@ impl Hoplix {
     pub(crate) fn update_transfers(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TransferEvent(event) => return self.apply_transfer_event(event),
-            Message::Transfer(action) => self.run_transfer_action(action),
+            Message::Transfer(action) => return self.run_transfer_action(action),
             Message::TransferTo { from, to } => return self.start_transfers(from, to),
             Message::ConflictAnswered(decision) => return self.answer_conflict(decision),
             Message::ConflictApplyToAll(value) => {
@@ -156,6 +158,14 @@ impl Hoplix {
                         false
                     }
                 };
+                if finished
+                    && !was_finished
+                    && let Some(snapshot) = self.transfer_jobs.iter().find(|job| job.id == id)
+                {
+                    let snapshot = snapshot.clone();
+                    self.record_finished(&snapshot);
+                }
+                self.persist(false);
                 if finished && !was_finished {
                     return Task::batch([
                         self.refresh_target(id),
@@ -167,30 +177,42 @@ impl Hoplix {
             TransferEvent::Removed(id) => {
                 self.transfer_jobs.retain(|job| job.id != id);
                 self.transfer_targets.remove(&id);
+                self.forget_job(id);
+                self.persist(false);
             }
             TransferEvent::Conflict(conflict) => {
                 self.conflicts.push_back(conflict);
                 self.show_next_conflict();
             }
+            TransferEvent::Verified { .. } => {}
         }
         Task::none()
     }
 
-    fn run_transfer_action(&mut self, action: TransferAction) {
+    fn run_transfer_action(&mut self, action: TransferAction) -> Task<Message> {
         let queue = &self.transfers;
         match action {
             TransferAction::Pause(id) => queue.pause(id),
+            TransferAction::Resume(id) if self.is_waiting(id) => return self.connect_waiting(id),
             TransferAction::Resume(id) => queue.resume(id),
+            TransferAction::Connect(id) => return self.connect_waiting(id),
             TransferAction::Cancel(id) => queue.cancel(id),
             TransferAction::Retry(id) => queue.retry(id),
             TransferAction::Remove(id) => queue.remove(id),
             TransferAction::PauseAll => queue.pause_all(),
-            TransferAction::ResumeAll => queue.resume_all(),
+            TransferAction::ResumeAll => {
+                for job in &self.transfer_jobs {
+                    if !self.store.waiting.contains_key(&job.id) {
+                        queue.resume(job.id);
+                    }
+                }
+            }
             TransferAction::CancelAll => queue.cancel_all(),
             TransferAction::ClearFinished => queue.clear_finished(),
             TransferAction::TogglePanel => self.transfer_panel_open = !self.transfer_panel_open,
             TransferAction::PolicySelected(policy) => queue.set_policy(policy),
         }
+        Task::none()
     }
 
     // Starting
@@ -230,6 +252,10 @@ impl Hoplix {
             _ => Direction::Copy,
         };
         let site_limits = self.site_limits(&[source, target]);
+        let endpoints = self
+            .location_of(source)
+            .zip(self.location_of(target))
+            .map(|(source, target)| Endpoints { source, target });
         let source_file_system = Arc::clone(&source.file_system);
         let source_path = source.path.clone();
         let target_file_system = Arc::clone(&target.file_system);
@@ -249,6 +275,7 @@ impl Hoplix {
                     ..JobOptions::default()
                 },
             );
+            self.remember_endpoints(id, endpoints.clone());
             self.transfer_targets.insert(
                 id,
                 TransferTarget {
@@ -637,6 +664,8 @@ mod tests {
                 skipped: 0,
                 bytes_per_second: 0.0,
                 current_file: None,
+                checksum: None,
+                elapsed: std::time::Duration::ZERO,
             });
             let _ = app.update(Message::TransferEvent(TransferEvent::Conflict(Conflict {
                 job: id,
@@ -677,6 +706,8 @@ mod tests {
             skipped: 0,
             bytes_per_second: 0.0,
             current_file: None,
+            checksum: None,
+            elapsed: std::time::Duration::ZERO,
         };
         let _ = app.update(Message::TransferEvent(TransferEvent::Updated(
             snapshot.clone(),
