@@ -310,6 +310,9 @@ fn remote_tabs_are_searched_through_their_connection() {
         harness.tab().id,
     )));
     assert!(harness.tab().search.is_some());
+    harness.click("Up");
+    assert!(harness.tab().search.is_none());
+    assert!(harness.app.search_handles.is_empty());
 }
 
 // Bookmarks

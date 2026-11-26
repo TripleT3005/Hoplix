@@ -583,6 +583,9 @@ impl Hoplix {
             Message::HomeResolved(id, result) => return self.resolve_home(id, result),
             Message::Listed(id, request, path, result) => {
                 let revealed = self.finish_listing(id, request, path, result);
+                if self.tab_by_id(id).is_some_and(|tab| tab.search.is_none()) {
+                    self.stop_search(id);
+                }
                 let listed = self.tab_listed(id);
                 return match revealed {
                     Some(position) => Task::batch([listed, Self::scroll_to_revealed(id, position)]),
@@ -911,6 +914,7 @@ impl Hoplix {
                     tab.clear_selection();
                     tab.arrive();
                     tab.set_filter(String::new());
+                    tab.search = None;
                 } else {
                     let names: Vec<String> = tab
                         .selected_entries()
