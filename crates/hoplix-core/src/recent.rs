@@ -92,7 +92,7 @@ impl RecentConnection {
         self.protocol.supports_key_files() && self.auth == SiteAuth::Agent
     }
 
-    fn from_section(section: &Section) -> Option<Self> {
+    pub(crate) fn from_section(section: &Section) -> Option<Self> {
         let protocol = section
             .get("protocol")
             .and_then(|scheme| Protocol::ALL.into_iter().find(|p| p.scheme() == scheme))?;
@@ -127,6 +127,10 @@ impl RecentConnection {
     }
 
     fn to_text(&self) -> String {
+        format!("\n[{ENTRY_SECTION}]\n{}", key_value::write(&self.pairs()))
+    }
+
+    pub(crate) fn pairs(&self) -> Vec<(&'static str, String)> {
         let mut pairs = vec![
             ("protocol", self.protocol.scheme().to_string()),
             ("host", self.host.clone()),
@@ -150,7 +154,7 @@ impl RecentConnection {
                     .filter(|(key, _)| *key != "proxy_save_secret"),
             );
         }
-        format!("\n[{ENTRY_SECTION}]\n{}", key_value::write(&pairs))
+        pairs
     }
 }
 

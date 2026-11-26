@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
@@ -7,7 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::rate::RateLimiter;
-use crate::{Error, ErrorKind, FileSystem, Result};
+use crate::{ChecksumMode, Error, ErrorKind, FileSystem, Result, Verification, verify_copy};
 
 // Constants
 
@@ -106,6 +106,7 @@ pub enum JobStatus {
     Running,
     Retrying(u32),
     WaitingForDecision,
+    Verifying,
     Paused,
     Completed,
     Failed(Error),
@@ -127,13 +128,41 @@ pub struct JobSnapshot {
     pub skipped: usize,
     pub bytes_per_second: f64,
     pub current_file: Option<String>,
+    pub checksum: Option<Verification>,
+    pub elapsed: Duration,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransferEvent {
     Updated(JobSnapshot),
     Removed(JobId),
     Conflict(Conflict),
+    Verified {
+        job: JobId,
+        path: String,
+        verification: Verification,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ResumePoint {
+    pub next_item: usize,
+    pub checkpoint: Option<String>,
+    pub partial: Vec<(String, String)>,
+    pub fresh: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobState {
+    pub id: JobId,
+    pub source_path: String,
+    pub target_directory: String,
+    pub target_name: Option<String>,
+    pub policy: Option<ConflictPolicy>,
+    pub keep_modified: bool,
+    pub status: JobStatus,
+    pub resume: ResumePoint,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +208,9 @@ struct Job {
     next_item: usize,
     completed_bytes: u64,
     partial: HashMap<String, String>,
+    fresh: HashSet<String>,
+    restore: Option<ResumePoint>,
+    started: Option<Instant>,
     pending: Option<oneshot::Sender<ConflictDecision>>,
     active: bool,
 }
@@ -189,6 +221,7 @@ struct State {
     parallelism: Parallelism,
     policy: ConflictPolicy,
     retry: RetryPolicy,
+    checksum: ChecksumMode,
     events: Option<mpsc::UnboundedSender<TransferEvent>>,
 }
 
@@ -301,6 +334,41 @@ impl Default for RetryPolicy {
 // Jobs
 
 impl Job {
+    fn state(&self) -> JobState {
+        let checkpoint = self
+            .next_item
+            .checked_sub(1)
+            .and_then(|index| self.plan.as_ref()?.get(index))
+            .map(|item| item.target().to_string());
+        let resume = match (&self.restore, checkpoint) {
+            (Some(point), _) if self.plan.is_none() => ResumePoint {
+                partial: sorted_pairs(&self.partial),
+                fresh: sorted(&self.fresh),
+                ..point.clone()
+            },
+            (_, checkpoint) => ResumePoint {
+                next_item: if checkpoint.is_some() {
+                    self.next_item
+                } else {
+                    0
+                },
+                checkpoint,
+                partial: sorted_pairs(&self.partial),
+                fresh: sorted(&self.fresh),
+            },
+        };
+        JobState {
+            id: self.snapshot.id,
+            source_path: self.request.source_path.clone(),
+            target_directory: self.request.target_directory.clone(),
+            target_name: self.request.target_name.clone(),
+            policy: self.options.policy,
+            keep_modified: self.options.keep_modified,
+            status: self.snapshot.status.clone(),
+            resume,
+        }
+    }
+
     fn sites(&self) -> Vec<&str> {
         let mut sites: Vec<&str> = self
             .options
@@ -324,7 +392,11 @@ impl JobStatus {
     pub fn is_active(&self) -> bool {
         matches!(
             self,
-            Self::Scanning | Self::Running | Self::Retrying(_) | Self::WaitingForDecision
+            Self::Scanning
+                | Self::Running
+                | Self::Retrying(_)
+                | Self::WaitingForDecision
+                | Self::Verifying
         )
     }
 }
@@ -397,6 +469,7 @@ impl TransferQueue {
                     parallelism: Parallelism::new(parallelism),
                     policy: ConflictPolicy::default(),
                     retry: RetryPolicy::default(),
+                    checksum: ChecksumMode::Off,
                     events: None,
                 }),
                 wake: Notify::new(),
@@ -436,6 +509,24 @@ impl TransferQueue {
     }
 
     pub fn add_with(&self, request: TransferRequest, options: JobOptions) -> JobId {
+        self.insert(request, options, None)
+    }
+
+    pub fn add_paused(
+        &self,
+        request: TransferRequest,
+        options: JobOptions,
+        resume: ResumePoint,
+    ) -> JobId {
+        self.insert(request, options, Some(resume))
+    }
+
+    fn insert(
+        &self,
+        request: TransferRequest,
+        options: JobOptions,
+        restore: Option<ResumePoint>,
+    ) -> JobId {
         let name = request
             .target_name
             .clone()
@@ -451,7 +542,11 @@ impl TransferQueue {
             source_path: request.source_path.clone(),
             target_path,
             is_directory: false,
-            status: JobStatus::Queued,
+            status: if restore.is_some() {
+                JobStatus::Paused
+            } else {
+                JobStatus::Queued
+            },
             transferred: 0,
             total: None,
             files_done: 0,
@@ -459,8 +554,19 @@ impl TransferQueue {
             skipped: 0,
             bytes_per_second: 0.0,
             current_file: None,
+            checksum: None,
+            elapsed: Duration::ZERO,
         };
         emit(&state, TransferEvent::Updated(snapshot.clone()));
+        let (partial, fresh) = restore
+            .as_ref()
+            .map(|point| {
+                (
+                    point.partial.iter().cloned().collect(),
+                    point.fresh.iter().cloned().collect(),
+                )
+            })
+            .unwrap_or_default();
         state.jobs.push(Job {
             snapshot,
             request,
@@ -470,7 +576,10 @@ impl TransferQueue {
             plan: None,
             next_item: 0,
             completed_bytes: 0,
-            partial: HashMap::new(),
+            partial,
+            fresh,
+            restore: restore.filter(|point| point.next_item > 0),
+            started: None,
             pending: None,
             active: false,
         });
@@ -485,6 +594,38 @@ impl TransferQueue {
             .iter()
             .map(|job| job.snapshot.clone())
             .collect()
+    }
+
+    pub fn job_states(&self) -> Vec<JobState> {
+        self.state().jobs.iter().map(Job::state).collect()
+    }
+
+    pub fn request(&self, id: JobId) -> Option<TransferRequest> {
+        self.with_job(id, |job| job.request.clone())
+    }
+
+    pub fn rebind(
+        &self,
+        id: JobId,
+        source: Option<Arc<dyn FileSystem>>,
+        target: Option<Arc<dyn FileSystem>>,
+    ) -> bool {
+        let mut rebound = false;
+        self.change(id, |job| {
+            if job.active {
+                return;
+            }
+            if let Some(source) = source {
+                job.request.source = source;
+            }
+            if let Some(target) = target {
+                job.request.target = target;
+            }
+            job.direction =
+                TransferDirection::of(job.request.source.as_ref(), job.request.target.as_ref());
+            rebound = true;
+        });
+        rebound
     }
 
     pub fn pause(&self, id: JobId) {
@@ -636,6 +777,14 @@ impl TransferQueue {
         self.state().retry = retry;
     }
 
+    pub fn checksum_mode(&self) -> ChecksumMode {
+        self.state().checksum
+    }
+
+    pub fn set_checksum_mode(&self, mode: ChecksumMode) {
+        self.state().checksum = mode;
+    }
+
     pub fn speed_limits(&self) -> SpeedLimits {
         SpeedLimits {
             download: self.inner.download_limit.rate(),
@@ -692,6 +841,7 @@ impl TransferQueue {
             downloads += usize::from(direction.downloads());
             uploads += usize::from(direction.uploads());
             job.active = true;
+            job.started = Some(Instant::now());
             job.snapshot.status = if job.plan.is_some() {
                 JobStatus::Running
             } else {
@@ -714,6 +864,9 @@ impl TransferQueue {
         self.change(id, |job| {
             job.active = false;
             job.pending = None;
+            if let Some(started) = job.started.take() {
+                job.snapshot.elapsed += started.elapsed();
+            }
             job.snapshot.bytes_per_second = 0.0;
             job.snapshot.current_file = None;
             let control = *job.control.borrow();
@@ -762,6 +915,21 @@ impl TransferQueue {
                 .filter(|item| matches!(item, Item::File { .. }))
                 .count();
             self.change(id, |job| {
+                if let Some(point) = job.restore.take() {
+                    let reached = point.next_item.min(plan.len());
+                    let matches = reached > 0
+                        && point.checkpoint.as_deref() == plan.get(reached - 1).map(Item::target);
+                    if matches {
+                        let done = plan[..reached].iter().filter_map(|item| match item {
+                            Item::File { size, .. } => Some(*size),
+                            Item::Directory { .. } => None,
+                        });
+                        job.next_item = reached;
+                        job.snapshot.files_done = done.clone().count();
+                        job.completed_bytes = done.sum();
+                        job.snapshot.transferred = job.completed_bytes;
+                    }
+                }
                 job.plan = Some(plan);
                 job.snapshot.is_directory = is_directory;
                 job.snapshot.total = Some(total);
@@ -894,6 +1062,9 @@ impl TransferQueue {
                     {
                         let _ = request.target.set_modified(&path, time).await;
                     }
+                    if self.state().checksum != ChecksumMode::Off {
+                        self.verify(id, request, file, &path).await?;
+                    }
                     return Ok(Some(Outcome::Completed));
                 }
                 Ok(outcome) => return Ok(Some(outcome)),
@@ -925,6 +1096,51 @@ impl TransferQueue {
         }
     }
 
+    async fn verify(
+        &self,
+        id: JobId,
+        request: &TransferRequest,
+        file: &FileItem<'_>,
+        path: &str,
+    ) -> Result<()> {
+        self.change(id, |job| {
+            job.snapshot.status = JobStatus::Verifying;
+            job.snapshot.bytes_per_second = 0.0;
+        });
+        let verification = verify_copy(
+            request.source.as_ref(),
+            file.source,
+            request.target.as_ref(),
+            path,
+            file.size,
+        )
+        .await?;
+        self.change(id, |job| {
+            job.snapshot.checksum = Some(
+                job.snapshot
+                    .checksum
+                    .map_or(verification, |previous| previous.combine(verification)),
+            );
+            if verification.is_mismatch() {
+                job.fresh.insert(file.target.to_string());
+            } else {
+                job.snapshot.status = JobStatus::Running;
+            }
+        });
+        emit(
+            &self.state(),
+            TransferEvent::Verified {
+                job: id,
+                path: path.to_string(),
+                verification,
+            },
+        );
+        if verification.is_mismatch() {
+            return Err(Error::new(ErrorKind::ChecksumMismatch, path));
+        }
+        Ok(())
+    }
+
     async fn resolve(
         &self,
         id: JobId,
@@ -937,6 +1153,12 @@ impl TransferQueue {
             .with_job(id, |job| job.partial.get(target).cloned())
             .flatten();
         if let Some(path) = partial {
+            if self
+                .with_job(id, |job| job.fresh.remove(target))
+                .unwrap_or(false)
+            {
+                return Ok(Resolution::Copy { path, offset: 0 });
+            }
             let offset = match file_system.metadata(&path).await {
                 Ok(entry) => entry.size.unwrap_or(0),
                 Err(error) if error.kind() == ErrorKind::NotFound => 0,
@@ -1104,6 +1326,29 @@ impl Progress {
 }
 
 // Helpers
+
+impl Item {
+    fn target(&self) -> &str {
+        match self {
+            Self::Directory { target } | Self::File { target, .. } => target,
+        }
+    }
+}
+
+fn sorted(values: &HashSet<String>) -> Vec<String> {
+    let mut values: Vec<String> = values.iter().cloned().collect();
+    values.sort();
+    values
+}
+
+fn sorted_pairs(values: &HashMap<String, String>) -> Vec<(String, String)> {
+    let mut values: Vec<(String, String)> = values
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    values.sort();
+    values
+}
 
 fn emit(state: &State, event: TransferEvent) {
     if let Some(events) = &state.events {
@@ -1302,6 +1547,9 @@ mod tests {
         failures: AtomicU32,
         fail_after: u64,
         remote: bool,
+        hashes: bool,
+        wrong_hashes: Mutex<u32>,
+        write_offsets: Mutex<Vec<u64>>,
     }
 
     struct TestReader {
@@ -1409,7 +1657,38 @@ mod tests {
         }
 
         fn open_write(&self, path: &str, offset: u64) -> BoxFuture<'_, Result<Writer>> {
+            if let Ok(mut offsets) = self.write_offsets.lock() {
+                offsets.push(offset);
+            }
             LocalFileSystem.open_write(path, offset)
+        }
+
+        fn checksum_algorithms(&self) -> BoxFuture<'_, Vec<crate::HashAlgorithm>> {
+            let algorithms = if self.hashes {
+                vec![crate::HashAlgorithm::Sha256]
+            } else {
+                Vec::new()
+            };
+            Box::pin(async move { algorithms })
+        }
+
+        fn checksum(
+            &self,
+            path: &str,
+            algorithm: crate::HashAlgorithm,
+        ) -> BoxFuture<'_, Result<Vec<u8>>> {
+            let path = path.to_string();
+            Box::pin(async move {
+                let wrong = self.wrong_hashes.lock().is_ok_and(|mut left| {
+                    let wrong = *left > 0;
+                    *left = left.saturating_sub(1);
+                    wrong
+                });
+                if wrong {
+                    return Ok(vec![0; 32]);
+                }
+                crate::hash_file(&LocalFileSystem, &path, algorithm).await
+            })
         }
 
         fn join(&self, base: &str, name: &str) -> String {
@@ -2202,6 +2481,8 @@ mod tests {
             skipped: 0,
             bytes_per_second: 400.0,
             current_file: None,
+            checksum: None,
+            elapsed: Duration::ZERO,
         };
         assert_eq!(snapshot.remaining_seconds(), Some(10));
         assert!((snapshot.fraction() - 0.2).abs() < 0.001);
@@ -2210,6 +2491,218 @@ mod tests {
             ..snapshot
         };
         assert_eq!(stalled.remaining_seconds(), None);
+    }
+
+    // Verification
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn verification_hashes_local_copies_and_checks_sizes_otherwise() {
+        let directory = temporary_directory("verify");
+        let source = directory.join("data.bin");
+        std::fs::write(&source, content(70_000)).expect("writing failed");
+        let queue = TransferQueue::default();
+        queue.set_checksum_mode(ChecksumMode::WhenSupported);
+        let mut events = start(&queue);
+
+        let target = directory.join("local");
+        std::fs::create_dir_all(&target).expect("creating failed");
+        let id = queue.add(request(local(), &source, local(), &target));
+        let verified = wait_until(
+            &mut events,
+            |event| matches!(event, TransferEvent::Verified { job, .. } if *job == id),
+        )
+        .await;
+        assert!(matches!(
+            verified,
+            TransferEvent::Verified {
+                verification: Verification::Matched(crate::HashAlgorithm::Sha256),
+                ..
+            }
+        ));
+        let done = wait_for_status(&mut events, id, JobStatus::is_finished).await;
+        assert_eq!(done.status, JobStatus::Completed);
+        assert_eq!(
+            done.checksum,
+            Some(Verification::Matched(crate::HashAlgorithm::Sha256))
+        );
+
+        let target = directory.join("remote");
+        std::fs::create_dir_all(&target).expect("creating failed");
+        let id = queue.add(request(local(), &source, remote(), &target));
+        let done = wait_for_status(&mut events, id, JobStatus::is_finished).await;
+        assert_eq!(done.status, JobStatus::Completed);
+        assert_eq!(done.checksum, Some(Verification::SizeChecked));
+
+        queue.set_checksum_mode(ChecksumMode::Off);
+        let target = directory.join("off");
+        std::fs::create_dir_all(&target).expect("creating failed");
+        let id = queue.add(request(local(), &source, local(), &target));
+        let done = wait_for_status(&mut events, id, JobStatus::is_finished).await;
+        assert_eq!(done.checksum, None);
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn checksum_mismatches_fail_and_retry_from_scratch() {
+        let directory = temporary_directory("mismatch");
+        let source = directory.join("data.bin");
+        std::fs::write(&source, content(50_000)).expect("writing failed");
+        let target = directory.join("target");
+        std::fs::create_dir_all(&target).expect("creating failed");
+        let server = Arc::new(TestFileSystem {
+            remote: true,
+            hashes: true,
+            wrong_hashes: Mutex::new(1),
+            ..TestFileSystem::default()
+        });
+        let queue = TransferQueue::default();
+        queue.set_checksum_mode(ChecksumMode::WhenSupported);
+        let mut events = start(&queue);
+        let server_file_system: Arc<dyn FileSystem> = Arc::clone(&server) as Arc<dyn FileSystem>;
+        let id = queue.add(request(local(), &source, server_file_system, &target));
+        let failed = wait_for_status(&mut events, id, JobStatus::is_finished).await;
+        let JobStatus::Failed(error) = &failed.status else {
+            panic!("the mismatch was not reported: {:?}", failed.status);
+        };
+        assert_eq!(error.kind(), ErrorKind::ChecksumMismatch);
+        assert_eq!(
+            failed.checksum,
+            Some(Verification::Mismatch(Some(crate::HashAlgorithm::Sha256)))
+        );
+
+        queue.retry(id);
+        let done = wait_for_status(&mut events, id, JobStatus::is_finished).await;
+        assert_eq!(done.status, JobStatus::Completed);
+        assert_eq!(
+            *server.write_offsets.lock().expect("poisoned"),
+            [0, 0],
+            "the retry did not start from scratch"
+        );
+        assert_eq!(
+            std::fs::read(target.join("data.bin")).expect("reading failed"),
+            content(50_000)
+        );
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    // Restoring
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn restored_jobs_stay_paused_and_resume_partial_files() {
+        let directory = temporary_directory("restore");
+        let source = directory.join("big.bin");
+        std::fs::write(&source, content(100_000)).expect("writing failed");
+        let target = directory.join("target");
+        std::fs::create_dir_all(&target).expect("creating failed");
+        let partial = target.join("big.bin");
+        std::fs::write(&partial, &content(100_000)[..30_000]).expect("writing failed");
+        let writer = Arc::new(TestFileSystem::default());
+
+        let queue = TransferQueue::default();
+        let mut events = start(&queue);
+        let point = ResumePoint {
+            partial: vec![(text(&partial), text(&partial))],
+            ..ResumePoint::default()
+        };
+        let writer_file_system: Arc<dyn FileSystem> = Arc::clone(&writer) as Arc<dyn FileSystem>;
+        let id = queue.add_paused(
+            request(local(), &source, writer_file_system, &target),
+            JobOptions::default(),
+            point.clone(),
+        );
+        assert_eq!(queue.snapshots()[0].status, JobStatus::Paused);
+        let saved = queue.job_states();
+        assert_eq!(saved[0].resume, point);
+        assert_eq!(saved[0].target_directory, text(&target));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(queue.snapshots()[0].status, JobStatus::Paused);
+
+        assert!(queue.rebind(id, Some(local()), None));
+        queue.resume(id);
+        let done = wait_for_status(&mut events, id, JobStatus::is_finished).await;
+        assert_eq!(done.status, JobStatus::Completed);
+        assert_eq!(*writer.write_offsets.lock().expect("poisoned"), [30_000]);
+        assert_eq!(
+            std::fs::read(&partial).expect("reading failed"),
+            content(100_000)
+        );
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn restored_folders_continue_after_the_checkpoint() {
+        let directory = temporary_directory("restore-folder");
+        let source = directory.join("src");
+        std::fs::create_dir_all(&source).expect("creating failed");
+        std::fs::write(source.join("a.txt"), b"new a").expect("writing failed");
+        std::fs::write(source.join("b.txt"), b"new b").expect("writing failed");
+        let queue = TransferQueue::default();
+        let mut events = start(&queue);
+
+        for (checkpoint, expected) in [("a.txt", &b"old a"[..]), ("gone.txt", b"new a")] {
+            let target = directory.join(format!("target-{checkpoint}"));
+            let copied = target.join("src");
+            std::fs::create_dir_all(&copied).expect("creating failed");
+            std::fs::write(copied.join("a.txt"), b"old a").expect("writing failed");
+            let point = ResumePoint {
+                next_item: 2,
+                checkpoint: Some(text(&copied.join(checkpoint))),
+                ..ResumePoint::default()
+            };
+            let id = queue.add_paused(
+                request(local(), &source, local(), &target),
+                JobOptions {
+                    policy: Some(ConflictPolicy::Overwrite),
+                    ..JobOptions::default()
+                },
+                point.clone(),
+            );
+            let states = queue.job_states();
+            let state = states.iter().find(|state| state.id == id).expect("state");
+            assert_eq!(state.resume, point);
+            queue.resume(id);
+            let done = wait_for_status(&mut events, id, JobStatus::is_finished).await;
+            assert_eq!(done.status, JobStatus::Completed);
+            assert_eq!(done.files_done, 2);
+            assert_eq!(
+                std::fs::read(copied.join("a.txt")).expect("reading failed"),
+                expected,
+                "{checkpoint}"
+            );
+            assert_eq!(
+                std::fs::read(copied.join("b.txt")).expect("reading failed"),
+                b"new b"
+            );
+        }
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn paused_folder_jobs_report_their_checkpoint() {
+        let directory = temporary_directory("checkpoint");
+        let source = directory.join("src");
+        std::fs::create_dir_all(&source).expect("creating failed");
+        for index in 0..4 {
+            std::fs::write(source.join(format!("{index}.bin")), content(60 * 1024))
+                .expect("writing failed");
+        }
+        let target = directory.join("target");
+        std::fs::create_dir_all(&target).expect("creating failed");
+        let queue = TransferQueue::default();
+        let mut events = start(&queue);
+        let id = queue.add(request(slow(false, 2), &source, local(), &target));
+        wait_until(
+            &mut events,
+            |event| matches!(event, TransferEvent::Updated(snapshot) if snapshot.files_done >= 2),
+        )
+        .await;
+        queue.pause(id);
+        wait_for_status(&mut events, id, |status| *status == JobStatus::Paused).await;
+        let state = queue.job_states().remove(0);
+        assert!(state.resume.next_item >= 3, "{:?}", state.resume);
+        let checkpoint = state.resume.checkpoint.expect("no checkpoint");
+        assert!(checkpoint.starts_with(&text(&target.join("src"))));
+        std::fs::remove_dir_all(directory).expect("cleaning up failed");
     }
 
     #[test]

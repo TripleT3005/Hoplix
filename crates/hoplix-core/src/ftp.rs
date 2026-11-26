@@ -1207,7 +1207,7 @@ mod tests {
     #[test]
     fn hash_replies_are_parsed() {
         let sha = HashAlgorithm::Sha256.digest(b"abc");
-        let hex = crate::checksum::hex(&sha);
+        let hex = crate::key_value::to_hex(&sha);
         assert_eq!(
             parse_hash_reply(
                 &format!("213 SHA-256 0-3 {hex} file name.txt\r\n"),
@@ -1215,7 +1215,7 @@ mod tests {
             ),
             Some(sha)
         );
-        let md5 = crate::checksum::hex(&HashAlgorithm::Md5.digest(b"abc")).to_uppercase();
+        let md5 = crate::key_value::to_hex(&HashAlgorithm::Md5.digest(b"abc")).to_uppercase();
         assert_eq!(
             parse_hash_reply(&format!("251 {md5}\r\n"), HashAlgorithm::Md5),
             Some(HashAlgorithm::Md5.digest(b"abc"))
@@ -1606,7 +1606,7 @@ mod tests {
                         let text = String::from_utf8_lossy(&line).trim_end().to_string();
                         let (verb, argument) = text.split_once(' ').unwrap_or((&text, ""));
                         let digest = |algorithm: HashAlgorithm| {
-                            crate::checksum::hex(&algorithm.digest(b"abc"))
+                            crate::key_value::to_hex(&algorithm.digest(b"abc"))
                         };
                         let reply = match verb.to_ascii_uppercase().as_str() {
                             "USER" => "331 password\r\n".to_string(),

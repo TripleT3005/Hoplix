@@ -219,7 +219,11 @@ fn job_row<'a>(app: &'a Hoplix, job: &'a JobSnapshot) -> Element<'a, Message> {
                 TransferAction::Cancel(id),
             ));
         }
-        JobStatus::Queued | JobStatus::Scanning | JobStatus::Running | JobStatus::Retrying(_) => {
+        JobStatus::Queued
+        | JobStatus::Scanning
+        | JobStatus::Running
+        | JobStatus::Retrying(_)
+        | JobStatus::Verifying => {
             buttons = buttons
                 .push(small(
                     strings.get("transfer.pause"),
@@ -282,6 +286,7 @@ fn details(strings: &Strings, job: &JobSnapshot, retries: u32) -> String {
             ],
         ),
         JobStatus::WaitingForDecision => strings.get("transfer.status.waiting").to_string(),
+        JobStatus::Verifying => strings.get("transfer.status.verifying").to_string(),
         JobStatus::Paused => format!("{} · {amount}", strings.get("transfer.status.paused")),
         JobStatus::Completed if job.skipped > 0 => strings.format(
             "transfer.status.completed_skipped",

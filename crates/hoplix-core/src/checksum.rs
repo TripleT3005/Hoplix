@@ -1,7 +1,7 @@
 use ring::digest;
 use tokio::io::AsyncReadExt;
 
-use crate::key_value::{from_hex, to_hex};
+use crate::key_value::from_hex;
 use crate::{Error, ErrorKind, FileSystem, Result};
 
 // Constants
@@ -294,17 +294,17 @@ impl Md5 {
             let block = std::mem::take(&mut self.pending);
             self.process(&block);
         }
-        let mut blocks = data.chunks_exact(64);
-        for block in &mut blocks {
+        let (blocks, remainder) = data.as_chunks::<64>();
+        for block in blocks {
             self.process(block);
         }
-        self.pending.extend_from_slice(blocks.remainder());
+        self.pending.extend_from_slice(remainder);
     }
 
     fn process(&mut self, block: &[u8]) {
         let mut words = [0u32; 16];
-        for (word, bytes) in words.iter_mut().zip(block.chunks_exact(4)) {
-            *word = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        for (word, bytes) in words.iter_mut().zip(block.as_chunks::<4>().0) {
+            *word = u32::from_le_bytes(*bytes);
         }
         let [mut a, mut b, mut c, mut d] = self.state;
         for index in 0..64 {
@@ -336,11 +336,11 @@ impl Md5 {
             tail.push(0);
         }
         tail.extend_from_slice(&bits.to_le_bytes());
-        for block in tail.chunks_exact(64) {
+        for block in tail.as_chunks::<64>().0 {
             self.process(block);
         }
         let mut output = [0u8; 16];
-        for (chunk, word) in output.chunks_exact_mut(4).zip(self.state) {
+        for (chunk, word) in output.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
             chunk.copy_from_slice(&word.to_le_bytes());
         }
         output
@@ -368,10 +368,6 @@ const fn crc_table() -> [u32; 256] {
 }
 
 // Hex
-
-pub fn hex(bytes: &[u8]) -> String {
-    to_hex(bytes)
-}
 
 pub fn parse_hex_digest(text: &str, algorithm: HashAlgorithm) -> Option<Vec<u8>> {
     let text = text.trim().to_ascii_lowercase();
@@ -480,9 +476,10 @@ pub fn unsupported(path: &str) -> Error {
 mod tests {
     use super::*;
     use crate::LocalFileSystem;
+    use crate::key_value::to_hex;
 
     fn digest_hex(algorithm: HashAlgorithm, data: &[u8]) -> String {
-        hex(&algorithm.digest(data))
+        to_hex(&algorithm.digest(data))
     }
 
     #[test]

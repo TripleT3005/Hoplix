@@ -6,12 +6,14 @@ mod entry;
 mod error;
 mod file_system;
 mod ftp;
+mod history;
 pub mod key_value;
 pub mod language;
 mod local;
 mod options;
 mod paths;
 mod proxy;
+mod queue_file;
 mod rate;
 mod recent;
 mod route;
@@ -43,6 +45,10 @@ pub use file_system::{
     BoxFuture, FileSystem, Reader, Writer, copy_file, is_valid_name, remove_recursive,
 };
 pub use ftp::{FtpFileSystem, ensure_passive_mode};
+pub use history::{
+    DEFAULT_HISTORY_LIMIT, ExportLabels, HISTORY_FILE, History, HistoryEntry, HistoryResult,
+    MAX_HISTORY_LIMIT, csv_field, to_csv, to_plain_text,
+};
 pub use local::LocalFileSystem;
 pub use options::{
     ConnectionOptions, FileNameEncoding, FtpMode, MAX_TIMEOUT_SECONDS, seconds_from_text,
@@ -50,6 +56,7 @@ pub use options::{
 };
 pub use paths::{TrustStore, config_dir};
 pub use proxy::{Proxy, ProxyCredentials, ProxyKind};
+pub use queue_file::{Location, QUEUE_FILE, SavedJob, SavedQueue};
 pub use rate::RateLimiter;
 pub use recent::{MAX_RECENT, RECENT_FILE, RecentConnection, RecentList};
 pub use route::{JumpHost, Route, connect_via, connect_via_with};
@@ -75,6 +82,7 @@ pub use sync::{
 };
 pub use transfer::{
     Conflict, ConflictDecision, ConflictPolicy, DEFAULT_PARALLELISM, DEFAULT_RETRIES,
-    DEFAULT_RETRY_DELAY, JobId, JobOptions, JobSnapshot, JobStatus, Parallelism, RetryPolicy,
-    SiteLimit, SpeedLimits, TransferDirection, TransferEvent, TransferQueue, TransferRequest,
+    DEFAULT_RETRY_DELAY, JobId, JobOptions, JobSnapshot, JobState, JobStatus, Parallelism,
+    ResumePoint, RetryPolicy, SiteLimit, SpeedLimits, TransferDirection, TransferEvent,
+    TransferQueue, TransferRequest,
 };

@@ -172,6 +172,7 @@ impl Hoplix {
                 self.conflicts.push_back(conflict);
                 self.show_next_conflict();
             }
+            TransferEvent::Verified { .. } => {}
         }
         Task::none()
     }
@@ -637,6 +638,8 @@ mod tests {
                 skipped: 0,
                 bytes_per_second: 0.0,
                 current_file: None,
+                checksum: None,
+                elapsed: std::time::Duration::ZERO,
             });
             let _ = app.update(Message::TransferEvent(TransferEvent::Conflict(Conflict {
                 job: id,
@@ -677,6 +680,8 @@ mod tests {
             skipped: 0,
             bytes_per_second: 0.0,
             current_file: None,
+            checksum: None,
+            elapsed: std::time::Duration::ZERO,
         };
         let _ = app.update(Message::TransferEvent(TransferEvent::Updated(
             snapshot.clone(),
