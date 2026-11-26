@@ -623,6 +623,16 @@ impl TransferQueue {
             }
             job.direction =
                 TransferDirection::of(job.request.source.as_ref(), job.request.target.as_ref());
+            if job.plan.is_none() {
+                let request = &job.request;
+                job.snapshot.name = request
+                    .target_name
+                    .clone()
+                    .unwrap_or_else(|| request.source.file_name(&request.source_path).to_string());
+                job.snapshot.target_path = request
+                    .target
+                    .join(&request.target_directory, &job.snapshot.name);
+            }
             rebound = true;
         });
         rebound

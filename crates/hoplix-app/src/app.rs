@@ -20,6 +20,7 @@ use crate::compare::{CompareMessage, CompareState, SyncDialog};
 use crate::connect_form::{ConnectForm, Field};
 use crate::edits::{EditMessage, Edits, Opener};
 use crate::i18n::{self, LanguageInfo, Strings};
+use crate::queue_store::{HistoryMessage, HistoryView, QueueStore};
 use crate::session::{Offline, SavedTab, Session, TabOrigin, WindowState};
 use crate::settings::{Layout, Settings, ThemePreference};
 use crate::site_actions::PendingAction;
@@ -28,7 +29,7 @@ use crate::site_form::{SiteField, SiteForm};
 use crate::transfer_settings::TransferSetting;
 use crate::transfers::{Drag, DropTarget, TransferAction, TransferTarget};
 use crate::updates::{CheckState, UpdateMessage, UpdateSource};
-use crate::{edits, opener, theme, title_bar, transfers, ui, updates};
+use crate::{edits, opener, queue_store, theme, title_bar, transfers, ui, updates};
 
 // Types
 
@@ -221,6 +222,7 @@ pub enum Message {
     RecentCleared,
     RememberRecent(bool),
     SiteExchange(ExchangeMessage),
+    History(HistoryMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -264,6 +266,8 @@ pub struct Hoplix {
     pub transfer_panel_open: bool,
     pub transfer_targets: HashMap<JobId, TransferTarget>,
     pub(crate) conflicts: VecDeque<Conflict>,
+    pub(crate) store: QueueStore,
+    pub history: HistoryView,
     pub(crate) modifiers: Modifiers,
     pub drag: Option<Drag>,
     pub drop_target: Option<DropTarget>,
@@ -415,6 +419,8 @@ impl Hoplix {
             }
         }
         app.load_recent();
+        app.load_history();
+        app.restore_queue();
         let session = app
             .config_dir
             .as_deref()
@@ -455,6 +461,8 @@ impl Hoplix {
             transfer_panel_open: false,
             transfer_targets: HashMap::new(),
             conflicts: VecDeque::new(),
+            store: QueueStore::default(),
+            history: HistoryView::default(),
             modifiers: Modifiers::default(),
             drag: None,
             drop_target: None,
@@ -501,6 +509,7 @@ impl Hoplix {
             theme_changes,
             transfers::subscription(self),
             edits::subscription(self),
+            queue_store::subscription(self),
         ])
     }
 
@@ -625,6 +634,7 @@ impl Hoplix {
             Message::WindowClosing(id, maximized) => {
                 self.window.maximized = maximized;
                 self.save_session();
+                self.persist(true);
                 self.remove_edit_folder();
                 return window::close(id);
             }
@@ -640,6 +650,7 @@ impl Hoplix {
             | Message::MouseReleased) => return self.update_transfers(message),
             Message::Edit(message) => return self.update_edits(message),
             Message::SiteExchange(message) => return self.update_exchange(message),
+            Message::History(message) => return self.update_history(message),
             message @ (Message::RecentSelected(_)
             | Message::RecentRemoved(_)
             | Message::RecentCleared
@@ -804,6 +815,7 @@ impl Hoplix {
             target.active = target.active.saturating_sub(1);
         }
         self.stop_edits_for_tab(id);
+        self.store.connections.remove(&id);
         let file_system = tab.file_system;
         Task::future(async move { file_system.close().await }).discard()
     }

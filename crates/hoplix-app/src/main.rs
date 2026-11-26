@@ -10,6 +10,7 @@ mod i18n;
 mod icon;
 mod local_time;
 mod opener;
+mod queue_store;
 mod recent_actions;
 mod route_form;
 mod session;

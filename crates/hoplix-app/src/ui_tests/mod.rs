@@ -3,6 +3,7 @@ mod compare;
 mod connect;
 mod edit;
 mod fakes;
+mod history;
 mod palette;
 mod queue;
 mod routes;
