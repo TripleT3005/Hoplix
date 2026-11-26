@@ -2,6 +2,52 @@
 
 All notable changes are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.0] – 2026-11-26
+
+### English
+
+#### Added
+
+- Filter field above the file list (Ctrl+F): part of a name or `*`/`?` wildcards, shows "x of y items"; Esc clears it.
+- Back and forward through visited folders per tab (Alt+←/→, mouse buttons, ← → buttons).
+- Bookmarks for local folders and per saved site (Ctrl+B), with a list next to the path field, editing, the command palette and site export.
+- Search in subfolders (Ctrl+Shift+F) for local and remote tabs, with depth limit, live results and stop; a double-click opens the folder of a result.
+- Properties dialog (Alt+Enter) with size (folders on demand), modification time, owner, group and permissions; change permissions on SFTP, FTP (`SITE CHMOD`) and Linux, also recursively for files or folders.
+- Preview pane (F3) next to the file list: type, size and date of the selected file and the beginning of text files (UTF-8, UTF-16, Windows-1252); files on servers are read into memory only, larger ones on request (*Settings → Preview*).
+- Drop files and folders from Explorer or your file manager onto a tab or pane to upload or copy them there.
+- Copy path (Ctrl+Shift+C) copies the paths of the selection, as `sftp://user@host/path` for servers and without passwords.
+- Unfinished transfers are kept and come back paused after a restart; transfers to a server wait for its connection and continue with *Connect*.
+- Transfer history in the Transfers panel with filter, copy, CSV and text export.
+- Optional checksum check after each file (SHA-256 locally; FTP HASH/XSHA256/XSHA1/XMD5/XCRC; SFTP check-file/md5-hash), otherwise a size check; mismatches fail and are copied again on *Retry*.
+- `hoplix-cli chmod [-r]`, `hoplix-cli find` with `--depth`, and `--verify` for `get`, `put`, `cp` and `sync`; `stat` shows permissions, owner and group.
+
+#### Changed
+
+- The preview pane leaves room for the file list: the Name column always stays visible, Type and Modified hide first in narrow panes, and the divider stops before the list.
+- Long paths in the transfer history and queue stay on one line, shortened in the middle with the file name visible and the full text as a tooltip.
+
+### Deutsch
+
+#### Neu
+
+- Filterfeld über der Dateiliste (Strg+F): Teil eines Namens oder Platzhalter `*`/`?`, zeigt „x von y Einträgen“; Esc leert es.
+- Zurück und vorwärts durch die besuchten Ordner je Tab (Alt+←/→, Maustasten, Buttons ← →).
+- Lesezeichen für lokale Ordner und je gespeichertem Server (Strg+B), mit Liste neben dem Pfadfeld, Bearbeiten, Befehlspalette und Serverexport.
+- Suche in Unterordnern (Strg+Umschalt+F) für lokale und Server-Tabs, mit Tiefenlimit, laufenden Ergebnissen und Stopp; ein Doppelklick öffnet den Ordner eines Treffers.
+- Eigenschaften-Dialog (Alt+Eingabe) mit Größe (Ordner auf Wunsch), Änderungszeit, Besitzer, Gruppe und Berechtigungen; Berechtigungen ändern bei SFTP, FTP (`SITE CHMOD`) und unter Linux, auch rekursiv für Dateien oder Ordner.
+- Vorschau (F3) neben der Dateiliste: Typ, Größe und Datum der ausgewählten Datei und der Anfang von Textdateien (UTF-8, UTF-16, Windows-1252); Dateien auf Servern werden nur in den Arbeitsspeicher gelesen, größere nur auf Wunsch (*Einstellungen → Vorschau*).
+- Dateien und Ordner aus dem Explorer bzw. der Dateiverwaltung auf einen Tab oder Bereich ziehen, um sie dorthin hochzuladen oder zu kopieren.
+- Pfad kopieren (Strg+Umschalt+C) kopiert die Pfade der Auswahl, für Server als `sftp://benutzer@host/pfad` und ohne Passwörter.
+- Unfertige Übertragungen bleiben erhalten und sind nach einem Neustart pausiert wieder da; Übertragungen zu einem Server warten auf dessen Verbindung und laufen mit *Verbinden* weiter.
+- Übertragungsverlauf im Bereich Übertragungen mit Filter, Kopieren sowie Export als CSV und Text.
+- Optionale Prüfsummenprüfung nach jeder Datei (SHA-256 lokal; FTP HASH/XSHA256/XSHA1/XMD5/XCRC; SFTP check-file/md5-hash), sonst Größenprüfung; Abweichungen schlagen fehl und werden mit *Wiederholen* neu kopiert.
+- `hoplix-cli chmod [-r]`, `hoplix-cli find` mit `--depth` sowie `--verify` für `get`, `put`, `cp` und `sync`; `stat` zeigt Berechtigungen, Besitzer und Gruppe.
+
+#### Geändert
+
+- Die Vorschau lässt der Dateiliste Platz: Die Namensspalte bleibt immer sichtbar, in schmalen Bereichen werden zuerst Typ und Geändert ausgeblendet, und der Teiler stoppt vor der Liste.
+- Lange Pfade in Übertragungsverlauf und Warteschlange bleiben einzeilig, in der Mitte gekürzt mit sichtbarem Dateinamen und vollem Text als Tooltip.
+
 ## [0.4.0] – 2026-11-26
 
 ### English
