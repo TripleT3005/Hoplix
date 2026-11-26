@@ -134,6 +134,70 @@ impl ConnectionParams {
             format!("{}@{}:{}", self.username, self.host, self.port)
         }
     }
+
+    pub fn url(&self, path: &str) -> String {
+        let host = if self.host.contains(':') && !self.host.starts_with('[') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
+        let port = if self.port == self.protocol.default_port() {
+            String::new()
+        } else {
+            format!(":{}", self.port)
+        };
+        let path = if path.starts_with('/') {
+            encode_url_path(path)
+        } else {
+            format!("/{}", encode_url_path(path))
+        };
+        format!(
+            "{}://{}@{host}{port}{path}",
+            self.protocol.scheme(),
+            percent_encode(&self.username, is_user_byte)
+        )
+    }
+}
+
+// URLs
+
+pub fn encode_url_path(path: &str) -> String {
+    percent_encode(path, |byte| {
+        is_user_byte(byte) || matches!(byte, b'/' | b':' | b'@')
+    })
+}
+
+fn is_user_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'-' | b'.'
+                | b'_'
+                | b'~'
+                | b'!'
+                | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b';'
+                | b'='
+        )
+}
+
+fn percent_encode(text: &str, keep: impl Fn(u8) -> bool) -> String {
+    let mut encoded = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if keep(byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 impl fmt::Debug for Authentication {
@@ -190,6 +254,24 @@ mod tests {
         let password = Authentication::Password(test_password());
         assert_eq!(params(22, password.clone()).label(), "demo@example.test");
         assert_eq!(params(2222, password).label(), "demo@example.test:2222");
+    }
+
+    #[test]
+    fn urls_name_user_host_and_path_but_no_secret() {
+        let secret = test_password();
+        let sftp = params(22, Authentication::Password(secret.clone()));
+        assert_eq!(
+            sftp.url("/var/www/a b#1.txt"),
+            "sftp://demo@example.test/var/www/a%20b%231.txt"
+        );
+        let mut ftp = params(2121, Authentication::Password(secret.clone()));
+        ftp.protocol = Protocol::FtpsImplicit;
+        ftp.username = "web:admin@site".to_string();
+        ftp.host = "::1".to_string();
+        let url = ftp.url("Grüße");
+        assert_eq!(url, "ftps://web%3Aadmin%40site@[::1]:2121/Gr%C3%BC%C3%9Fe");
+        assert!(!url.contains(&secret) && !sftp.url("/").contains(&secret));
+        assert_eq!(encode_url_path("/a:b@c/~d"), "/a:b@c/~d");
     }
 
     #[test]

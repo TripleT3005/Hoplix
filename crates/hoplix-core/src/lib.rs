@@ -34,12 +34,13 @@ pub use bookmarks::{BOOKMARKS_FILE, Bookmark, Bookmarks};
 pub use certificates::certificate_fingerprint;
 pub use connection::{
     Authentication, ConnectionParams, HostAddress, HostKeyTrust, Protocol, connect, connect_with,
+    encode_url_path,
 };
 pub use encoding::{decode_windows_1252, encode_windows_1252};
 pub use entry::{Entry, EntryKind, SortKey, SortOrder, compare_names, sort_entries};
 pub use error::{Error, ErrorKind, Result};
 pub use file_system::{
-    BoxFuture, FileSystem, Reader, Writer, copy_file, is_valid_name, remove_recursive,
+    BoxFuture, FileSystem, Reader, Writer, copy_file, is_valid_name, read_head, remove_recursive,
 };
 pub use ftp::{FtpFileSystem, ensure_passive_mode};
 pub use local::LocalFileSystem;

@@ -437,6 +437,10 @@ impl FileSystem for FtpFileSystem {
         Some(self.label.clone())
     }
 
+    fn url(&self, path: &str) -> Option<String> {
+        Some(self.session.params.url(path))
+    }
+
     fn home(&self) -> BoxFuture<'_, Result<String>> {
         Box::pin(async {
             let mut control = self.control().await?;
