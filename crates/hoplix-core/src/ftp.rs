@@ -1079,11 +1079,11 @@ mod tests {
     fn unix_listings_are_parsed() {
         let lines = [
             "total 24",
-            "drwxr-xr-x    2 1000     1000         4096 Nov 24 09:15 photos",
+            "drwxr-xr-x    2 1000     1000         4096 Mar 15 12:00 photos",
             "-rw-r--r--    1 1000     1000       250000 Mar 03  2025 report 2026.pdf",
-            "lrwxrwxrwx    1 0        0              11 Nov 24 09:15 latest -> photos",
-            "drwxr-xr-x    3 0        0            4096 Nov 24 09:15 .",
-            "drwxr-xr-x    3 0        0            4096 Nov 24 09:15 ..",
+            "lrwxrwxrwx    1 0        0              11 Mar 15 12:00 latest -> photos",
+            "drwxr-xr-x    3 0        0            4096 Mar 15 12:00 .",
+            "drwxr-xr-x    3 0        0            4096 Mar 15 12:00 ..",
         ];
         assert_eq!(
             names(&lines, false),
@@ -1551,7 +1551,7 @@ mod tests {
 
     const LOOPBACK: [u8; 4] = [127, 0, 0, 1];
     const LISTING: &[u8] =
-        b"-rw-r--r--    1 1000     1000            5 Nov 24 09:15 caf\xe9 \x80.txt\r\n";
+        b"-rw-r--r--    1 1000     1000            5 Mar 15 12:00 caf\xe9 \x80.txt\r\n";
 
     #[tokio::test]
     async fn permissions_are_changed_with_site_chmod() {
@@ -1599,7 +1599,7 @@ mod tests {
     }
 
     const LISTING_WITH_OWNER: &[u8] =
-        b"-rw-r-----    1 ashdeb   staff           5 Nov 24 09:15 notes.txt\r\n";
+        b"-rw-r-----    1 demo     staff           5 Mar 15 12:00 notes.txt\r\n";
 
     #[tokio::test]
     async fn active_mode_sends_port_and_receives_the_listing() {
@@ -1720,7 +1720,7 @@ mod tests {
     #[tokio::test]
     async fn utf8_stays_the_default() {
         let server = option_server(
-            "-rw-r--r--    1 1000     1000            5 Nov 24 09:15 café.txt\r\n".as_bytes(),
+            "-rw-r--r--    1 1000     1000            5 Mar 15 12:00 café.txt\r\n".as_bytes(),
             true,
             LOOPBACK,
             LOOPBACK,
