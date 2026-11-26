@@ -1,5 +1,5 @@
 use hoplix_core::{
-    ConnectionOptions, FileNameEncoding, FtpMode, MAX_SITE_TRANSFERS, Protocol, Site,
+    Bookmarks, ConnectionOptions, FileNameEncoding, FtpMode, MAX_SITE_TRANSFERS, Protocol, Site,
     normalize_folder, seconds_from_text, seconds_text,
 };
 use iced::widget::text_editor;
@@ -279,6 +279,7 @@ impl SiteForm {
             max_transfers,
             jump,
             proxy,
+            bookmarks: Bookmarks::default(),
         };
         let filled = |secret: &str| Some(secret.to_string()).filter(|secret| !secret.is_empty());
         let secrets = SiteSecrets {

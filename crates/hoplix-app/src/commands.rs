@@ -6,6 +6,9 @@ use iced::{Task, widget};
 
 use crate::app::{Hoplix, LoadState, Message, Page, Tab, TabMessage};
 use crate::compare::CompareMessage;
+use crate::file_list::{BookmarkChoice, ListMessage};
+use crate::properties::PropertiesMessage;
+use crate::search::SearchMessage;
 use crate::settings::{Layout, ThemePreference};
 use crate::transfers::TransferAction;
 use crate::ui;
@@ -41,6 +44,14 @@ pub enum Action {
     ToggleTransfers,
     Compare,
     Synchronise,
+    Filter,
+    SearchSubfolders,
+    Back,
+    Forward,
+    AddBookmark,
+    EditBookmarks,
+    OpenBookmark(String),
+    Properties,
     ConnectSite(String),
     ConnectRecent(usize),
     MoveSelection { delta: isize, extend: bool },
@@ -69,6 +80,9 @@ pub fn action_for_key(key: &Key, modifiers: Modifiers) -> Option<Action> {
         Key::Character(character) if command => match character.to_lowercase().as_str() {
             "k" => Some(Action::CommandPalette),
             "a" => Some(Action::SelectAll),
+            "f" if shift => Some(Action::SearchSubfolders),
+            "f" => Some(Action::Filter),
+            "b" => Some(Action::AddBookmark),
             "t" => Some(Action::NewTab),
             "w" => Some(Action::CloseTab),
             "d" if shift => Some(Action::Synchronise),
@@ -81,6 +95,9 @@ pub fn action_for_key(key: &Key, modifiers: Modifiers) -> Option<Action> {
             Action::NextTab
         }),
         Key::Named(Named::ArrowUp) if modifiers.alt() => Some(Action::Up),
+        Key::Named(Named::ArrowLeft) if modifiers.alt() => Some(Action::Back),
+        Key::Named(Named::ArrowRight) if modifiers.alt() => Some(Action::Forward),
+        Key::Named(Named::Enter) if modifiers.alt() => Some(Action::Properties),
         Key::Named(named) if !command && !modifiers.alt() => match named {
             Named::Enter => Some(Action::Open),
             Named::Backspace => Some(Action::Up),
@@ -134,6 +151,12 @@ pub fn shortcut(action: &Action) -> Option<&'static str> {
         Action::SelectAll => Some("Ctrl+A"),
         Action::Compare => Some("Ctrl+D"),
         Action::Synchronise => Some("Ctrl+Shift+D"),
+        Action::Filter => Some("Ctrl+F"),
+        Action::SearchSubfolders => Some("Ctrl+Shift+F"),
+        Action::Back => Some("Alt+←"),
+        Action::Forward => Some("Alt+→"),
+        Action::AddBookmark => Some("Ctrl+B"),
+        Action::Properties => Some("Alt+Enter"),
         _ => None,
     }
 }
@@ -200,10 +223,25 @@ impl Hoplix {
             (Action::ToggleTransfers, "command.toggle_transfers"),
             (Action::Compare, "command.compare"),
             (Action::Synchronise, "command.synchronise"),
+            (Action::Filter, "command.filter"),
+            (Action::SearchSubfolders, "command.search"),
+            (Action::Back, "command.back"),
+            (Action::Forward, "command.forward"),
+            (Action::AddBookmark, "command.add_bookmark"),
+            (Action::EditBookmarks, "command.edit_bookmarks"),
+            (Action::Properties, "command.properties"),
         ]
         .into_iter()
         .map(|(action, key)| (action, strings.get(key).to_string()))
         .collect();
+        if let Some(bookmarks) = self.focused_tab().and_then(|tab| self.tab_bookmarks(tab)) {
+            actions.extend(bookmarks.items.iter().map(|bookmark| {
+                (
+                    Action::OpenBookmark(bookmark.path.clone()),
+                    strings.format("command.open_bookmark", &[("name", &bookmark.name)]),
+                )
+            }));
+        }
         actions.extend(self.sites.sorted().into_iter().map(|site| {
             (
                 Action::ConnectSite(site.id.clone()),
@@ -320,11 +358,17 @@ impl Hoplix {
         let Some(action) = action_for_key(key, modifiers) else {
             if escape && !captured && self.page != Page::Browser {
                 self.page = Page::Browser;
+            } else if escape && self.page == Page::Browser {
+                self.clear_focused_filter();
             }
             return Task::none();
         };
         if action == Action::CommandPalette {
             return self.open_palette();
+        }
+        if matches!(action, Action::Filter | Action::SearchSubfolders) && self.page == Page::Browser
+        {
+            return self.run_action(action);
         }
         if captured || self.page != Page::Browser {
             return Task::none();
@@ -401,6 +445,43 @@ impl Hoplix {
             }
             Action::Compare => return self.update(Message::Compare(CompareMessage::Toggle)),
             Action::Synchronise => return self.update(Message::Compare(CompareMessage::OpenSync)),
+            Action::Filter => return self.focus_filter(),
+            Action::SearchSubfolders => return self.update(Message::Search(SearchMessage::Open)),
+            Action::Back => {
+                if let Some(id) = focused {
+                    return self.update(Message::List(ListMessage::Back(id)));
+                }
+            }
+            Action::Forward => {
+                if let Some(id) = focused {
+                    return self.update(Message::List(ListMessage::Forward(id)));
+                }
+            }
+            Action::AddBookmark => {
+                if let Some(id) = focused {
+                    return self.update(Message::List(ListMessage::Bookmark(
+                        id,
+                        BookmarkChoice::Add,
+                    )));
+                }
+            }
+            Action::EditBookmarks => {
+                if let Some(id) = focused {
+                    return self.update(Message::List(ListMessage::Bookmark(
+                        id,
+                        BookmarkChoice::Edit,
+                    )));
+                }
+            }
+            Action::OpenBookmark(path) => {
+                if let Some(id) = focused {
+                    return self.update(Message::List(ListMessage::Bookmark(
+                        id,
+                        BookmarkChoice::Open(path),
+                    )));
+                }
+            }
+            Action::Properties => return self.update(Message::Properties(PropertiesMessage::Open)),
             Action::ConnectSite(id) => return self.update(Message::SiteConnect(id)),
             Action::ConnectRecent(index) => return self.use_recent(index, true),
             Action::MoveSelection { delta, extend } => return self.move_selection(delta, extend),
@@ -433,16 +514,29 @@ impl Hoplix {
         };
         if extend {
             let anchor = tab.anchor.or(tab.cursor).unwrap_or(index);
-            tab.selection = (anchor.min(index)..=anchor.max(index)).collect();
+            tab.selection = (anchor.min(index)..=anchor.max(index))
+                .filter(|item| {
+                    visible
+                        .as_ref()
+                        .is_none_or(|visible| visible.contains(item))
+                })
+                .collect();
             tab.anchor = Some(anchor);
         } else {
             tab.selection = vec![index];
             tab.anchor = Some(index);
         }
         tab.cursor = Some(index);
+        let (row, count) = match &visible {
+            Some(visible) => (
+                visible.iter().position(|item| *item == index).unwrap_or(0),
+                visible.len(),
+            ),
+            None => (index, tab.entries.len()),
+        };
         match tab
             .viewport
-            .and_then(|viewport| reveal_offset(&viewport, index, tab.entries.len()))
+            .and_then(|viewport| reveal_offset(&viewport, row, count))
         {
             Some(offset) => operation::scroll_to(
                 ui::entry_list_id(tab.id),

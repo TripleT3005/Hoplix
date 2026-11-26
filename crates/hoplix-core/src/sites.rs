@@ -7,8 +7,8 @@ use ring::rand::{SecureRandom, SystemRandom};
 use crate::key_value::{self, Section};
 use crate::options::{self, ConnectionOptions, FileNameEncoding, FtpMode};
 use crate::{
-    ConnectionParams, Protocol, Route, SiteJump, SiteProxy, jump_secret_name, proxy_secret_name,
-    secret_name,
+    Bookmarks, ConnectionParams, Protocol, Route, SiteJump, SiteProxy, jump_secret_name,
+    proxy_secret_name, secret_name,
 };
 
 // Constants
@@ -47,6 +47,7 @@ pub struct Site {
     pub max_transfers: Option<usize>,
     pub jump: Option<SiteJump>,
     pub proxy: Option<SiteProxy>,
+    pub bookmarks: Bookmarks,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -211,6 +212,7 @@ impl Site {
                 .filter(|count| (1..=MAX_SITE_TRANSFERS).contains(count)),
             jump: SiteJump::from_section(section),
             proxy: SiteProxy::from_section(section),
+            bookmarks: Bookmarks::from_section(section),
         })
     }
 
@@ -253,6 +255,7 @@ impl Site {
         if let Some(proxy) = &self.proxy {
             pairs.extend(proxy.pairs());
         }
+        pairs.extend(self.bookmarks.pairs());
         format!(
             "
 [{SITE_SECTION}]
@@ -499,6 +502,8 @@ mod tests {
         web.local_path = "C:\\Sites".to_string();
         web.notes = "line one\nline two = with equals".to_string();
         web.save_secrets = true;
+        web.bookmarks.add("Logs", "/var/log/app");
+        web.bookmarks.add("Uploads", "/var/www/uploads");
         let mut backup = site("Backup", "");
         backup.auth = SiteAuth::KeyFile;
         backup.key_path = "C:\\keys\\id_ed25519".to_string();

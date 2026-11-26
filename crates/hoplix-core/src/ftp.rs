@@ -25,8 +25,8 @@ use crate::options::{ConnectionOptions, FileNameEncoding, FtpMode};
 use crate::proxy::Proxy;
 use crate::sftp::{join_posix, parent_posix};
 use crate::{
-    BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Result, certificates,
-    decode_windows_1252, encode_windows_1252,
+    BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Properties, Result, certificates,
+    decode_windows_1252, encode_windows_1252, mode_text, parse_mode, parse_permission_text,
 };
 
 // Constants
@@ -89,6 +89,14 @@ enum TransferState {
 struct FtpTransfer {
     state: TransferState,
     idle: Arc<StdMutex<Vec<Client>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct UnixDetails {
+    name: String,
+    permissions: Option<u32>,
+    owner: Option<String>,
+    group: Option<String>,
 }
 
 // Connecting
@@ -605,6 +613,71 @@ impl FileSystem for FtpFileSystem {
         })
     }
 
+    fn properties(&self, path: &str) -> BoxFuture<'_, Result<Properties>> {
+        let path = path.to_string();
+        Box::pin(async move {
+            let mut properties = Properties::from_entry(self.metadata(&path).await?);
+            let mut details = UnixDetails::default();
+            if self.capabilities.mlst {
+                let mut control = self.control().await?;
+                let result = control.client.mlst(Some(&path)).await;
+                if let Ok(line) = control.check(result, &path) {
+                    details = machine_details(&line);
+                }
+            }
+            if details.permissions.is_none()
+                && let Some(parent) = self.parent(&path)
+            {
+                let name = self.file_name(&path).to_string();
+                let mut control = self.control().await?;
+                if control.client.cwd(&parent).await.is_ok() {
+                    let result = control.client.list(None).await;
+                    if let Some(found) = control.check(result, &parent).ok().and_then(|lines| {
+                        lines
+                            .iter()
+                            .filter_map(|line| list_details(line))
+                            .find(|found| found.name == name)
+                    }) {
+                        details = found;
+                    }
+                }
+            }
+            properties.permissions = details.permissions;
+            properties.owner = details.owner;
+            properties.group = details.group;
+            Ok(properties)
+        })
+    }
+
+    fn can_set_permissions(&self) -> bool {
+        true
+    }
+
+    fn set_permissions(&self, path: &str, mode: u32) -> BoxFuture<'_, Result<()>> {
+        let path = path.to_string();
+        Box::pin(async move {
+            let mut control = self.control().await?;
+            let result = control
+                .client
+                .site(format!("CHMOD {} {path}", mode_text(mode)))
+                .await;
+            match result {
+                Err(FtpError::UnexpectedResponse(response))
+                    if matches!(response.status.code(), 500 | 502 | 504) =>
+                {
+                    Err(Error::new(
+                        ErrorKind::Unsupported,
+                        format!(
+                            "{path}: {}",
+                            response.as_string().unwrap_or_default().trim()
+                        ),
+                    ))
+                }
+                other => control.check(other, &path).map(|_| ()),
+            }
+        })
+    }
+
     fn close(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {
             let idle: Vec<Client> = self
@@ -801,6 +874,50 @@ fn parse_line(line: &str, machine_readable: bool) -> Option<Entry> {
     Some(entry_from(name, &file))
 }
 
+fn machine_details(line: &str) -> UnixDetails {
+    let line = line.strip_prefix(' ').unwrap_or(line);
+    let (facts, name) = match line.find("; ") {
+        Some(end) => (&line[..=end], &line[end + 2..]),
+        None => ("", line.trim()),
+    };
+    let mut details = UnixDetails {
+        name: name.to_string(),
+        ..UnixDetails::default()
+    };
+    let (mut uid, mut gid) = (None, None);
+    for fact in facts.split(';') {
+        let Some((key, value)) = fact.split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim().to_ascii_lowercase().as_str() {
+            "unix.mode" => details.permissions = parse_mode(value),
+            "unix.owner" | "unix.ownername" => details.owner = Some(value.to_string()),
+            "unix.group" | "unix.groupname" => details.group = Some(value.to_string()),
+            "unix.uid" => uid = Some(value.to_string()),
+            "unix.gid" => gid = Some(value.to_string()),
+            _ => {}
+        }
+    }
+    details.owner = details.owner.or(uid);
+    details.group = details.group.or(gid);
+    details
+}
+
+fn list_details(line: &str) -> Option<UnixDetails> {
+    let file = ListParser::parse_posix(line).ok()?;
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    Some(UnixDetails {
+        name: file.name().to_string(),
+        permissions: fields
+            .first()
+            .and_then(|field| field.get(1..10))
+            .and_then(parse_permission_text),
+        owner: fields.get(2).map(ToString::to_string),
+        group: fields.get(3).map(ToString::to_string),
+    })
+}
+
 fn entry_from(name: String, file: &File) -> Entry {
     if file.is_directory() {
         let mut entry = directory_entry(name);
@@ -962,11 +1079,11 @@ mod tests {
     fn unix_listings_are_parsed() {
         let lines = [
             "total 24",
-            "drwxr-xr-x    2 1000     1000         4096 Nov 24 09:15 photos",
+            "drwxr-xr-x    2 1000     1000         4096 Mar 15 12:00 photos",
             "-rw-r--r--    1 1000     1000       250000 Mar 03  2025 report 2026.pdf",
-            "lrwxrwxrwx    1 0        0              11 Nov 24 09:15 latest -> photos",
-            "drwxr-xr-x    3 0        0            4096 Nov 24 09:15 .",
-            "drwxr-xr-x    3 0        0            4096 Nov 24 09:15 ..",
+            "lrwxrwxrwx    1 0        0              11 Mar 15 12:00 latest -> photos",
+            "drwxr-xr-x    3 0        0            4096 Mar 15 12:00 .",
+            "drwxr-xr-x    3 0        0            4096 Mar 15 12:00 ..",
         ];
         assert_eq!(
             names(&lines, false),
@@ -980,6 +1097,42 @@ mod tests {
                 ),
                 ("latest".to_string(), EntryKind::File, None, true),
             ]
+        );
+    }
+
+    #[test]
+    fn listings_give_permissions_and_owners() {
+        let details =
+            list_details("-rwsr-x---    1 demo     www-data      250 Mar 03  2025 report 2026.pdf")
+                .expect("not parsed");
+        assert_eq!(
+            details,
+            UnixDetails {
+                name: "report 2026.pdf".to_string(),
+                permissions: Some(0o4750),
+                owner: Some("demo".to_string()),
+                group: Some("www-data".to_string()),
+            }
+        );
+        assert_eq!(
+            list_details("11-24-26  09:15AM       <DIR>          Backups"),
+            None
+        );
+        let machine = machine_details(
+            " type=file;size=5;UNIX.mode=0640;UNIX.uid=1000;UNIX.gid=1000;UNIX.ownername=ftp; a b.txt",
+        );
+        assert_eq!(
+            machine,
+            UnixDetails {
+                name: "a b.txt".to_string(),
+                permissions: Some(0o640),
+                owner: Some("ftp".to_string()),
+                group: Some("1000".to_string()),
+            }
+        );
+        assert_eq!(
+            machine_details("type=dir;modify=20250101000000; pub").permissions,
+            None
         );
     }
 
@@ -1360,6 +1513,13 @@ mod tests {
                                 "226 done\r\n".to_string()
                             }
                             "DELE" => "250 deleted\r\n".to_string(),
+                            "SITE" if argument.contains("refused") => {
+                                "550 Permission denied.\r\n".to_string()
+                            }
+                            "SITE" if argument.contains("unknown") => {
+                                "500 Unknown SITE command.\r\n".to_string()
+                            }
+                            "SITE" => "200 SITE CHMOD command ok.\r\n".to_string(),
                             "QUIT" => {
                                 let _ = writer.write_all(b"221 bye\r\n");
                                 break;
@@ -1391,7 +1551,55 @@ mod tests {
 
     const LOOPBACK: [u8; 4] = [127, 0, 0, 1];
     const LISTING: &[u8] =
-        b"-rw-r--r--    1 1000     1000            5 Nov 24 09:15 caf\xe9 \x80.txt\r\n";
+        b"-rw-r--r--    1 1000     1000            5 Mar 15 12:00 caf\xe9 \x80.txt\r\n";
+
+    #[tokio::test]
+    async fn permissions_are_changed_with_site_chmod() {
+        let server = option_server(LISTING, true, LOOPBACK, LOOPBACK);
+        let file_system = connect_to(&server, &ConnectionOptions::default()).await;
+        assert!(file_system.can_set_permissions());
+        file_system
+            .set_permissions("/www/index.html", 0o644)
+            .await
+            .expect("changing failed");
+        let error = file_system
+            .set_permissions("/refused", 0o4755)
+            .await
+            .expect_err("refusal ignored");
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        let error = file_system
+            .set_permissions("/unknown", 0o600)
+            .await
+            .expect_err("unknown command ignored");
+        assert_eq!(error.kind(), ErrorKind::Unsupported);
+        assert!(error.detail().contains("Unknown SITE command"), "{error:?}");
+        file_system.close().await;
+        let commands = server.commands();
+        for expected in [
+            "SITE CHMOD 644 /www/index.html",
+            "SITE CHMOD 4755 /refused",
+            "SITE CHMOD 600 /unknown",
+        ] {
+            assert!(commands.iter().any(|line| line == expected), "{commands:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn properties_read_the_listing_of_the_parent() {
+        let server = option_server(LISTING_WITH_OWNER, false, LOOPBACK, LOOPBACK);
+        let file_system = connect_to(&server, &ConnectionOptions::default()).await;
+        let properties = file_system
+            .properties("/data/notes.txt")
+            .await
+            .expect("properties failed");
+        assert_eq!(properties.permissions, Some(0o640));
+        assert_eq!(properties.owner.as_deref(), Some("demo"));
+        assert_eq!(properties.group.as_deref(), Some("staff"));
+        file_system.close().await;
+    }
+
+    const LISTING_WITH_OWNER: &[u8] =
+        b"-rw-r-----    1 demo     staff           5 Mar 15 12:00 notes.txt\r\n";
 
     #[tokio::test]
     async fn active_mode_sends_port_and_receives_the_listing() {
@@ -1512,7 +1720,7 @@ mod tests {
     #[tokio::test]
     async fn utf8_stays_the_default() {
         let server = option_server(
-            "-rw-r--r--    1 1000     1000            5 Nov 24 09:15 café.txt\r\n".as_bytes(),
+            "-rw-r--r--    1 1000     1000            5 Mar 15 12:00 café.txt\r\n".as_bytes(),
             true,
             LOOPBACK,
             LOOPBACK,

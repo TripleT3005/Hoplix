@@ -663,12 +663,18 @@ impl Hoplix {
             .compare
             .comparison
             .as_ref()
-            .filter(|comparison| comparison.only_differences && comparison.involves(tab.id))?;
+            .filter(|comparison| comparison.only_differences && comparison.involves(tab.id));
+        if comparison.is_none() && !tab.is_filtered() {
+            return None;
+        }
         Some(
             tab.entries
                 .iter()
                 .enumerate()
-                .filter(|(_, entry)| !comparison.hides(tab.id, entry))
+                .filter(|(_, entry)| {
+                    tab.shows(entry)
+                        && !comparison.is_some_and(|comparison| comparison.hides(tab.id, entry))
+                })
                 .map(|(index, _)| index)
                 .collect(),
         )

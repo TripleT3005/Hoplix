@@ -513,13 +513,16 @@ impl Hoplix {
         let Some(form) = &mut self.site_form else {
             return Task::none();
         };
-        let (site, secrets) = match form.to_site() {
+        let (mut site, secrets) = match form.to_site() {
             Ok(result) => result,
             Err(invalid) => {
                 form.reveal_invalid(invalid);
                 return Task::none();
             }
         };
+        if let Some(existing) = self.sites.get(&site.id) {
+            site.bookmarks = existing.bookmarks.clone();
+        }
         let old_names = self
             .sites
             .get(&site.id)

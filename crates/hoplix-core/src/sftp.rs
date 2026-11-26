@@ -18,8 +18,8 @@ use crate::connection::{Authentication, ConnectionParams, HostAddress, HostKeyTr
 use crate::file_system::{Reader, Writer};
 use crate::route::Route;
 use crate::{
-    BoxFuture, ConnectionOptions, Entry, EntryKind, Error, ErrorKind, FileSystem, Result, proxy,
-    ssh_agent,
+    BoxFuture, ConnectionOptions, Entry, EntryKind, Error, ErrorKind, FileSystem, PERMISSION_BITS,
+    Properties, Result, proxy, ssh_agent,
 };
 
 // Constants
@@ -649,6 +649,53 @@ impl FileSystem for SftpFileSystem {
         }))
     }
 
+    fn properties(&self, path: &str) -> BoxFuture<'_, Result<Properties>> {
+        let path = path.to_string();
+        Box::pin(self.run(move |connection| {
+            let path = path.clone();
+            async move {
+                let session = &connection.session;
+                let link = session
+                    .symlink_metadata(path.as_str())
+                    .await
+                    .map_err(|error| sftp_error(&error, &path))?;
+                let is_link = link.is_symlink();
+                let attributes = if is_link {
+                    session.metadata(path.as_str()).await.unwrap_or(link)
+                } else {
+                    link
+                };
+                Ok(properties_from(
+                    file_name_posix(&path).to_string(),
+                    &attributes,
+                    is_link,
+                ))
+            }
+        }))
+    }
+
+    fn can_set_permissions(&self) -> bool {
+        true
+    }
+
+    fn set_permissions(&self, path: &str, mode: u32) -> BoxFuture<'_, Result<()>> {
+        let path = path.to_string();
+        Box::pin(self.run(move |connection| {
+            let path = path.clone();
+            async move {
+                let attributes = FileAttributes {
+                    permissions: Some(mode & PERMISSION_BITS),
+                    ..FileAttributes::empty()
+                };
+                connection
+                    .session
+                    .set_metadata(path.as_str(), attributes)
+                    .await
+                    .map_err(|error| sftp_error(&error, &path))
+            }
+        }))
+    }
+
     fn close(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {
             let connection = Arc::clone(&*self.connection.lock().await);
@@ -754,6 +801,22 @@ fn entry_from(name: String, attributes: &FileAttributes, is_link: bool) -> Entry
             .map(|seconds| UNIX_EPOCH + Duration::from_secs(u64::from(seconds))),
         is_link,
     }
+}
+
+fn properties_from(name: String, attributes: &FileAttributes, is_link: bool) -> Properties {
+    let mut properties = Properties::from_entry(entry_from(name, attributes, is_link));
+    properties.permissions = attributes
+        .permissions
+        .map(|permissions| permissions & PERMISSION_BITS);
+    properties.owner = attributes
+        .user
+        .clone()
+        .or_else(|| attributes.uid.map(|uid| uid.to_string()));
+    properties.group = attributes
+        .group
+        .clone()
+        .or_else(|| attributes.gid.map(|gid| gid.to_string()));
+    properties
 }
 
 fn sftp_error(error: &SftpError, path: &str) -> Error {
@@ -916,6 +979,28 @@ mod tests {
         assert_eq!(parent_posix("/home/"), Some("/".to_string()));
         assert_eq!(parent_posix("/"), None);
         assert_eq!(parent_posix("relative"), None);
+    }
+
+    #[test]
+    fn attributes_give_permissions_and_owners() {
+        let attributes = FileAttributes {
+            size: Some(12),
+            uid: Some(1000),
+            gid: Some(33),
+            group: Some("www-data".to_string()),
+            permissions: Some(0o100_640),
+            ..FileAttributes::empty()
+        };
+        let properties = properties_from("index.html".to_string(), &attributes, false);
+        assert_eq!(properties.entry.size, Some(12));
+        assert_eq!(properties.permissions, Some(0o640));
+        assert_eq!(properties.owner.as_deref(), Some("1000"));
+        assert_eq!(properties.group.as_deref(), Some("www-data"));
+        let bare = properties_from("x".to_string(), &FileAttributes::empty(), false);
+        assert_eq!(
+            (bare.permissions, bare.owner, bare.group),
+            (None, None, None)
+        );
     }
 
     #[test]

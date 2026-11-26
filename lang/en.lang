@@ -465,3 +465,78 @@ update.open = Open release page
 update.later = Later
 update.hint = Update {version} available
 update.open_failed = The release page could not be opened: {detail}
+
+# File list
+status.filtered = {shown} of {count} items
+error.unsupported = This is not supported here: {detail}
+filter.placeholder = Filter names (Ctrl+F), * and ? as wildcards
+filter.nothing = No names match the filter.
+command.filter = Filter the list
+command.search = Search in subfolders
+command.back = Go back
+command.forward = Go forward
+command.add_bookmark = Bookmark this folder
+command.edit_bookmarks = Edit bookmarks
+command.open_bookmark = Go to bookmark {name}
+command.properties = Properties
+
+# Search
+search.open = Search in subfolders…
+search.title = Search in subfolders
+search.text = Searches {path} and all folders inside it.
+search.pattern = Name or part of it
+search.pattern_hint = Without * or ? every name containing the text matches, ignoring case. Leave it empty to list everything.
+search.depth = Folder levels (1 = only this folder)
+search.depth_unlimited = All levels
+search.depth_invalid = Enter a whole number of at least 1, or leave the field empty.
+search.start = Search
+search.running = Searching for “{pattern}”: {count} found so far…
+search.done = Results for “{pattern}”: {count} found
+search.cancel = Stop
+search.close = Close results
+search.unreadable = {count} folders could not be read.
+search.truncated = Only the first {count} results are shown.
+search.nothing = Nothing found.
+search.folder = Folder
+search.here = (this folder)
+
+# Bookmarks
+bookmarks.title = Bookmarks
+bookmarks.add = Bookmark this folder
+bookmarks.edit = Edit bookmarks…
+bookmarks.edit_title = Edit bookmarks
+bookmarks.none = There are no bookmarks yet. Use Ctrl+B to bookmark the current folder.
+bookmarks.remove = Remove
+bookmarks.save = Save
+bookmarks.save_failed = The bookmarks could not be saved: {detail}
+
+# Properties
+properties.title = Properties of “{name}”
+properties.folder_link = Link to a folder
+properties.file_link = Link to a file
+properties.bytes = {size} ({bytes} bytes)
+properties.count = Calculate size
+properties.counting = Calculating…
+properties.folder_size = {size} in {files} files and {folders} folders
+properties.unreadable = {count} folders could not be read.
+properties.owner = Owner
+properties.group = Group
+properties.read_only = Read-only
+properties.hidden = Hidden
+properties.yes = Yes
+properties.no = No
+properties.permissions = Permissions
+properties.read = Read
+properties.write = Write
+properties.execute = Execute
+properties.owner_access = Owner
+properties.group_access = Group
+properties.other_access = Others
+properties.invalid_mode = Enter the permissions as three or four octal digits, for example 644 or 0755.
+properties.read_only_server = Permissions cannot be changed here.
+properties.recursive = Also apply to everything inside the folder
+properties.apply_files = Files
+properties.apply_folders = Folders
+properties.applying = Changing permissions…
+properties.apply = Apply
+properties.close = Close

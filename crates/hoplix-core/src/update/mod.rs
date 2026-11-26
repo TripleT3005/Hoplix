@@ -132,7 +132,7 @@ mod tests {
         "name": "Hoplix 1.1.0-beta.1",
         "draft": false,
         "prerelease": true,
-        "created_at": "2026-11-20T10:00:00Z",
+        "created_at": "2026-03-15T12:00:00Z",
         "assets": [
           { "name": "Hoplix-1.1.0-beta.1-windows-x64.zip", "size": 12345678, "download_count": 3 }
         ],

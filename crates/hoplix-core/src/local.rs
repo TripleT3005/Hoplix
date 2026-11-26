@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use tokio::io::AsyncSeekExt;
 
 use crate::file_system::{Reader, Writer};
-use crate::{BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Result};
+use crate::{BoxFuture, Entry, EntryKind, Error, ErrorKind, FileSystem, Properties, Result};
 
 // Types
 
@@ -132,6 +132,20 @@ impl FileSystem for LocalFileSystem {
         }))
     }
 
+    fn properties(&self, path: &str) -> BoxFuture<'_, Result<Properties>> {
+        let path = path.to_string();
+        Box::pin(blocking(move || read_properties(&path)))
+    }
+
+    fn can_set_permissions(&self) -> bool {
+        cfg!(unix)
+    }
+
+    fn set_permissions(&self, path: &str, mode: u32) -> BoxFuture<'_, Result<()>> {
+        let path = path.to_string();
+        Box::pin(blocking(move || change_permissions(&path, mode)))
+    }
+
     fn join(&self, base: &str, name: &str) -> String {
         Path::new(base).join(name).to_string_lossy().into_owned()
     }
@@ -170,6 +184,55 @@ fn read_directory(path: &str) -> Result<Vec<Entry>> {
         })
         .collect();
     Ok(entries)
+}
+
+fn read_properties(path: &str) -> Result<Properties> {
+    let target = PathBuf::from(path);
+    let link = fs::symlink_metadata(&target).map_err(|error| Error::from_io(&error, path))?;
+    let metadata = fs::metadata(&target).unwrap_or_else(|_| link.clone());
+    let name = target.file_name().map_or_else(
+        || path.to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let mut properties = Properties::from_entry(entry_from(
+        name,
+        link.file_type().is_symlink(),
+        Some(metadata.clone()),
+    ));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        properties.permissions = Some(metadata.mode() & crate::PERMISSION_BITS);
+        properties.owner = Some(metadata.uid().to_string());
+        properties.group = Some(metadata.gid().to_string());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const READ_ONLY: u32 = 0x1;
+        const HIDDEN: u32 = 0x2;
+        let attributes = metadata.file_attributes();
+        properties.attributes = Some(crate::WindowsAttributes {
+            read_only: attributes & READ_ONLY != 0,
+            hidden: attributes & HIDDEN != 0,
+        });
+    }
+    Ok(properties)
+}
+
+#[cfg(unix)]
+fn change_permissions(path: &str, mode: u32) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(
+        path,
+        fs::Permissions::from_mode(mode & crate::PERMISSION_BITS),
+    )
+    .map_err(|error| Error::from_io(&error, path))
+}
+
+#[cfg(not(unix))]
+fn change_permissions(path: &str, _mode: u32) -> Result<()> {
+    Err(Error::new(ErrorKind::Unsupported, path))
 }
 
 fn entry_from(name: String, is_link: bool, metadata: Option<fs::Metadata>) -> Entry {
@@ -350,6 +413,38 @@ mod tests {
         writer.write_all(b"new").await.expect("writing failed");
         writer.shutdown().await.expect("closing failed");
         assert_eq!(fs::read(&path).expect("reading failed"), b"new");
+        fs::remove_dir_all(directory).expect("cleaning up failed");
+    }
+
+    // Properties
+
+    #[tokio::test]
+    async fn properties_describe_the_platform_details() {
+        let directory = temporary_directory("properties");
+        let file = directory.join("file.txt");
+        fs::write(&file, b"abc").expect("writing failed");
+        let properties = LocalFileSystem
+            .properties(&text(&file))
+            .await
+            .expect("properties failed");
+        assert_eq!(properties.entry.name, "file.txt");
+        assert_eq!(properties.entry.size, Some(3));
+        if cfg!(windows) {
+            assert_eq!(
+                properties.attributes,
+                Some(crate::WindowsAttributes::default())
+            );
+            assert_eq!(properties.permissions, None);
+            let error = LocalFileSystem
+                .set_permissions(&text(&file), 0o600)
+                .await
+                .expect_err("changed permissions on Windows");
+            assert_eq!(error.kind(), ErrorKind::Unsupported);
+            assert!(!LocalFileSystem.can_set_permissions());
+        } else {
+            assert!(properties.permissions.is_some());
+            assert!(LocalFileSystem.can_set_permissions());
+        }
         fs::remove_dir_all(directory).expect("cleaning up failed");
     }
 
