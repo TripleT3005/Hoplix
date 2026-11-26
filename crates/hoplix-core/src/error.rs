@@ -32,7 +32,7 @@ pub struct Error {
     kind: ErrorKind,
     detail: String,
     hop: Option<String>,
-    address: Option<HostAddress>,
+    address: Option<Box<HostAddress>>,
 }
 
 // Construction
@@ -53,7 +53,7 @@ impl Error {
     }
 
     pub fn at_address(mut self, host: impl Into<String>, port: u16) -> Self {
-        self.address = Some(HostAddress::new(host, port));
+        self.address = Some(Box::new(HostAddress::new(host, port)));
         self
     }
 
@@ -89,7 +89,7 @@ impl Error {
     }
 
     pub fn address(&self) -> Option<&HostAddress> {
-        self.address.as_ref()
+        self.address.as_deref()
     }
 }
 
