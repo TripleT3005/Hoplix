@@ -25,6 +25,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 - The preview pane leaves room for the file list: the Name column always stays visible, Type and Modified hide first in narrow panes, and the divider stops before the list.
 - Long paths in the transfer history and queue stay on one line, shortened in the middle with the file name visible and the full text as a tooltip.
+- In small windows and in German, the action row above the file list wraps onto a second line and the path field gets its own line instead of running into the neighbouring pane or shrinking to nothing.
 
 ### Deutsch
 
@@ -47,6 +48,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 - Die Vorschau lässt der Dateiliste Platz: Die Namensspalte bleibt immer sichtbar, in schmalen Bereichen werden zuerst Typ und Geändert ausgeblendet, und der Teiler stoppt vor der Liste.
 - Lange Pfade in Übertragungsverlauf und Warteschlange bleiben einzeilig, in der Mitte gekürzt mit sichtbarem Dateinamen und vollem Text als Tooltip.
+- In kleinen Fenstern und auf Deutsch bricht die Aktionszeile über der Dateiliste in eine zweite Zeile um, und das Pfadfeld bekommt eine eigene Zeile, statt in den Nachbarbereich zu ragen oder auf null zu schrumpfen.
 
 ## [0.4.0] – 2026-11-26
 
