@@ -56,14 +56,15 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Check for existing tag
+      - name: Check for existing release
         id: check
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           exists=false
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             exists=true
           fi
           if [ "$exists" = false ] && awk '/^## \[Unreleased\]/ { found = 1; next } /^## \[/ { found = 0 } found && NF' CHANGELOG.md | grep -q .; then
