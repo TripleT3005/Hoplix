@@ -19,6 +19,7 @@ mod queue_file;
 mod rate;
 mod recent;
 mod route;
+mod s3;
 mod search;
 mod secrets;
 mod sftp;
