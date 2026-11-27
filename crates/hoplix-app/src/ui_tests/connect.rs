@@ -240,3 +240,49 @@ fn plain_ftp_connects_without_a_prompt() {
     assert_eq!(remote_tabs(&harness), 1);
     assert!(harness.contains("demo@files.example.test"));
 }
+
+// S3
+
+#[test]
+fn s3_connections_pass_the_bucket_settings_and_keep_the_secret_out_of_recent() {
+    use hoplix_core::RECENT_FILE;
+
+    let mut harness = connect_page("s3");
+    harness.pick("Protocol", 4);
+    assert_eq!(harness.app.connect_form.protocol, Protocol::S3);
+    assert!(harness.has("Access key ID") && harness.has("Secret access key"));
+    assert!(!harness.has("Sign in with"));
+    harness.fill("Endpoint", "storage.example.test");
+    harness.fill("Access key ID", "demo-access");
+    harness.fill("Secret access key", password());
+    harness.click("Connect");
+    assert!(harness.has("Enter a bucket name."));
+    harness.fill("Bucket", "demo bucket");
+    harness.click("Connect");
+    assert!(harness.contains("A bucket name has 3 to 255"));
+    harness.fill("Bucket", "demo-bucket");
+    harness.fill("Region", "eu-central-1");
+    harness.click("Path-style addresses (most local servers need this)");
+    assert!(!harness.contains("HTTP is not encrypted"));
+    harness.click("Unencrypted HTTP");
+    assert!(harness.contains("HTTP is not encrypted"));
+    harness.fill_input(1, "9000");
+    harness.click("Connect");
+    assert_eq!(harness.app.page, Page::Browser);
+
+    let options = super::fakes::options_used_for("storage.example.test").expect("no connection");
+    assert_eq!(options.s3.bucket, "demo-bucket");
+    assert_eq!(options.s3.region, "eu-central-1");
+    assert!(options.s3.path_style && options.s3.plain_http);
+    let recent = fs::read_to_string(harness.root.config().join(RECENT_FILE)).expect("recent");
+    assert!(recent.contains("protocol = s3") && recent.contains("s3_bucket = demo-bucket"));
+    assert!(recent.contains("port = 9000"));
+    assert!(!recent.contains(password()));
+
+    harness.click("Connect");
+    assert!(harness.has("s3://demo-bucket @ storage.example.test:9000"));
+    harness.click("s3://demo-bucket @ storage.example.test:9000");
+    assert_eq!(harness.app.connect_form.s3.bucket, "demo-bucket");
+    assert!(harness.app.connect_form.s3.plain_http);
+    assert!(harness.app.connect_form.password.is_empty());
+}
