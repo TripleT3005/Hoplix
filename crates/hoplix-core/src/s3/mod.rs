@@ -212,24 +212,26 @@ fn prefix_of(path: &str) -> String {
     }
 }
 
-fn file_entry(name: &str, object: &ObjectInfo) -> Entry {
+fn entry(name: &str, object: Option<&ObjectInfo>) -> Entry {
     Entry {
         name: name.to_string(),
-        kind: EntryKind::File,
-        size: Some(object.size),
-        modified: object.modified,
+        kind: if object.is_some() {
+            EntryKind::File
+        } else {
+            EntryKind::Directory
+        },
+        size: object.map(|object| object.size),
+        modified: object.and_then(|object| object.modified),
         is_link: false,
     }
 }
 
+fn file_entry(name: &str, object: &ObjectInfo) -> Entry {
+    entry(name, Some(object))
+}
+
 fn directory_entry(name: &str) -> Entry {
-    Entry {
-        name: name.to_string(),
-        kind: EntryKind::Directory,
-        size: None,
-        modified: None,
-        is_link: false,
-    }
+    entry(name, None)
 }
 
 fn not_found(path: &str) -> Error {

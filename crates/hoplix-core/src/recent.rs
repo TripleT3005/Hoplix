@@ -24,7 +24,7 @@ pub struct RecentConnection {
     pub key_path: String,
     pub jump: Option<SiteJump>,
     pub proxy: Option<SiteProxy>,
-    pub s3: S3Options,
+    pub s3: Box<S3Options>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -54,16 +54,16 @@ impl RecentConnection {
             key_path,
             jump: None,
             proxy: None,
-            s3: S3Options::default(),
+            s3: Box::default(),
         }
     }
 
     pub fn with_s3(mut self, options: &S3Options) -> Self {
         if self.protocol.is_s3() {
-            self.s3 = S3Options {
+            self.s3 = Box::new(S3Options {
                 session_token: None,
                 ..options.clone()
-            };
+            });
         }
         self
     }
@@ -141,9 +141,9 @@ impl RecentConnection {
                 ..proxy
             }),
             s3: if protocol.is_s3() {
-                S3Options::from_section(section)
+                Box::new(S3Options::from_section(section))
             } else {
-                S3Options::default()
+                Box::default()
             },
         })
     }
