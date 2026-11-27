@@ -26,6 +26,8 @@ settings.language.system = Wie im System
 settings.layout = Ansicht
 settings.layout.modern = Modern: ein Browser mit Tabs
 settings.layout.classic = Klassisch: zwei Bereiche nebeneinander
+settings.column.permissions = Spalte „Berechtigungen“ in Dateilisten zeigen
+settings.column.owner = Spalte „Besitzer“ in Dateilisten zeigen
 settings.save_failed = Die Einstellungen konnten nicht gespeichert werden: {detail}
 
 # Tabs
@@ -40,6 +42,8 @@ browser.name = Name
 browser.kind = Typ
 browser.size = Größe
 browser.modified = Geändert
+browser.permissions = Berechtigungen
+browser.owner = Besitzer
 browser.kind.folder = Ordner
 browser.kind.file = Datei
 browser.kind.file_with_extension = {extension}-Datei

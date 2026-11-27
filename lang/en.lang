@@ -25,6 +25,8 @@ settings.language.system = Follow system
 settings.layout = Layout
 settings.layout.modern = Modern: one browser with tabs
 settings.layout.classic = Classic: two panes side by side
+settings.column.permissions = Show the Permissions column in file lists
+settings.column.owner = Show the Owner column in file lists
 settings.save_failed = The settings could not be saved: {detail}
 
 # Tabs
@@ -39,6 +41,8 @@ browser.name = Name
 browser.kind = Type
 browser.size = Size
 browser.modified = Modified
+browser.permissions = Permissions
+browser.owner = Owner
 browser.kind.folder = Folder
 browser.kind.file = File
 browser.kind.file_with_extension = {extension} file

@@ -10,6 +10,7 @@ use iced::{Alignment, Element, Length};
 
 use crate::app::{Hoplix, Message};
 use crate::edits::EditMessage;
+use crate::file_list::{ListMessage, OptionalColumn};
 use crate::i18n::Strings;
 use crate::local_time;
 use crate::preview::{LIMIT_CHOICES, PreviewMessage};
@@ -130,6 +131,25 @@ fn general(app: &Hoplix) -> Element<'_, Message> {
                 })
                 .width(PICKER_WIDTH)
                 .into(),
+            ),
+            checkbox_row(
+                checkbox(app.settings.show_permissions)
+                    .label(strings.get("settings.column.permissions"))
+                    .on_toggle(|shown| {
+                        Message::List(ListMessage::ColumnToggled(
+                            OptionalColumn::Permissions,
+                            shown,
+                        ))
+                    })
+                    .into(),
+            ),
+            checkbox_row(
+                checkbox(app.settings.show_owner)
+                    .label(strings.get("settings.column.owner"))
+                    .on_toggle(|shown| {
+                        Message::List(ListMessage::ColumnToggled(OptionalColumn::Owner, shown))
+                    })
+                    .into(),
             ),
         ],
     )

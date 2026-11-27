@@ -57,6 +57,13 @@ pub enum ListMessage {
     Bookmark(TabId, BookmarkChoice),
     BookmarkRenamed(usize, String),
     BookmarkRemoved(usize),
+    ColumnToggled(OptionalColumn, bool),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionalColumn {
+    Permissions,
+    Owner,
 }
 
 // Tabs
@@ -153,6 +160,13 @@ impl Hoplix {
                 if let Some(tab) = self.tab_mut(id) {
                     tab.set_filter(String::new());
                 }
+            }
+            ListMessage::ColumnToggled(column, shown) => {
+                match column {
+                    OptionalColumn::Permissions => self.settings.show_permissions = shown,
+                    OptionalColumn::Owner => self.settings.show_owner = shown,
+                }
+                self.save_settings();
             }
             ListMessage::Back(id) => return self.go_back(id),
             ListMessage::Forward(id) => return self.go_forward(id),

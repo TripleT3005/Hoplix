@@ -192,9 +192,11 @@ fn linux_packages_take_the_workspace_version() {
     for path in [DEBIAN_CONTROL, RPM_SPEC] {
         let text = read(path);
         assert!(
-            text.contains("
+            text.contains(
+                "
 Version: APP_VERSION
-"),
+"
+            ),
             "{path} must take the version from the release workflow"
         );
         for line in text.lines() {
