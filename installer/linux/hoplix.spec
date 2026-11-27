@@ -3,7 +3,7 @@
 Name: hoplix
 Version: APP_VERSION
 Release: 1
-Summary: File transfer client for SFTP and FTP(S)
+Summary: File transfer client for SFTP, FTP(S) and WebDAV
 License: MIT
 URL: https://github.com/TripleT3005/Hoplix
 Requires: libxkbcommon.so.0()(64bit)

@@ -18,7 +18,7 @@ Hoplix is a file transfer client for Windows and Linux, written in Rust with [ic
 </p>
 
 ### Features
-- SFTP, FTP and FTPS (explicit and implicit TLS), with SSH agent, jump host and SOCKS5 or HTTP proxy
+- SFTP, FTP, FTPS (explicit and implicit TLS) and WebDAV, with SSH agent, jump host and SOCKS5 or HTTP proxy
 - Site manager with folders, export and import; passwords in the system keyring or a file encrypted with a master password
 - Transfer queue with resume, parallel and speed limits, a history and optional checksum checks
 - Compare and synchronise folders, locally and on servers
@@ -264,7 +264,7 @@ Hoplix ist ein Client zur Dateiübertragung für Windows und Linux, geschrieben 
 </p>
 
 ### Funktionen
-- SFTP, FTP und FTPS (explizites und implizites TLS), mit SSH-Agent, Jump-Host und SOCKS5- oder HTTP-Proxy
+- SFTP, FTP, FTPS (explizites und implizites TLS) und WebDAV, mit SSH-Agent, Jump-Host und SOCKS5- oder HTTP-Proxy
 - Serververwaltung mit Ordnern, Export und Import; Passwörter im Schlüsselbund des Systems oder in einer mit einem Master-Passwort verschlüsselten Datei
 - Übertragungswarteschlange mit Fortsetzen, Parallel- und Tempolimits, Verlauf und optionaler Prüfsummenprüfung
 - Ordner vergleichen und synchronisieren, lokal und auf Servern
