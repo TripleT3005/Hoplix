@@ -1,6 +1,28 @@
 # Changelog
 
-All notable changes are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/).
+All notable changes to Hoplix, grouped by version in the style of [Keep a Changelog](https://keepachangelog.com/). The section of each version is used as its release notes. Changes on `main` that are not released yet are collected under [Unreleased] and move into the section of the next version.
+
+Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep a Changelog](https://keepachangelog.com/de/). Der Abschnitt einer Version wird als ihre Release-Notizen verwendet. Änderungen auf `main`, die noch nicht veröffentlicht sind, stehen unter [Unreleased] und wandern mit der nächsten Version in deren Abschnitt.
+
+## [Unreleased]
+
+### English
+
+#### Added
+
+- Portable mode: with the file `hoplix.portable` next to the program (included in the portable ZIP), Hoplix keeps all configuration in the `config` folder beside it; saved passwords then go to the file encrypted with a master password by default.
+- `.deb` and `.rpm` packages for Linux with a menu entry and icons.
+- Optional *Permissions* and *Owner* columns in the file list (*Settings → General*).
+- Search results can be copied to another tab or pane with the copy buttons or by dragging them there.
+
+### Deutsch
+
+#### Neu
+
+- Portabler Modus: Mit der Datei `hoplix.portable` neben dem Programm (in der portablen ZIP enthalten) speichert Hoplix die gesamte Konfiguration im Ordner `config` daneben; gespeicherte Passwörter landen dann standardmäßig in der mit einem Master-Passwort verschlüsselten Datei.
+- Pakete `.deb` und `.rpm` für Linux mit Menüeintrag und Icons.
+- Optionale Spalten *Berechtigungen* und *Besitzer* in der Dateiliste (*Einstellungen → Allgemein*).
+- Suchergebnisse lassen sich mit den Kopier-Buttons oder durch Ziehen in einen anderen Tab oder Bereich kopieren.
 
 ## [0.5.0] – 2026-11-26
 
