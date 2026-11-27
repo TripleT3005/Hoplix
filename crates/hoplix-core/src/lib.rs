@@ -30,6 +30,7 @@ mod ssh_agent;
 mod sync;
 mod transfer;
 pub mod update;
+mod webdav;
 
 #[cfg(test)]
 mod test_support;
@@ -97,3 +98,4 @@ pub use transfer::{
     ResumePoint, RetryPolicy, SiteLimit, SpeedLimits, TransferDirection, TransferEvent,
     TransferQueue, TransferRequest,
 };
+pub use webdav::WebDavFileSystem;

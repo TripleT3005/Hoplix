@@ -4,7 +4,7 @@ use crate::connection::{Authentication, ConnectionParams, HostKeyTrust, Protocol
 use crate::proxy::Proxy;
 use crate::{
     ConnectionOptions, Error, ErrorKind, FileSystem, FtpFileSystem, Result, SftpFileSystem,
-    TrustStore,
+    TrustStore, WebDavFileSystem,
 };
 
 // Types
@@ -95,6 +95,27 @@ pub async fn connect_via_with(
                 ));
             }
             let file_system = FtpFileSystem::connect_via_with(
+                params,
+                route.proxy.as_ref(),
+                options,
+                &trust_store.certificates,
+                trusted
+                    .iter()
+                    .rev()
+                    .find(|trust| trust.address.is(&params.host, params.port))
+                    .cloned(),
+            )
+            .await?;
+            Ok(Arc::new(file_system))
+        }
+        Protocol::WebDav | Protocol::WebDavs => {
+            if !route.jump_hosts.is_empty() {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "jump hosts only work with SFTP",
+                ));
+            }
+            let file_system = WebDavFileSystem::connect(
                 params,
                 route.proxy.as_ref(),
                 options,

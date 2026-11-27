@@ -27,6 +27,7 @@ pub struct ConnectionOptions {
     pub ftp_mode: FtpMode,
     pub ftp_external_ip: bool,
     pub ftp_encoding: FileNameEncoding,
+    pub base_path: String,
 }
 
 // Defaults
@@ -39,6 +40,7 @@ impl Default for ConnectionOptions {
             ftp_mode: FtpMode::default(),
             ftp_external_ip: true,
             ftp_encoding: FileNameEncoding::default(),
+            base_path: String::new(),
         }
     }
 }
