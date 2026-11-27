@@ -1,0 +1,10 @@
+Hoplix portable mode / Portabler Modus
+
+While this file is next to hoplix.exe, Hoplix keeps all its settings, sites
+and other configuration files in the "config" folder next to it instead of
+the user profile. Delete this file to use the user profile again.
+
+Solange diese Datei neben hoplix.exe liegt, speichert Hoplix alle
+Einstellungen, Sites und weiteren Konfigurationsdateien im Ordner "config"
+daneben statt im Benutzerprofil. Lösche die Datei, um wieder das
+Benutzerprofil zu verwenden.

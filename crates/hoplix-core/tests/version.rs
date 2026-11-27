@@ -9,6 +9,9 @@ const CRATES: [&str; 3] = ["hoplix-core", "hoplix-app", "hoplix-cli"];
 const INSTALLER: &str = "installer/hoplix.iss";
 const RELEASE_WORKFLOW: &str = ".github/workflows/release.yml";
 const RESOURCES: &str = "build/resources.rs";
+const DEBIAN_CONTROL: &str = "installer/linux/control";
+const RPM_SPEC: &str = "installer/linux/hoplix.spec";
+const PORTABLE_MARKER: &str = "installer/hoplix.portable";
 
 // Helpers
 
@@ -182,6 +185,54 @@ fn release_workflow_uses_the_workspace_version() {
             "{RELEASE_WORKFLOW} lacks {expected}"
         );
     }
+}
+
+#[test]
+fn linux_packages_take_the_workspace_version() {
+    for path in [DEBIAN_CONTROL, RPM_SPEC] {
+        let text = read(path);
+        assert!(
+            text.contains("
+Version: APP_VERSION
+"),
+            "{path} must take the version from the release workflow"
+        );
+        for line in text.lines() {
+            assert!(
+                !contains_version_literal(line),
+                "{path} hard-codes a version: {line}"
+            );
+        }
+    }
+    let workflow = read(RELEASE_WORKFLOW);
+    for expected in [
+        r#"package_version="${VERSION//-/\~}""#,
+        r#"sed -e "s/APP_VERSION/$package_version/""#,
+        r#"sed "s/APP_VERSION/$package_version/" installer/linux/hoplix.spec"#,
+        r#"dpkg-deb --field "$deb" Version"#,
+        "rpm -qp --queryformat '%{VERSION}'",
+    ] {
+        assert!(
+            workflow.contains(expected),
+            "{RELEASE_WORKFLOW} lacks {expected}"
+        );
+    }
+}
+
+#[test]
+fn only_the_portable_archive_ships_the_portable_marker() {
+    assert!(
+        root().join(PORTABLE_MARKER).is_file(),
+        "{PORTABLE_MARKER} is missing"
+    );
+    assert!(
+        read(RELEASE_WORKFLOW).contains("cp installer/hoplix.portable \"dist/$name/\""),
+        "{RELEASE_WORKFLOW} must copy the portable marker into the portable archive"
+    );
+    assert!(
+        !read(INSTALLER).contains("hoplix.portable"),
+        "{INSTALLER} must not install the portable marker"
+    );
 }
 
 #[test]
