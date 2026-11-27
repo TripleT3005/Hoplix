@@ -51,10 +51,12 @@ impl Hoplix {
             return;
         };
         let form = &self.connect_form;
-        let entry = RecentConnection::from_params(&params).with_route(
-            form.jump_settings().ok().flatten(),
-            form.proxy_settings().ok().flatten(),
-        );
+        let entry = RecentConnection::from_params(&params)
+            .with_route(
+                form.jump_settings().ok().flatten(),
+                form.proxy_settings().ok().flatten(),
+            )
+            .with_base_path(&form.base_path);
         self.recent.record(entry);
         self.save_recent();
     }

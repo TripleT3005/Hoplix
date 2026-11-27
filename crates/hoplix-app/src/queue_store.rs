@@ -109,7 +109,7 @@ impl Hoplix {
                 .connections
                 .get(&tab.id)
                 .cloned()
-                .map(Location::Direct),
+                .map(|connection| Location::Direct(Box::new(connection))),
         }
     }
 
@@ -119,10 +119,14 @@ impl Hoplix {
         }
         let params = self.connect_form.to_params().ok()?;
         let form = &self.connect_form;
-        Some(RecentConnection::from_params(&params).with_route(
-            form.jump_settings().ok().flatten(),
-            form.proxy_settings().ok().flatten(),
-        ))
+        Some(
+            RecentConnection::from_params(&params)
+                .with_route(
+                    form.jump_settings().ok().flatten(),
+                    form.proxy_settings().ok().flatten(),
+                )
+                .with_base_path(&form.base_path),
+        )
     }
 
     pub(crate) fn remember_endpoints(&mut self, id: JobId, endpoints: Option<Endpoints>) {

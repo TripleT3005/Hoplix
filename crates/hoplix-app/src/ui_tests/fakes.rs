@@ -350,12 +350,12 @@ fn connect(
             ErrorKind::UnknownHostKey,
             ErrorKind::HostKeyChanged,
         )),
-        Protocol::FtpsExplicit | Protocol::FtpsImplicit => Some((
+        Protocol::FtpsExplicit | Protocol::FtpsImplicit | Protocol::WebDavs => Some((
             &trust_store.certificates,
             ErrorKind::UntrustedCertificate,
             ErrorKind::CertificateChanged,
         )),
-        Protocol::Ftp => None,
+        Protocol::Ftp | Protocol::WebDav => None,
     };
     if let Some((file, unknown, changed)) = known {
         check_host_key(file, &params.host, params.port, trusted, unknown, changed)?;

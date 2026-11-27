@@ -656,7 +656,7 @@ impl Hoplix {
         };
         let location = match (&self.connect_form.site, &direct) {
             (Some(id), _) => Some(Location::Site(id.clone())),
-            (None, Some(connection)) => Some(Location::Direct(connection.clone())),
+            (None, Some(connection)) => Some(Location::Direct(Box::new(connection.clone()))),
             (None, None) => None,
         };
         if let Some(location) = &location {
