@@ -231,6 +231,21 @@ mod tests {
     }
 
     #[test]
+    fn webdav_urls_keep_the_full_server_path() {
+        let target = remote("davs://demo@cloud.example.test/remote.php/dav/files/demo/a%20b");
+        assert_eq!(target.protocol, Protocol::WebDavs);
+        assert_eq!(target.port, 443);
+        assert_eq!(
+            target.path,
+            RemotePath::Absolute("/remote.php/dav/files/demo/a b".to_string())
+        );
+        let target = remote("dav://demo@[::1]:8080/");
+        assert_eq!(target.protocol, Protocol::WebDav);
+        assert_eq!((target.host.as_str(), target.port), ("::1", 8080));
+        assert_eq!(remote("DAV://demo@host").port, 80);
+    }
+
+    #[test]
     fn site_targets_name_a_saved_site() {
         assert_eq!(
             Target::parse("site://Web%20server"),

@@ -1027,6 +1027,10 @@ impl Hoplix {
             .and_then(|id| self.sites.get(id))
             .map(|site| site.options.clone())
             .unwrap_or_default();
+        let options = ConnectionOptions {
+            base_path: self.connect_form.effective_base_path(),
+            ..options
+        };
         match trust {
             Some(trust) => self.trusted.push(trust),
             None => self.trusted.clear(),

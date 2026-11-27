@@ -1,5 +1,5 @@
 use hoplix_core::{
-    Bookmarks, ConnectionOptions, FileNameEncoding, FtpMode, MAX_SITE_TRANSFERS, Protocol, Site,
+    Bookmarks, ConnectionOptions, FileNameEncoding, FtpMode, MAX_SITE_TRANSFERS, Site,
     normalize_folder, seconds_from_text, seconds_text,
 };
 use iced::widget::text_editor;
@@ -147,6 +147,7 @@ impl OptionsForm {
             ftp_mode: self.ftp_mode,
             ftp_external_ip: self.ftp_external_ip,
             ftp_encoding: self.ftp_encoding,
+            base_path: String::new(),
         };
         Ok((options, max_transfers))
     }
@@ -248,11 +249,9 @@ impl SiteForm {
             .connection
             .proxy_settings()
             .map_err(SiteFormError::Connection)?;
-        let (options, max_transfers) = self.options.to_options()?;
-        if proxy.is_some()
-            && params.protocol != Protocol::Sftp
-            && options.ftp_mode == FtpMode::Active
-        {
+        let (mut options, max_transfers) = self.options.to_options()?;
+        options.base_path = self.connection.effective_base_path();
+        if proxy.is_some() && params.protocol.is_ftp() && options.ftp_mode == FtpMode::Active {
             return Err(SiteFormError::ActiveModeWithProxy);
         }
         let notes = self.notes.text();
@@ -303,8 +302,8 @@ mod tests {
     use super::*;
     use crate::connect_form::AuthMethod;
     use crate::ui_tests::test_password;
-    use hoplix_core::SiteAuth;
     use hoplix_core::{FileNameEncoding, FtpMode};
+    use hoplix_core::{Protocol, SiteAuth};
 
     fn site() -> Site {
         Site {
@@ -517,5 +516,38 @@ mod tests {
         assert_eq!(saved.port, 21);
         assert!(saved.save_secrets);
         assert_eq!(secret.main, Some(password));
+    }
+
+    #[test]
+    fn webdav_sites_keep_their_base_path() {
+        let mut form = SiteForm::create(&Site::new("Cloud"));
+        form.apply(SiteField::Name("Cloud".to_string()));
+        form.apply(SiteField::Connection(Field::Protocol(Protocol::WebDavs)));
+        form.apply(SiteField::Connection(Field::Host(
+            "cloud.example.test".to_string(),
+        )));
+        form.apply(SiteField::Connection(Field::Username("demo".to_string())));
+        form.apply(SiteField::Connection(Field::BasePath(
+            " /remote.php/dav/files/demo/ ".to_string(),
+        )));
+        form.apply(SiteField::Option(OptionField::FtpMode(FtpMode::Active)));
+        form.apply(SiteField::Connection(Field::Proxy(
+            crate::route_form::ProxyField::Kind(Some(hoplix_core::ProxyKind::Http)),
+        )));
+        form.apply(SiteField::Connection(Field::Proxy(
+            crate::route_form::ProxyField::Host("proxy.test".to_string()),
+        )));
+        let (saved, _) = form.to_site().expect("valid");
+        assert_eq!(saved.port, 443);
+        assert_eq!(saved.options.base_path, "/remote.php/dav/files/demo/");
+        assert_eq!(
+            SiteForm::edit(&saved).connection.base_path,
+            "/remote.php/dav/files/demo/"
+        );
+
+        form.apply(SiteField::Connection(Field::Protocol(Protocol::Sftp)));
+        form.apply(SiteField::Option(OptionField::FtpMode(FtpMode::Passive)));
+        let (saved, _) = form.to_site().expect("valid");
+        assert_eq!(saved.options.base_path, "");
     }
 }

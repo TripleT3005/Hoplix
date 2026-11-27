@@ -511,8 +511,11 @@ Commands:
 
 Targets are local paths or URLs like sftp://user@host:port/path
 (use /~/path for paths relative to the home folder).
-Protocols: sftp://, ftp:// (unencrypted), ftpes:// (FTPS with explicit TLS)
-and ftps:// (FTPS with implicit TLS). FTP URLs without a user sign in anonymously.
+Protocols: sftp://, ftp:// (unencrypted), ftpes:// (FTPS with explicit TLS),
+ftps:// (FTPS with implicit TLS), dav:// (WebDAV over unencrypted HTTP) and
+davs:// (WebDAV over HTTPS); for WebDAV the path is the full server path, e.g.
+davs://user@host/remote.php/dav/files/user/Documents. FTP URLs without a user
+sign in anonymously. WebDAV uploads cannot be resumed and start again.
 Saved sites are targets too: site://<name>/path (encode / in folder/name as %2F).
 They use the saved password or passphrase unless you pass --password-env or --key.
 

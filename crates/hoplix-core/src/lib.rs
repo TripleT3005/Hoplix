@@ -8,6 +8,7 @@ mod error;
 mod file_system;
 mod ftp;
 mod history;
+mod http;
 pub mod key_value;
 pub mod language;
 mod local;
@@ -29,6 +30,7 @@ mod ssh_agent;
 mod sync;
 mod transfer;
 pub mod update;
+mod webdav;
 
 #[cfg(test)]
 mod test_support;
@@ -99,3 +101,4 @@ pub use transfer::{
     ResumePoint, RetryPolicy, SiteLimit, SpeedLimits, TransferDirection, TransferEvent,
     TransferQueue, TransferRequest,
 };
+pub use webdav::WebDavFileSystem;

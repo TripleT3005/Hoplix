@@ -14,6 +14,11 @@ Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep 
 - `.deb` and `.rpm` packages for Linux with a menu entry and icons.
 - Optional *Permissions* and *Owner* columns in the file list (*Settings → General*).
 - Search results can be copied to another tab or pane with the copy buttons or by dragging them there.
+- WebDAV over HTTPS (`davs://`) and HTTP (`dav://`) with Digest or Basic sign-in, a configurable base path (e.g. `/remote.php/dav/files/<user>/` for Nextcloud), certificate trust like FTPS and proxy support, in the app and in `hoplix-cli`; downloads continue where they stopped, interrupted uploads start again because WebDAV cannot append.
+
+#### Changed
+
+- The site editor shows the FTP options for FTP sites only.
 
 ### Deutsch
 
@@ -23,6 +28,11 @@ Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep 
 - Pakete `.deb` und `.rpm` für Linux mit Menüeintrag und Icons.
 - Optionale Spalten *Berechtigungen* und *Besitzer* in der Dateiliste (*Einstellungen → Allgemein*).
 - Suchergebnisse lassen sich mit den Kopier-Buttons oder durch Ziehen in einen anderen Tab oder Bereich kopieren.
+- WebDAV über HTTPS (`davs://`) und HTTP (`dav://`) mit Digest- oder Basic-Anmeldung, einstellbarem Basispfad (z. B. `/remote.php/dav/files/<benutzer>/` bei Nextcloud), Zertifikatsvertrauen wie bei FTPS und Proxy, in der App und in `hoplix-cli`; Downloads gehen dort weiter, wo sie aufgehört haben, abgebrochene Uploads beginnen neu, weil WebDAV nicht anhängen kann.
+
+#### Geändert
+
+- Der Server-Editor zeigt die FTP-Optionen nur noch bei FTP-Servern.
 
 ## [0.5.0] – 2026-11-26
 

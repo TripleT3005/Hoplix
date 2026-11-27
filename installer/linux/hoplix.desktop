@@ -9,6 +9,6 @@ Exec=hoplix
 Icon=hoplix
 Terminal=false
 Categories=Network;FileTransfer;
-Keywords=SFTP;FTP;FTPS;SSH;Transfer;Upload;Download;
+Keywords=SFTP;FTP;FTPS;WebDAV;SSH;Transfer;Upload;Download;
 StartupNotify=true
 StartupWMClass=hoplix
