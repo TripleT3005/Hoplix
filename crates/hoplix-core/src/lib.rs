@@ -8,6 +8,7 @@ mod error;
 mod file_system;
 mod ftp;
 mod history;
+mod http;
 pub mod key_value;
 pub mod language;
 mod local;
