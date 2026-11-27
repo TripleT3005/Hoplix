@@ -376,6 +376,20 @@ impl Tab {
             .collect()
     }
 
+    pub fn transfer_sources(&self) -> Vec<String> {
+        if let Some(results) = &self.search {
+            return results
+                .selected
+                .and_then(|index| results.hits.get(index))
+                .map(|hit| vec![hit.path.clone()])
+                .unwrap_or_default();
+        }
+        self.selected_entries()
+            .iter()
+            .map(|entry| self.file_system.join(&self.path, &entry.name))
+            .collect()
+    }
+
     pub fn is_selected(&self, index: usize) -> bool {
         self.selection.contains(&index)
     }
@@ -1466,6 +1480,8 @@ mod tests {
             size: Some(1),
             modified: None,
             is_link: false,
+            permissions: None,
+            owner: None,
         }
     }
 

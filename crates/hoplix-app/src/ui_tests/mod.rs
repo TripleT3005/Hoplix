@@ -1,4 +1,5 @@
 mod browser;
+mod columns;
 mod compare;
 mod connect;
 mod edit;
@@ -10,6 +11,7 @@ mod portable;
 mod preview;
 mod queue;
 mod routes;
+mod search_transfers;
 mod secrets;
 mod settings;
 mod site_manager;
