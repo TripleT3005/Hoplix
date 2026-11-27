@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const UNRELEASED: &str = "Unreleased";
 const CRATES: [&str; 3] = ["hoplix-core", "hoplix-app", "hoplix-cli"];
-const INSTALLER: &str = "installer/hoplix.iss";
+const INSTALLER: &str = "installer/Hoplix.iss";
 const RELEASE_WORKFLOW: &str = ".github/workflows/release.yml";
 const RESOURCES: &str = "build/resources.rs";
 const DEBIAN_CONTROL: &str = "installer/linux/control";
@@ -191,7 +191,7 @@ fn release_workflow_uses_the_workspace_version() {
     for expected in [
         r#"sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml"#,
         r#"echo "tag=v$version""#,
-        r#""/DAppVersion=$env:VERSION" installer\hoplix.iss"#,
+        r#""/DAppVersion=$env:VERSION" installer\Hoplix.iss"#,
         "VersionInfo.ProductVersion",
         "heading=\"## [$VERSION]\"",
     ] {

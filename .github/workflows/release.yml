@@ -49,8 +49,8 @@ jobs:
               exit 1
             fi
           done
-          if grep -nE '^[[:space:]]*#define[[:space:]]+AppVersion' installer/hoplix.iss; then
-            echo "::error::installer/hoplix.iss must not define its own version; it is passed with /DAppVersion"
+          if grep -nE '^[[:space:]]*#define[[:space:]]+AppVersion' installer/Hoplix.iss; then
+            echo "::error::installer/Hoplix.iss must not define its own version; it is passed with /DAppVersion"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -259,7 +259,7 @@ jobs:
               (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe")
             ) | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
-          & $compiler /Qp "/DAppVersion=$env:VERSION" installer\hoplix.iss
+          & $compiler /Qp "/DAppVersion=$env:VERSION" installer\Hoplix.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Set-Location dist
           $setup = "Hoplix-$env:VERSION-windows-x64-setup.exe"

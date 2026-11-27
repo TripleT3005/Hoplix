@@ -9,7 +9,7 @@ use std::process::Command;
 const DOCUMENT: &str = "THIRD-PARTY-LICENSES.txt";
 const UPDATE_VARIABLE: &str = "UPDATE_THIRD_PARTY_LICENSES";
 const TARGETS: [&str; 2] = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"];
-const INSTALLER: &str = "installer/hoplix.iss";
+const INSTALLER: &str = "installer/Hoplix.iss";
 const RELEASE_WORKFLOW: &str = ".github/workflows/release.yml";
 const RULE_WIDTH: usize = 72;
 
