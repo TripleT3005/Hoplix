@@ -615,6 +615,8 @@ impl FileSystem for FtpFileSystem {
                 size: Some(size as u64),
                 modified: None,
                 is_link: false,
+                permissions: None,
+                owner: None,
             })
         })
     }
@@ -998,7 +1000,17 @@ fn parse_line(line: &str, machine_readable: bool) -> Option<Entry> {
     if name.is_empty() || name == "." || name == ".." {
         return None;
     }
-    Some(entry_from(name, &file))
+    let mut entry = entry_from(name, &file);
+    let details = if machine_readable {
+        Some(machine_details(line))
+    } else {
+        list_details(line)
+    };
+    if let Some(details) = details {
+        entry.permissions = details.permissions;
+        entry.owner = details.owner;
+    }
+    Some(entry)
 }
 
 fn machine_details(line: &str) -> UnixDetails {
@@ -1057,6 +1069,8 @@ fn entry_from(name: String, file: &File) -> Entry {
         size: (!file.is_symlink()).then_some(file.size() as u64),
         modified: Some(file.modified()),
         is_link: file.is_symlink(),
+        permissions: None,
+        owner: None,
     }
 }
 
@@ -1067,6 +1081,8 @@ fn directory_entry(name: String) -> Entry {
         size: None,
         modified: None,
         is_link: false,
+        permissions: None,
+        owner: None,
     }
 }
 
@@ -1261,6 +1277,27 @@ mod tests {
             machine_details("type=dir;modify=20250101000000; pub").permissions,
             None
         );
+    }
+
+    #[test]
+    fn listed_entries_carry_permissions_and_owners() {
+        let entry = parse_line(
+            "-rw-r-----    1 demo     www-data      250 Mar 15 12:00 notes.txt",
+            false,
+        )
+        .expect("not parsed");
+        assert_eq!(entry.permissions, Some(0o640));
+        assert_eq!(entry.owner.as_deref(), Some("demo"));
+        let entry = parse_line(
+            "type=file;size=5;modify=20260315120000;UNIX.mode=0755;UNIX.uid=1000; run.sh",
+            true,
+        )
+        .expect("not parsed");
+        assert_eq!(entry.permissions, Some(0o755));
+        assert_eq!(entry.owner.as_deref(), Some("1000"));
+        let entry = parse_line("03-15-26  12:00PM                 1536 notes.txt", false)
+            .expect("not parsed");
+        assert_eq!((entry.permissions, entry.owner), (None, None));
     }
 
     #[test]

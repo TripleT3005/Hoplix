@@ -93,7 +93,7 @@ jobs:
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev dpkg-dev desktop-file-utils
 
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
@@ -139,6 +139,11 @@ jobs:
           cp "${binaries[@]}" "dist/$name/"
           cp lang/*.lang "dist/$name/lang/"
           cp LICENSE THIRD-PARTY-LICENSES.txt README.md CHANGELOG.md "dist/$name/"
+          required=(LICENSE THIRD-PARTY-LICENSES.txt README.md CHANGELOG.md)
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp installer/hoplix.portable "dist/$name/"
+            required+=(hoplix.portable)
+          fi
           cd dist
           if [ "$RUNNER_OS" = Windows ]; then
             archive="$name.zip"
@@ -149,7 +154,7 @@ jobs:
             tar -czf "$archive" "$name"
             contents=$(tar -tzf "$archive")
           fi
-          for file in LICENSE THIRD-PARTY-LICENSES.txt README.md CHANGELOG.md; do
+          for file in "${required[@]}"; do
             if ! grep -qxF "$name/$file" <<< "$contents"; then
               echo "::error::$archive does not contain $file"
               exit 1
@@ -157,6 +162,87 @@ jobs:
           done
           sha256sum "$archive" > "$archive.sha256"
           rm -r "$name"
+
+      - name: Package Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          package_version="${VERSION//-/\~}"
+          stage="$RUNNER_TEMP/package/root"
+          mkdir -p "$stage/usr/bin" "$stage/usr/share/hoplix/lang" "$stage/usr/share/applications" "$stage/usr/share/doc/hoplix"
+          install -m 755 target/release/hoplix target/release/hoplix-cli "$stage/usr/bin/"
+          install -m 644 lang/*.lang "$stage/usr/share/hoplix/lang/"
+          install -m 644 installer/linux/hoplix.desktop "$stage/usr/share/applications/hoplix.desktop"
+          for size in 16 32 64 128 256; do
+            install -D -m 644 "assets/icons/icon-$size.png" "$stage/usr/share/icons/hicolor/${size}x${size}/apps/hoplix.png"
+          done
+          install -D -m 644 assets/icons/icon.svg "$stage/usr/share/icons/hicolor/scalable/apps/hoplix.svg"
+          install -m 644 LICENSE THIRD-PARTY-LICENSES.txt README.md CHANGELOG.md installer/linux/copyright "$stage/usr/share/doc/hoplix/"
+          desktop-file-validate "$stage/usr/share/applications/hoplix.desktop"
+
+          shlibs="$RUNNER_TEMP/package/shlibs"
+          mkdir -p "$shlibs/debian"
+          printf 'Source: hoplix\n\nPackage: hoplix\nArchitecture: any\n' > "$shlibs/debian/control"
+          linked=$(cd "$shlibs" && dpkg-shlibdeps -O "$stage/usr/bin/hoplix" "$stage/usr/bin/hoplix-cli" 2> /dev/null | sed -n 's/^shlibs:Depends=//p')
+          if [ -z "$linked" ]; then
+            echo "::error::dpkg-shlibdeps found no linked libraries"
+            exit 1
+          fi
+
+          deb="dist/hoplix_${package_version}_amd64.deb"
+          deb_root="$RUNNER_TEMP/package/deb"
+          mkdir -p "$deb_root/DEBIAN"
+          cp -R "$stage/." "$deb_root/"
+          size=$(du -sk "$deb_root" | cut -f 1)
+          sed -e "s/APP_VERSION/$package_version/" -e "s/INSTALLED_SIZE/$size/" -e "s/LINKED_LIBRARIES/$linked/" installer/linux/control > "$deb_root/DEBIAN/control"
+          dpkg-deb --root-owner-group --build "$deb_root" "$deb"
+
+          sudo apt-get install -y --no-install-recommends rpm > /dev/null
+          rpm_top="$RUNNER_TEMP/package/rpmbuild"
+          sed "s/APP_VERSION/$package_version/" installer/linux/hoplix.spec > "$RUNNER_TEMP/package/hoplix.spec"
+          rpmbuild -bb --quiet --define "_topdir $rpm_top" --define "_sourcedir $RUNNER_TEMP/package" "$RUNNER_TEMP/package/hoplix.spec"
+          cp "$rpm_top"/RPMS/x86_64/*.rpm dist/
+
+          cd dist
+          for package in *.deb *.rpm; do
+            sha256sum "$package" > "$package.sha256"
+          done
+
+      - name: Check Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          package_version="${VERSION//-/\~}"
+          deb="dist/hoplix_${package_version}_amd64.deb"
+          rpm="dist/hoplix-${package_version}-1.x86_64.rpm"
+          dpkg-deb --info "$deb"
+          if [ "$(dpkg-deb --field "$deb" Version)" != "$package_version" ]; then
+            echo "::error::$deb does not have the version $package_version"
+            exit 1
+          fi
+          rpm -qpi "$rpm"
+          if [ "$(rpm -qp --queryformat '%{VERSION}' "$rpm")" != "$package_version" ]; then
+            echo "::error::$rpm does not have the version $package_version"
+            exit 1
+          fi
+          rpm -qpR "$rpm" | grep -q 'libxkbcommon.so.0'
+          rpm -qpR "$rpm" | grep -q 'libc.so.6'
+          rpm -qlp "$rpm" | grep -q '^/usr/share/icons/hicolor/256x256/apps/hoplix.png$'
+          rpm -qlp "$rpm" | grep -q '^/usr/share/hoplix/lang/de.lang$'
+          sudo apt-get install -y "./$deb"
+          test -x /usr/bin/hoplix
+          test -f /usr/share/applications/hoplix.desktop
+          test -f /usr/share/hoplix/lang/en.lang
+          desktop-file-validate /usr/share/applications/hoplix.desktop
+          for binary in /usr/bin/hoplix /usr/bin/hoplix-cli; do
+            if ldd "$binary" | grep 'not found'; then
+              echo "::error::$binary has missing libraries"
+              exit 1
+            fi
+          done
+          if ! /usr/bin/hoplix-cli --version | grep -qF "$VERSION"; then
+            echo "::error::The installed hoplix-cli does not report $VERSION"
+            exit 1
+          fi
+          sudo apt-get purge -y hoplix
 
       - name: Build installer
         if: runner.os == 'Windows'
@@ -192,6 +278,8 @@ jobs:
             dist/*.zip
             dist/*.tar.gz
             dist/*.exe
+            dist/*.deb
+            dist/*.rpm
             dist/*.sha256
           if-no-files-found: error
 

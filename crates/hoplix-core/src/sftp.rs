@@ -966,18 +966,21 @@ fn entry_from(name: String, attributes: &FileAttributes, is_link: bool) -> Entry
             .mtime
             .map(|seconds| UNIX_EPOCH + Duration::from_secs(u64::from(seconds))),
         is_link,
+        permissions: attributes
+            .permissions
+            .map(|permissions| permissions & PERMISSION_BITS),
+        owner: attributes
+            .user
+            .clone()
+            .or_else(|| attributes.uid.map(|uid| uid.to_string())),
     }
 }
 
 fn properties_from(name: String, attributes: &FileAttributes, is_link: bool) -> Properties {
-    let mut properties = Properties::from_entry(entry_from(name, attributes, is_link));
-    properties.permissions = attributes
-        .permissions
-        .map(|permissions| permissions & PERMISSION_BITS);
-    properties.owner = attributes
-        .user
-        .clone()
-        .or_else(|| attributes.uid.map(|uid| uid.to_string()));
+    let entry = entry_from(name, attributes, is_link);
+    let mut properties = Properties::from_entry(entry.clone());
+    properties.permissions = entry.permissions;
+    properties.owner = entry.owner;
     properties.group = attributes
         .group
         .clone()

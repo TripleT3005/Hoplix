@@ -25,6 +25,8 @@ settings.language.system = Follow system
 settings.layout = Layout
 settings.layout.modern = Modern: one browser with tabs
 settings.layout.classic = Classic: two panes side by side
+settings.column.permissions = Show the Permissions column in file lists
+settings.column.owner = Show the Owner column in file lists
 settings.save_failed = The settings could not be saved: {detail}
 
 # Tabs
@@ -39,6 +41,8 @@ browser.name = Name
 browser.kind = Type
 browser.size = Size
 browser.modified = Modified
+browser.permissions = Permissions
+browser.owner = Owner
 browser.kind.folder = Folder
 browser.kind.file = File
 browser.kind.file_with_extension = {extension} file
@@ -277,6 +281,7 @@ settings.secrets.keyring.windows = Windows Credential Manager
 settings.secrets.vault = Encrypted with a master password
 settings.secrets.change = Change master password
 settings.secrets.hint = Passwords are never stored as plain text. With a master password they are kept in an encrypted file that you unlock once per session.
+settings.secrets.portable = Portable mode: settings are kept in the config folder next to Hoplix. Use a master password so saved passwords travel with that folder; the system keyring stays on this computer.
 secrets.switched.vault = Saved passwords are now protected by your master password.
 secrets.switched.keyring = Saved passwords are now kept in the system keyring.
 secrets.leftovers = Saved passwords are now protected by your master password, but {count} could not be removed from the system keyring.

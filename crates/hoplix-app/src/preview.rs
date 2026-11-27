@@ -485,6 +485,8 @@ mod tests {
                 size: Some(size),
                 modified: None,
                 is_link: false,
+                permissions: None,
+                owner: None,
             },
             remote,
         }

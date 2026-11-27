@@ -329,6 +329,7 @@ pub(crate) struct Services {
     pub update_source: UpdateSource,
     pub update_delay: Duration,
     pub preview_delay: Duration,
+    pub portable: bool,
 }
 
 impl Default for Services {
@@ -347,6 +348,7 @@ impl Default for Services {
             update_source: updates::github_source(),
             update_delay: updates::STARTUP_DELAY,
             preview_delay: preview::DEBOUNCE,
+            portable: false,
         }
     }
 }
@@ -371,6 +373,20 @@ impl Tab {
         self.selection
             .iter()
             .filter_map(|index| self.entries.get(*index))
+            .collect()
+    }
+
+    pub fn transfer_sources(&self) -> Vec<String> {
+        if let Some(results) = &self.search {
+            return results
+                .selected
+                .and_then(|index| results.hits.get(index))
+                .map(|hit| vec![hit.path.clone()])
+                .unwrap_or_default();
+        }
+        self.selected_entries()
+            .iter()
+            .map(|entry| self.file_system.join(&self.path, &entry.name))
             .collect()
     }
 
@@ -422,7 +438,10 @@ impl Dialog {
 
 impl Hoplix {
     pub fn new() -> (Self, Task<Message>) {
-        let services = Services::default();
+        let services = Services {
+            portable: hoplix_core::is_portable(),
+            ..Services::default()
+        };
         edits::remove_stale_folders_in_background(services.temp_dir.clone());
         Self::load(config_dir(), services)
     }
@@ -433,6 +452,7 @@ impl Hoplix {
         let strings = i18n::load(&i18n::resolve(settings.language.as_deref(), &languages));
         let mut app = Self::with_settings(settings, config_dir);
         app.services = services;
+        app.secret_backend = app.default_secret_backend();
         app.apply_transfer_settings();
         app.languages = languages;
         app.strings = strings;
@@ -1460,6 +1480,8 @@ mod tests {
             size: Some(1),
             modified: None,
             is_link: false,
+            permissions: None,
+            owner: None,
         }
     }
 

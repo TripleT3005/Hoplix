@@ -806,6 +806,8 @@ mod tests {
             size: Some(size),
             modified: Some(at(seconds)),
             is_link: false,
+            permissions: None,
+            owner: None,
         }
     }
 
@@ -816,6 +818,8 @@ mod tests {
             size: None,
             modified: None,
             is_link: false,
+            permissions: None,
+            owner: None,
         }
     }
 

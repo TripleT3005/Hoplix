@@ -212,6 +212,7 @@ impl Hoplix {
     // Export
 
     pub(crate) fn start_export(&mut self) -> Task<Message> {
+        let vault_missing = !self.vault_file_exists();
         let Some(Dialog::ExportSites(dialog)) = &mut self.dialog else {
             return Task::none();
         };
@@ -279,6 +280,21 @@ impl Hoplix {
                 dialog.error = None;
                 Task::perform(
                     write_encrypted(SiteExport { list, secrets }, password, path),
+                    done,
+                )
+            }
+            (SecretBackend::Vault, None) if vault_missing => {
+                dialog.busy = true;
+                dialog.error = None;
+                Task::perform(
+                    write_encrypted(
+                        SiteExport {
+                            list,
+                            secrets: BTreeMap::new(),
+                        },
+                        password,
+                        path,
+                    ),
                     done,
                 )
             }
@@ -394,9 +410,7 @@ impl Hoplix {
             return Task::none();
         }
         if self.secret_backend == SecretBackend::Vault && self.vault.is_none() {
-            self.pending = Some(PendingAction::StoreSecrets(secrets));
-            self.open_master_dialog(MasterMode::Unlock);
-            return ui::focus_input();
+            return self.request_vault(PendingAction::StoreSecrets(secrets));
         }
         let mut tasks = Vec::new();
         for (name, secret) in secrets {
