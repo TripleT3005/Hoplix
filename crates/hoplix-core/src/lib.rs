@@ -61,7 +61,10 @@ pub use options::{
     ConnectionOptions, FileNameEncoding, FtpMode, MAX_TIMEOUT_SECONDS, seconds_from_text,
     seconds_text,
 };
-pub use paths::{TrustStore, config_dir};
+pub use paths::{
+    PORTABLE_CONFIG_DIR, PORTABLE_MARKER, TrustStore, config_dir, has_portable_marker, is_portable,
+    portable_dir, resolve_config_dir,
+};
 pub use properties::{
     FolderSize, PERMISSION_BITS, PermissionChange, Properties, WindowsAttributes, folder_size,
     mode_text, parse_mode, parse_permission_text, permission_text, set_permissions_with,

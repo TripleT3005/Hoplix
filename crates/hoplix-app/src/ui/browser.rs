@@ -19,6 +19,8 @@ use crate::{format, local_time, theme, ui};
 const KIND_WIDTH: f32 = 110.0;
 const SIZE_WIDTH: f32 = 110.0;
 const MODIFIED_WIDTH: f32 = 130.0;
+const PERMISSIONS_WIDTH: f32 = 90.0;
+const OWNER_WIDTH: f32 = 90.0;
 const ROW_PADDING: [u16; 2] = [3, 8];
 const DESTINATION_WIDTH: f32 = 220.0;
 const MARK_WIDTH: f32 = 18.0;
@@ -38,21 +40,37 @@ const BUTTON_CHAR_WIDTH: f32 = 16.0 * 0.6;
 pub(super) struct Columns {
     pub kind: bool,
     pub modified: bool,
+    pub permissions: bool,
+    pub owner: bool,
 }
 
 impl Columns {
     const ALL: Self = Self {
         kind: true,
         modified: true,
+        permissions: false,
+        owner: false,
     };
     const WITHOUT_KIND: Self = Self {
         kind: false,
         modified: true,
+        permissions: false,
+        owner: false,
     };
     const NAME_AND_SIZE: Self = Self {
         kind: false,
         modified: false,
+        permissions: false,
+        owner: false,
     };
+
+    fn with_optional(self, permissions: bool, owner: bool) -> Self {
+        Self {
+            permissions,
+            owner,
+            ..self
+        }
+    }
 
     fn fixed_width(self) -> f32 {
         let mut width = 2.0 * f32::from(ROW_PADDING[1]) + SCROLLBAR_GAP + NAME_GAP + SIZE_WIDTH;
@@ -62,14 +80,26 @@ impl Columns {
         if self.modified {
             width += MODIFIED_GAP + MODIFIED_WIDTH;
         }
+        if self.permissions {
+            width += MODIFIED_GAP + PERMISSIONS_WIDTH;
+        }
+        if self.owner {
+            width += MODIFIED_GAP + OWNER_WIDTH;
+        }
         width
     }
 
-    fn fit(width: f32) -> Self {
-        [Self::ALL, Self::WITHOUT_KIND]
-            .into_iter()
-            .find(|columns| width - columns.fixed_width() >= NAME_MIN_WIDTH)
-            .unwrap_or(Self::NAME_AND_SIZE)
+    fn fit(width: f32, permissions: bool, owner: bool) -> Self {
+        [
+            Self::ALL.with_optional(permissions, owner),
+            Self::WITHOUT_KIND.with_optional(permissions, owner),
+            Self::WITHOUT_KIND.with_optional(permissions, false),
+            Self::ALL,
+            Self::WITHOUT_KIND,
+        ]
+        .into_iter()
+        .find(|columns| width - columns.fixed_width() >= NAME_MIN_WIDTH)
+        .unwrap_or(Self::NAME_AND_SIZE)
     }
 
     fn min_list_width() -> f32 {
@@ -260,6 +290,7 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
     let ready = !tab.path.is_empty() && tab.state != LoadState::Loading;
     let has_single = ready && tab.selected_entry().is_some();
     let has_any = ready && !tab.selection.is_empty();
+    let can_transfer = ready && !tab.transfer_sources().is_empty();
     let has_file = ready
         && tab
             .selected_entry()
@@ -296,7 +327,9 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
         actions = actions.push(
             button(action_label(label))
                 .style(theme::secondary_button)
-                .on_press_maybe(has_any.then_some(Message::Tab(id, TabMessage::CopyToOtherPane))),
+                .on_press_maybe(
+                    can_transfer.then_some(Message::Tab(id, TabMessage::CopyToOtherPane)),
+                ),
         );
     }
     let destinations: Vec<Choice<TabId>> = app
@@ -314,7 +347,7 @@ fn view_tab<'a>(app: &'a Hoplix, pane: usize, tab: &'a Tab) -> Element<'a, Messa
         .placeholder(strings.get("transfer.copy_to"))
         .text_size(13)
         .width(DESTINATION_WIDTH);
-        actions = actions.push(if has_any {
+        actions = actions.push(if can_transfer {
             Element::from(picker)
         } else {
             Element::from(
@@ -377,7 +410,7 @@ fn list_view<'a>(app: &'a Hoplix, tab: &'a Tab, width: f32) -> Element<'a, Messa
     let strings = &app.strings;
     match &tab.search {
         Some(results) => {
-            let columns = Columns::fit(width);
+            let columns = Columns::fit(width, false, false);
             ui::file_list::results_view(strings, tab, results, columns.modified)
         }
         None => {
@@ -391,7 +424,11 @@ fn list_view<'a>(app: &'a Hoplix, tab: &'a Tab, width: f32) -> Element<'a, Messa
             } else {
                 0.0
             };
-            let columns = Columns::fit(width - mark);
+            let columns = Columns::fit(
+                width - mark,
+                app.settings.show_permissions,
+                app.settings.show_owner,
+            );
             column![
                 header(strings, tab, comparison.is_some(), columns),
                 entry_list(strings, tab, comparison, columns)
@@ -462,6 +499,25 @@ fn header<'a>(
                 Length::Fixed(MODIFIED_WIDTH),
                 Alignment::Start,
             ));
+    }
+    let column_label = |label: &'a str, width: f32| {
+        text(label)
+            .size(13)
+            .width(width)
+            .wrapping(text::Wrapping::None)
+    };
+    if columns.permissions {
+        header = header
+            .push(Space::new().width(MODIFIED_GAP))
+            .push(column_label(
+                strings.get("browser.permissions"),
+                PERMISSIONS_WIDTH,
+            ));
+    }
+    if columns.owner {
+        header = header
+            .push(Space::new().width(MODIFIED_GAP))
+            .push(column_label(strings.get("browser.owner"), OWNER_WIDTH));
     }
     header
         .push(Space::new().width(SCROLLBAR_GAP))
@@ -596,6 +652,30 @@ fn entry_row<'a>(
                 .size(13)
                 .width(MODIFIED_WIDTH)
                 .wrapping(text::Wrapping::None),
+        );
+    }
+    if columns.permissions {
+        let permissions = entry
+            .permissions
+            .map(hoplix_core::permission_text)
+            .unwrap_or_default();
+        cells = cells.push(Space::new().width(MODIFIED_GAP)).push(
+            text(permissions)
+                .size(13)
+                .font(iced::Font::MONOSPACE)
+                .width(PERMISSIONS_WIDTH)
+                .wrapping(text::Wrapping::None),
+        );
+    }
+    if columns.owner {
+        cells = cells.push(Space::new().width(MODIFIED_GAP)).push(
+            container(
+                text(entry.owner.as_deref().unwrap_or_default())
+                    .size(13)
+                    .wrapping(text::Wrapping::None),
+            )
+            .width(OWNER_WIDTH)
+            .clip(true),
         );
     }
     let content = Row::new()

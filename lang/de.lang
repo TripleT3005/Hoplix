@@ -26,6 +26,8 @@ settings.language.system = Wie im System
 settings.layout = Ansicht
 settings.layout.modern = Modern: ein Browser mit Tabs
 settings.layout.classic = Klassisch: zwei Bereiche nebeneinander
+settings.column.permissions = Spalte „Berechtigungen“ in Dateilisten zeigen
+settings.column.owner = Spalte „Besitzer“ in Dateilisten zeigen
 settings.save_failed = Die Einstellungen konnten nicht gespeichert werden: {detail}
 
 # Tabs
@@ -40,6 +42,8 @@ browser.name = Name
 browser.kind = Typ
 browser.size = Größe
 browser.modified = Geändert
+browser.permissions = Berechtigungen
+browser.owner = Besitzer
 browser.kind.folder = Ordner
 browser.kind.file = Datei
 browser.kind.file_with_extension = {extension}-Datei
@@ -283,6 +287,7 @@ settings.secrets.keyring.windows = Windows-Anmeldeinformationsverwaltung
 settings.secrets.vault = Verschlüsselt mit Master-Passwort
 settings.secrets.change = Master-Passwort ändern
 settings.secrets.hint = Passwörter werden nie im Klartext gespeichert. Mit Master-Passwort liegen sie in einer verschlüsselten Datei, die du einmal pro Sitzung entsperrst.
+settings.secrets.portable = Portabler Modus: Die Einstellungen liegen im Ordner config neben Hoplix. Nutze ein Master-Passwort, damit gespeicherte Passwörter mit diesem Ordner umziehen; der Schlüsselbund des Systems bleibt auf diesem Computer.
 secrets.switched.vault = Gespeicherte Passwörter sind jetzt durch dein Master-Passwort geschützt.
 secrets.switched.keyring = Gespeicherte Passwörter liegen jetzt im Schlüsselbund des Systems.
 secrets.leftovers = Gespeicherte Passwörter sind jetzt durch dein Master-Passwort geschützt, aber {count} konnten nicht aus dem Schlüsselbund des Systems entfernt werden.

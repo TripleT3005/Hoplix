@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use hoplix_core::language::{ENGLISH_CODE, FILE_EXTENSION, LanguageFile};
 
@@ -151,11 +151,14 @@ fn system_language() -> Option<String> {
 
 fn lang_directories() -> Vec<PathBuf> {
     let mut directories = Vec::new();
-    if let Some(directory) = std::env::current_exe()
+    if let Some(parent) = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|parent| parent.join(LANG_DIRECTORY)))
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
     {
-        directories.push(directory);
+        directories.push(parent.join(LANG_DIRECTORY));
+        if cfg!(unix) {
+            directories.push(parent.join("../share/hoplix").join(LANG_DIRECTORY));
+        }
     }
     if cfg!(debug_assertions) {
         directories.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../lang"));

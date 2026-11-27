@@ -5,6 +5,7 @@ use iced::Task;
 use iced::futures::SinkExt;
 
 use crate::app::{Dialog, Hoplix, Message, TabId};
+use crate::transfers::Drag;
 use crate::ui;
 
 // Constants
@@ -108,6 +109,7 @@ impl Hoplix {
                 }
                 if let Some(results) = self.tab_mut(id).and_then(|tab| tab.search.as_mut()) {
                     results.selected = Some(index);
+                    self.drag = Some(Drag::new(id, None));
                 }
             }
             SearchMessage::Reveal(id, index) => return self.reveal_hit(id, index),

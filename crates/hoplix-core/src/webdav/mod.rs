@@ -231,6 +231,8 @@ impl WebDavFileSystem {
             size: (!resource.collection).then_some(resource.length).flatten(),
             modified: resource.modified,
             is_link: false,
+            permissions: None,
+            owner: None,
         }
     }
 

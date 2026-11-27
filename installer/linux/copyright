@@ -1,0 +1,10 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Hoplix
+Source: https://github.com/TripleT3005/Hoplix
+Comment: Licenses of the third-party components built into Hoplix:
+ /usr/share/doc/hoplix/THIRD-PARTY-LICENSES.txt
+
+Files: *
+Copyright: TripleT3005
+License: MIT
+ See /usr/share/doc/hoplix/LICENSE for the full license text.
