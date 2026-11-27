@@ -97,6 +97,7 @@ pub struct Conflict {
     pub target_path: String,
     pub source_size: u64,
     pub target_size: u64,
+    pub can_resume: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,6 +242,7 @@ struct Stream<'a> {
     source: &'a str,
     target: &'a str,
     offset: u64,
+    size: u64,
     limiters: &'a [&'a RateLimiter],
 }
 
@@ -1022,13 +1024,21 @@ impl TransferQueue {
             size,
             modified,
         } = *file;
+        let resumable = request.source.supports_resume() && request.target.supports_resume();
         let (mut path, mut offset) = match self
-            .resolve(id, request.target.as_ref(), target, size, control)
+            .resolve(
+                id,
+                request.target.as_ref(),
+                target,
+                size,
+                resumable,
+                control,
+            )
             .await?
         {
             Resolution::Skip => return Ok(None),
             Resolution::Interrupted(signal) => return Ok(Some(Outcome::Interrupted(signal))),
-            Resolution::Copy { path, offset } => (path, offset),
+            Resolution::Copy { path, offset } => (path, if resumable { offset } else { 0 }),
         };
         self.change(id, |job| {
             job.partial.insert(target.to_string(), path.clone());
@@ -1057,6 +1067,7 @@ impl TransferQueue {
                     source,
                     target: &path,
                     offset,
+                    size,
                     limiters: &limiters,
                 };
                 copy_stream(request, &stream, control, &mut report).await
@@ -1092,6 +1103,7 @@ impl TransferQueue {
                         }
                     }
                     offset = match request.target.metadata(&path).await {
+                        _ if !resumable => 0,
                         Ok(entry) => entry.size.unwrap_or(0).min(size),
                         Err(error) if error.kind() == ErrorKind::NotFound => 0,
                         Err(_) => offset,
@@ -1157,6 +1169,7 @@ impl TransferQueue {
         file_system: &dyn FileSystem,
         target: &str,
         size: u64,
+        resumable: bool,
         control: &watch::Receiver<Control>,
     ) -> Result<Resolution> {
         let partial = self
@@ -1203,6 +1216,7 @@ impl TransferQueue {
                     target_path: target.to_string(),
                     source_size: size,
                     target_size,
+                    can_resume: resumable,
                 };
                 self.change(id, |job| {
                     job.pending = Some(sender);
@@ -1233,6 +1247,10 @@ impl TransferQueue {
                 offset: 0,
             },
             ConflictDecision::Skip => Resolution::Skip,
+            ConflictDecision::Resume if !resumable => Resolution::Copy {
+                path: target.to_string(),
+                offset: 0,
+            },
             ConflictDecision::Resume if target_size == size => Resolution::Skip,
             ConflictDecision::Resume => Resolution::Copy {
                 path: target.to_string(),
@@ -1468,10 +1486,14 @@ async fn copy_stream(
         source,
         target,
         offset,
+        size,
         limiters,
     } = *stream;
     let mut reader = request.source.open_read(source, offset).await?;
-    let mut writer = request.target.open_write(target, offset).await?;
+    let mut writer = request
+        .target
+        .open_write_sized(target, offset, size.saturating_sub(offset))
+        .await?;
     let mut buffer = vec![0; BUFFER_SIZE];
     let mut position = offset;
     report(position);

@@ -9,6 +9,7 @@ mod file_system;
 mod ftp;
 mod history;
 pub mod key_value;
+mod keyboard_interactive;
 pub mod language;
 mod local;
 mod options;
@@ -18,13 +19,17 @@ mod proxy;
 mod queue_file;
 mod rate;
 mod recent;
+mod remote_shell;
 mod route;
+mod scp;
+mod scp_protocol;
 mod search;
 mod secrets;
 mod sftp;
 mod site_export;
 mod site_route;
 mod sites;
+mod ssh;
 mod ssh_agent;
 mod sync;
 mod transfer;
@@ -54,6 +59,10 @@ pub use history::{
     DEFAULT_HISTORY_LIMIT, ExportLabels, HISTORY_FILE, History, HistoryEntry, HistoryResult,
     MAX_HISTORY_LIMIT, csv_field, to_csv, to_plain_text,
 };
+pub use keyboard_interactive::{
+    PROMPT_CANCELLED, PROMPT_UNAVAILABLE, PromptField, PromptRequest, Prompter, SharedPrompter,
+    clean_text, is_cancelled, is_password_prompt,
+};
 pub use local::LocalFileSystem;
 pub use options::{
     ConnectionOptions, FileNameEncoding, FtpMode, MAX_TIMEOUT_SECONDS, seconds_from_text,
@@ -68,14 +77,16 @@ pub use proxy::{Proxy, ProxyCredentials, ProxyKind};
 pub use queue_file::{Location, QUEUE_FILE, SavedJob, SavedQueue};
 pub use rate::RateLimiter;
 pub use recent::{MAX_RECENT, RECENT_FILE, RecentConnection, RecentList};
-pub use route::{JumpHost, Route, connect_via, connect_via_with};
+pub use route::{JumpHost, Route, connect_via, connect_via_prompting, connect_via_with};
+pub use scp::{SCP_NO_RESUME, ScpFileSystem};
+pub use scp_protocol::TreeSummary;
 pub use search::{NameFilter, Search, SearchBatch, SearchHit, Visited, Walk};
 pub use secrets::{
     DEFAULT_ITERATIONS, Keyring, Moved, SecretBackend, SecretSlot, SecretStore, VAULT_FILE, Vault,
     change_master_password, create_vault, jump_secret_name, move_to_keyring, move_to_vault,
     proxy_secret_name, secret_name, site_id_of, unlock_vault,
 };
-pub use sftp::{SftpFileSystem, auto_reconnect, fingerprint, set_auto_reconnect};
+pub use sftp::SftpFileSystem;
 pub use site_export::{
     EXPORT_EXTENSION, EXPORT_FILE_NAME, ExportError, ExportFile, ExportScope, ImportSummary,
     SealedExport, SiteExport, decrypt_export, encrypt_export, utc_date,
@@ -84,6 +95,7 @@ pub use site_route::{SiteJump, SiteProxy};
 pub use sites::{
     MAX_SITE_TRANSFERS, SITES_FILE, Site, SiteAuth, SiteList, new_id, normalize_folder,
 };
+pub use ssh::{auto_reconnect, fingerprint, set_auto_reconnect};
 pub use ssh_agent::{AGENT_EMPTY, AGENT_MISSING, AGENT_REJECTED};
 pub use sync::{
     CompareOptions, CompareStatus, ComparedEntry, DEFAULT_TIME_TOLERANCE, Pattern, Side,

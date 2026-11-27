@@ -46,6 +46,19 @@ pub trait FileSystem: Debug + Send + Sync {
 
     fn open_write(&self, path: &str, offset: u64) -> BoxFuture<'_, Result<Writer>>;
 
+    fn open_write_sized(
+        &self,
+        path: &str,
+        offset: u64,
+        _size: u64,
+    ) -> BoxFuture<'_, Result<Writer>> {
+        self.open_write(path, offset)
+    }
+
+    fn supports_resume(&self) -> bool {
+        true
+    }
+
     fn set_modified(&self, path: &str, _modified: SystemTime) -> BoxFuture<'_, Result<()>> {
         let path = path.to_string();
         Box::pin(async move { Err(Error::new(ErrorKind::Other, format!("{path}: unsupported"))) })
@@ -123,7 +136,7 @@ pub async fn copy_file(
     to: &str,
     resume: bool,
 ) -> Result<u64> {
-    let offset = if resume {
+    let offset = if resume && source.supports_resume() && target.supports_resume() {
         match target.metadata(to).await {
             Ok(entry) => entry.size.unwrap_or(0),
             Err(error) if error.kind() == ErrorKind::NotFound => 0,
@@ -137,7 +150,9 @@ pub async fn copy_file(
         return Ok(0);
     }
     let mut reader = source.open_read(from, offset).await?;
-    let mut writer = target.open_write(to, offset).await?;
+    let mut writer = target
+        .open_write_sized(to, offset, total.saturating_sub(offset))
+        .await?;
     let copied = tokio::io::copy(&mut reader, &mut writer)
         .await
         .map_err(|error| Error::from_io(&error, to))?;

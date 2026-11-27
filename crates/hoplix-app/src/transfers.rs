@@ -672,6 +672,7 @@ mod tests {
                 target_path: format!("/t/{id}"),
                 source_size: 2,
                 target_size: 1,
+                can_resume: true,
             })));
         }
         let Some(Dialog::Conflict { conflict, .. }) = &app.dialog else {

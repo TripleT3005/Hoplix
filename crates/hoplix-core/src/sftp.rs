@@ -1,61 +1,38 @@
 use std::fmt;
 use std::future::Future;
 use std::io::SeekFrom;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use russh::client::{self, Handle};
-use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
+use russh::client::Handle;
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::client::{RawSftpSession, SftpSession};
 use russh_sftp::protocol::{FileAttributes, OpenFlags, Packet, StatusCode};
-use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWrite};
+use tokio::io::AsyncSeekExt;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 
-use crate::connection::{Authentication, ConnectionParams, HostAddress, HostKeyTrust};
+use crate::connection::{ConnectionParams, HostKeyTrust};
 use crate::file_system::{Reader, Writer};
+use crate::keyboard_interactive::SharedPrompter;
 use crate::route::Route;
+use crate::ssh::{HostKeyCheck, SshLink, SshTarget, auto_reconnect, connection_error};
 use crate::{
     BoxFuture, ConnectionOptions, Entry, EntryKind, Error, ErrorKind, FileSystem, HashAlgorithm,
-    PERMISSION_BITS, Properties, Result, proxy, ssh_agent,
+    PERMISSION_BITS, Properties, Result,
 };
-
-// Constants
-
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
-const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(600);
-const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
-
-// Reconnecting
-
-static AUTO_RECONNECT: AtomicBool = AtomicBool::new(true);
-
-pub fn set_auto_reconnect(enabled: bool) {
-    AUTO_RECONNECT.store(enabled, Ordering::Relaxed);
-}
-
-pub fn auto_reconnect() -> bool {
-    AUTO_RECONNECT.load(Ordering::Relaxed)
-}
 
 // Types
 
 pub struct SftpFileSystem {
-    params: ConnectionParams,
-    route: Route,
-    options: ConnectionOptions,
-    known_hosts: PathBuf,
-    accepted_keys: Vec<HostKeyTrust>,
+    target: SshTarget,
     connection: AsyncMutex<Arc<Connection>>,
     label: String,
 }
 
 struct Connection {
     session: SftpSession,
-    handle: Handle<HostKeyCheck>,
-    jumps: Vec<Handle<HostKeyCheck>>,
+    link: SshLink,
     hashes: OnceCell<HashChannel>,
 }
 
@@ -64,85 +41,6 @@ struct HashChannel {
     session: Option<RawSftpSession>,
     check_file: Vec<HashAlgorithm>,
     md5_hash: bool,
-}
-
-struct HostKeyCheck {
-    host: String,
-    port: u16,
-    known_hosts: PathBuf,
-    trusted: Vec<HostKeyTrust>,
-    rejection: Arc<Mutex<Option<Error>>>,
-    accepted: Arc<Mutex<Option<String>>>,
-}
-
-// Host keys
-
-pub fn fingerprint(key: &PublicKey) -> String {
-    key.fingerprint(HashAlg::Sha256).to_string()
-}
-
-impl HostKeyCheck {
-    fn verify(&self, key: &PublicKey) -> std::result::Result<(), Error> {
-        let fingerprint = fingerprint(key);
-        match russh::keys::check_known_hosts_path(&self.host, self.port, key, &self.known_hosts) {
-            Ok(true) => Ok(()),
-            Err(russh::keys::Error::KeyChanged { .. }) => {
-                Err(Error::new(ErrorKind::HostKeyChanged, fingerprint)
-                    .at_address(&self.host, self.port))
-            }
-            Err(error) => Err(Error::new(ErrorKind::Other, error.to_string())),
-            Ok(false) => match self
-                .trusted
-                .iter()
-                .find(|trust| trust.applies_to(&self.host, self.port, &fingerprint))
-            {
-                Some(trust) => {
-                    if trust.remember {
-                        russh::keys::known_hosts::learn_known_hosts_path(
-                            &self.host,
-                            self.port,
-                            key,
-                            &self.known_hosts,
-                        )
-                        .map_err(|error| Error::new(ErrorKind::Other, error.to_string()))?;
-                    }
-                    Ok(())
-                }
-                None => Err(Error::new(ErrorKind::UnknownHostKey, fingerprint)
-                    .at_address(&self.host, self.port)),
-            },
-        }
-    }
-}
-
-impl client::Handler for HostKeyCheck {
-    type Error = russh::Error;
-
-    async fn check_server_key(
-        &mut self,
-        server_public_key: &PublicKeyOrCertificate,
-    ) -> std::result::Result<bool, Self::Error> {
-        let key = match server_public_key {
-            PublicKeyOrCertificate::PublicKey { key, .. } => key.clone(),
-            PublicKeyOrCertificate::Certificate(certificate) => {
-                PublicKey::from(certificate.public_key().clone())
-            }
-        };
-        match self.verify(&key) {
-            Ok(()) => {
-                if let Ok(mut accepted) = self.accepted.lock() {
-                    *accepted = Some(fingerprint(&key));
-                }
-                Ok(true)
-            }
-            Err(error) => {
-                if let Ok(mut rejection) = self.rejection.lock() {
-                    *rejection = Some(error);
-                }
-                Ok(false)
-            }
-        }
-    }
 }
 
 // Connecting
@@ -180,14 +78,22 @@ impl SftpFileSystem {
         known_hosts: &Path,
         trusted: &[HostKeyTrust],
     ) -> Result<Self> {
-        let (connection, accepted_keys) =
-            establish(params, route, options, known_hosts, trusted.to_vec()).await?;
+        Self::connect_prompting(params, route, options, known_hosts, trusted, None).await
+    }
+
+    pub async fn connect_prompting(
+        params: &ConnectionParams,
+        route: &Route,
+        options: &ConnectionOptions,
+        known_hosts: &Path,
+        trusted: &[HostKeyTrust],
+        prompter: Option<SharedPrompter>,
+    ) -> Result<Self> {
+        let (target, link) =
+            SshTarget::connect(params, route, options, known_hosts, trusted, prompter).await?;
+        let connection = open_sftp(link, &params.host).await?;
         Ok(Self {
-            params: params.clone(),
-            route: route.clone(),
-            options: options.clone(),
-            known_hosts: known_hosts.to_path_buf(),
-            accepted_keys,
+            target,
             connection: AsyncMutex::new(Arc::new(connection)),
             label: params.label(),
         })
@@ -195,12 +101,9 @@ impl SftpFileSystem {
 
     async fn current(&self) -> Result<Arc<Connection>> {
         let mut slot = self.connection.lock().await;
-        if slot.handle.is_closed() {
+        if slot.link.is_closed() {
             if !auto_reconnect() {
-                return Err(Error::new(
-                    ErrorKind::ConnectionFailed,
-                    self.params.host.clone(),
-                ));
+                return Err(self.target.closed_error());
             }
             *slot = Arc::new(self.reestablish().await?);
         }
@@ -216,15 +119,8 @@ impl SftpFileSystem {
     }
 
     async fn reestablish(&self) -> Result<Connection> {
-        establish(
-            &self.params,
-            &self.route,
-            &self.options,
-            &self.known_hosts,
-            self.accepted_keys.clone(),
-        )
-        .await
-        .map(|(connection, _)| connection)
+        let link = self.target.reconnect().await?;
+        open_sftp(link, &self.target.params.host).await
     }
 
     async fn run<T, F, Fut>(&self, operation: F) -> Result<T>
@@ -243,219 +139,24 @@ impl SftpFileSystem {
     }
 }
 
-async fn establish(
-    params: &ConnectionParams,
-    route: &Route,
-    options: &ConnectionOptions,
-    known_hosts: &Path,
-    trusted: Vec<HostKeyTrust>,
-) -> Result<(Connection, Vec<HostKeyTrust>)> {
-    tokio::time::timeout(
-        options.timeout_or(CONNECT_TIMEOUT),
-        open_connection(params, route, options, known_hosts, trusted),
-    )
-    .await
-    .map_err(|_| Error::new(ErrorKind::ConnectionFailed, params.host.clone()))?
-}
-
-struct Hop<'a> {
-    host: &'a str,
-    port: u16,
-    username: &'a str,
-    authentication: &'a Authentication,
-    label: String,
-    is_target: bool,
-}
-
-type Slot<T> = Arc<Mutex<Option<T>>>;
-
-fn hops<'a>(params: &'a ConnectionParams, route: &'a Route) -> Vec<Hop<'a>> {
-    let mut hops: Vec<Hop<'a>> = route
-        .jump_hosts
-        .iter()
-        .map(|jump| Hop {
-            host: &jump.host,
-            port: jump.port,
-            username: &jump.username,
-            authentication: &jump.authentication,
-            label: jump.label(),
-            is_target: false,
-        })
-        .collect();
-    hops.push(Hop {
-        host: &params.host,
-        port: params.port,
-        username: &params.username,
-        authentication: &params.authentication,
-        label: params.label(),
-        is_target: true,
-    });
-    hops
-}
-
-async fn open_connection(
-    params: &ConnectionParams,
-    route: &Route,
-    options: &ConnectionOptions,
-    known_hosts: &Path,
-    trusted: Vec<HostKeyTrust>,
-) -> Result<(Connection, Vec<HostKeyTrust>)> {
-    let config = Arc::new(client::Config {
-        inactivity_timeout: Some(INACTIVITY_TIMEOUT),
-        keepalive_interval: Some(options.keepalive().unwrap_or(KEEPALIVE_INTERVAL)),
-        ..client::Config::default()
-    });
-    let mut accepted_keys = Vec::new();
-    let mut jumps: Vec<Handle<HostKeyCheck>> = Vec::new();
-    let mut target = None;
-    for hop in hops(params, route) {
-        let (check, rejection, accepted) = host_key_check(&hop, known_hosts, &trusted);
-        let connected = match jumps.last() {
-            None => {
-                let stream = proxy::open_tcp(route.proxy.as_ref(), hop.host, hop.port)
-                    .await
-                    .map_err(|error| at_hop(error, &hop))?;
-                start_session(&config, stream, check, &hop, &rejection).await
-            }
-            Some(previous) => {
-                let channel = previous
-                    .channel_open_direct_tcpip(hop.host, u32::from(hop.port), "127.0.0.1", 0)
-                    .await
-                    .map_err(|error| at_hop(connection_error(hop.host, &error), &hop))?;
-                start_session(&config, channel.into_stream(), check, &hop, &rejection).await
-            }
-        };
-        let mut handle = connected?;
-        if let Some(fingerprint) = accepted.lock().ok().and_then(|mut slot| slot.take()) {
-            accepted_keys.push(accepted_key(&hop, fingerprint));
-        }
-        authenticate(&mut handle, &hop)
-            .await
-            .map_err(|error| at_hop(error, &hop))?;
-        if hop.is_target {
-            target = Some(handle);
-        } else {
-            jumps.push(handle);
-        }
-    }
-    let Some(handle) = target else {
-        return Err(Error::new(ErrorKind::ConnectionFailed, params.host.clone()));
-    };
-    let channel = handle
+async fn open_sftp(link: SshLink, host: &str) -> Result<Connection> {
+    let channel = link
+        .handle
         .channel_open_session()
         .await
-        .map_err(|error| connection_error(&params.host, &error))?;
+        .map_err(|error| connection_error(host, &error))?;
     channel
         .request_subsystem(true, "sftp")
         .await
-        .map_err(|error| connection_error(&params.host, &error))?;
+        .map_err(|error| connection_error(host, &error))?;
     let session = SftpSession::new(channel.into_stream())
         .await
-        .map_err(|error| sftp_error(&error, &params.host))?;
-    Ok((
-        Connection {
-            session,
-            handle,
-            jumps,
-            hashes: OnceCell::new(),
-        },
-        accepted_keys,
-    ))
-}
-
-fn accepted_key(hop: &Hop<'_>, fingerprint: String) -> HostKeyTrust {
-    HostKeyTrust {
-        address: HostAddress::new(hop.host, hop.port),
-        fingerprint,
-        remember: false,
-    }
-}
-
-fn host_key_check(
-    hop: &Hop<'_>,
-    known_hosts: &Path,
-    trusted: &[HostKeyTrust],
-) -> (HostKeyCheck, Slot<Error>, Slot<String>) {
-    let rejection = Arc::new(Mutex::new(None));
-    let accepted = Arc::new(Mutex::new(None));
-    let check = HostKeyCheck {
-        host: hop.host.to_string(),
-        port: hop.port,
-        known_hosts: known_hosts.to_path_buf(),
-        trusted: trusted.to_vec(),
-        rejection: Arc::clone(&rejection),
-        accepted: Arc::clone(&accepted),
-    };
-    (check, rejection, accepted)
-}
-
-async fn start_session<S>(
-    config: &Arc<client::Config>,
-    stream: S,
-    check: HostKeyCheck,
-    hop: &Hop<'_>,
-    rejection: &Slot<Error>,
-) -> Result<Handle<HostKeyCheck>>
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    client::connect_stream(Arc::clone(config), stream, check)
-        .await
-        .map_err(|error| {
-            let rejected = rejection.lock().ok().and_then(|mut slot| slot.take());
-            at_hop(
-                rejected.unwrap_or_else(|| connection_error(hop.host, &error)),
-                hop,
-            )
-        })
-}
-
-fn at_hop(error: Error, hop: &Hop<'_>) -> Error {
-    if hop.is_target || error.hop().is_some() {
-        error
-    } else {
-        error.at_hop(hop.label.clone())
-    }
-}
-
-async fn authenticate(handle: &mut Handle<HostKeyCheck>, hop: &Hop<'_>) -> Result<()> {
-    let user = hop.username.to_string();
-    let result = match hop.authentication {
-        Authentication::Password(password) => handle
-            .authenticate_password(user, password.clone())
-            .await
-            .map_err(|error| connection_error(hop.host, &error))?,
-        Authentication::KeyFile { path, passphrase } => {
-            let key =
-                russh::keys::load_secret_key(path, passphrase.as_deref()).map_err(|error| {
-                    Error::new(
-                        ErrorKind::InvalidKey,
-                        format!("{}: {error}", path.display()),
-                    )
-                })?;
-            let hash = handle
-                .best_supported_rsa_hash()
-                .await
-                .ok()
-                .flatten()
-                .flatten();
-            handle
-                .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
-                .await
-                .map_err(|error| connection_error(hop.host, &error))?
-        }
-        Authentication::Agent => {
-            return ssh_agent::authenticate(handle, &user, &hop.label).await;
-        }
-    };
-    if result.success() {
-        Ok(())
-    } else {
-        Err(Error::new(
-            ErrorKind::AuthenticationFailed,
-            hop.label.clone(),
-        ))
-    }
+        .map_err(|error| sftp_error(&error, host))?;
+    Ok(Connection {
+        session,
+        link,
+        hashes: OnceCell::new(),
+    })
 }
 
 // Interface
@@ -466,7 +167,7 @@ impl FileSystem for SftpFileSystem {
     }
 
     fn url(&self, path: &str) -> Option<String> {
-        Some(self.params.url(path))
+        Some(self.target.params.url(path))
     }
 
     fn home(&self) -> BoxFuture<'_, Result<String>> {
@@ -713,15 +414,7 @@ impl FileSystem for SftpFileSystem {
         Box::pin(async {
             let connection = Arc::clone(&*self.connection.lock().await);
             let _ = connection.session.close().await;
-            let _ = connection
-                .handle
-                .disconnect(russh::Disconnect::ByApplication, "", "en")
-                .await;
-            for jump in connection.jumps.iter().rev() {
-                let _ = jump
-                    .disconnect(russh::Disconnect::ByApplication, "", "en")
-                    .await;
-            }
+            connection.link.disconnect().await;
         })
     }
 
@@ -785,7 +478,11 @@ const MD5_HASH: &str = "md5-hash";
 impl Connection {
     async fn hash_channel(&self) -> &HashChannel {
         self.hashes
-            .get_or_init(|| async { probe_hash_channel(&self.handle).await.unwrap_or_default() })
+            .get_or_init(|| async {
+                probe_hash_channel(&self.link.handle)
+                    .await
+                    .unwrap_or_default()
+            })
             .await
     }
 }
@@ -931,7 +628,7 @@ pub(crate) fn join_posix(base: &str, name: &str) -> String {
     format!("{base}/{name}")
 }
 
-fn file_name_posix(path: &str) -> &str {
+pub(crate) fn file_name_posix(path: &str) -> &str {
     path.trim_end_matches('/')
         .rsplit('/')
         .find(|part| !part.is_empty())
@@ -1006,14 +703,9 @@ fn sftp_error(error: &SftpError, path: &str) -> Error {
     }
 }
 
-fn connection_error(host: &str, error: &russh::Error) -> Error {
-    Error::new(ErrorKind::ConnectionFailed, format!("{host}: {error}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{JumpHost, Protocol};
 
     // Checksums
 
@@ -1060,126 +752,6 @@ mod tests {
         let mut empty = Vec::new();
         put_string(&mut empty, b"");
         assert_eq!(parse_md5_hash_reply(&empty), None);
-    }
-
-    // Host keys
-
-    const SHARED_KEY: &str =
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
-    const JUMP: &str = "bastion.example.test";
-    const TARGET: &str = "127.0.0.1";
-
-    fn shared_key() -> PublicKey {
-        PublicKey::from_openssh(SHARED_KEY).expect("invalid test key")
-    }
-
-    fn known_hosts(name: &str) -> PathBuf {
-        let directory =
-            std::env::temp_dir().join(format!("hoplix-sftp-hops-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&directory);
-        directory.join("known_hosts")
-    }
-
-    fn routed() -> (ConnectionParams, Route) {
-        let params = ConnectionParams {
-            protocol: Protocol::Sftp,
-            host: TARGET.to_string(),
-            port: 22,
-            username: "demo".to_string(),
-            authentication: Authentication::Agent,
-        };
-        let route = Route {
-            proxy: None,
-            jump_hosts: vec![JumpHost {
-                host: JUMP.to_string(),
-                port: 22,
-                username: "hop".to_string(),
-                authentication: Authentication::Agent,
-            }],
-        };
-        (params, route)
-    }
-
-    fn verify_hops(known_hosts: &Path, trusted: &[HostKeyTrust]) -> Vec<Result<()>> {
-        let (params, route) = routed();
-        hops(&params, &route)
-            .iter()
-            .map(|hop| {
-                host_key_check(hop, known_hosts, trusted)
-                    .0
-                    .verify(&shared_key())
-            })
-            .collect()
-    }
-
-    fn jump_trust(remember: bool) -> HostKeyTrust {
-        HostKeyTrust {
-            address: HostAddress::new(JUMP, 22),
-            fingerprint: fingerprint(&shared_key()),
-            remember,
-        }
-    }
-
-    fn is_known(known_hosts: &Path, host: &str) -> bool {
-        russh::keys::check_known_hosts_path(host, 22, &shared_key(), known_hosts)
-            .is_ok_and(|known| known)
-    }
-
-    #[test]
-    fn a_trusted_jump_host_key_does_not_trust_the_target() {
-        let known_hosts = known_hosts("once");
-        let results = verify_hops(&known_hosts, &[jump_trust(false)]);
-        assert_eq!(results[0], Ok(()));
-        let error = results[1].clone().expect_err("the target was trusted");
-        assert_eq!(error.kind(), ErrorKind::UnknownHostKey);
-        assert_eq!(error.detail(), fingerprint(&shared_key()));
-        assert_eq!(error.address(), Some(&HostAddress::new(TARGET, 22)));
-        assert!(!known_hosts.exists());
-
-        let target = HostKeyTrust::for_error(&error, false).expect("no trust");
-        let results = verify_hops(&known_hosts, &[jump_trust(false), target]);
-        assert!(results.iter().all(Result::is_ok), "{results:?}");
-    }
-
-    #[test]
-    fn remembering_only_learns_the_confirmed_host() {
-        let known_hosts = known_hosts("remember");
-        let results = verify_hops(&known_hosts, &[jump_trust(true)]);
-        assert_eq!(results[0], Ok(()));
-        assert_eq!(
-            results[1].as_ref().map_err(Error::kind),
-            Err(ErrorKind::UnknownHostKey)
-        );
-        assert!(is_known(&known_hosts, JUMP));
-        assert!(!is_known(&known_hosts, TARGET));
-        let results = verify_hops(&known_hosts, &[]);
-        assert_eq!(results[0], Ok(()));
-        assert!(results[1].is_err());
-        if let Some(directory) = known_hosts.parent() {
-            std::fs::remove_dir_all(directory).expect("cleaning up failed");
-        }
-    }
-
-    #[test]
-    fn reconnecting_keeps_the_trust_of_each_hop() {
-        let (params, route) = routed();
-        let accepted: Vec<HostKeyTrust> = hops(&params, &route)
-            .iter()
-            .map(|hop| accepted_key(hop, fingerprint(&shared_key())))
-            .collect();
-        assert_eq!(
-            accepted
-                .iter()
-                .map(|trust| (trust.address.host.as_str(), trust.remember))
-                .collect::<Vec<_>>(),
-            [(JUMP, false), (TARGET, false)]
-        );
-        let known_hosts = known_hosts("reconnect");
-        let results = verify_hops(&known_hosts, &accepted);
-        assert!(results.iter().all(Result::is_ok), "{results:?}");
-        let results = verify_hops(&known_hosts, &accepted[..1]);
-        assert!(results[0].is_ok() && results[1].is_err());
-        assert!(!known_hosts.exists());
     }
 
     // Paths

@@ -81,6 +81,7 @@ connect.protocol.sftp = SFTP (SSH)
 connect.protocol.ftp = FTP (unencrypted)
 connect.protocol.ftpes = FTPS (explicit TLS)
 connect.protocol.ftps = FTPS (implicit TLS)
+connect.protocol.scp = SCP (SSH, no resume)
 connect.unencrypted = FTP is not encrypted: your password and all files are sent in plain text and can be read on the way. Use SFTP or FTPS if the server supports it.
 connect.host = Server
 connect.port = Port

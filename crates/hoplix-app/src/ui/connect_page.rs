@@ -215,6 +215,7 @@ pub fn connection_fields<'a>(
                     Protocol::Ftp => "connect.protocol.ftp",
                     Protocol::FtpsExplicit => "connect.protocol.ftpes",
                     Protocol::FtpsImplicit => "connect.protocol.ftps",
+                    Protocol::Scp => "connect.protocol.scp",
                 })
                 .to_string(),
         })
