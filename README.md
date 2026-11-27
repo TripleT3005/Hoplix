@@ -217,7 +217,7 @@ Tests: `cargo test`. The SFTP integration tests are skipped by default; run them
 
 [LANGUAGES.md](LANGUAGES.md) is generated from the headers of the language files. After changing them, run `UPDATE_LANGUAGES=1 cargo test -p hoplix-core --test languages` (PowerShell: `$env:UPDATE_LANGUAGES = 1; cargo test -p hoplix-core --test languages`); the tests fail if it is out of date.
 
-[THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt) is generated from `cargo tree` and `cargo metadata` and the license files of the crates. After changing dependencies, run `UPDATE_THIRD_PARTY_LICENSES=1 cargo test -p hoplix-core --test third_party_licenses` (PowerShell: `$env:UPDATE_THIRD_PARTY_LICENSES = 1; cargo test -p hoplix-core --test third_party_licenses`); the tests fail if it is out of date.
+The license list for releases is created with Python 3 (standard library only): `python scripts/third_party_licenses.py --title Hoplix --rust-std --platform x86_64-pc-windows-msvc --platform x86_64-unknown-linux-gnu --notice-file ring=LICENSE --notice-file ring=src/polyfill/once_cell/LICENSE-MIT --output THIRD-PARTY-LICENSES.txt`. The installer and the packages need this file. `python -m unittest discover -s scripts` tests the scripts.
 
 #### Releases
 
@@ -229,7 +229,7 @@ The version is set once in the workspace `Cargo.toml`. When a new version reache
 
 [MIT](LICENSE) © TripleT3005
 
-The licenses of the libraries used are in [THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt), which is included with the program.
+Release packages, the installer and the Linux packages include `THIRD-PARTY-LICENSES.txt` with the licenses of all third-party components built into Hoplix. The CI fails if a dependency uses a license that is not on the allow list in [`scripts/third_party_licenses.py`](scripts/third_party_licenses.py).
 
 ## Deutsch
 
@@ -444,7 +444,7 @@ Tests: `cargo test`. Die SFTP-Integrationstests sind standardmäßig übersprung
 
 [LANGUAGES.md](LANGUAGES.md) wird aus den Köpfen der Sprachdateien erzeugt. Nach Änderungen daran `UPDATE_LANGUAGES=1 cargo test -p hoplix-core --test languages` (PowerShell: `$env:UPDATE_LANGUAGES = 1; cargo test -p hoplix-core --test languages`) ausführen; die Tests schlagen fehl, wenn sie veraltet ist.
 
-[THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt) wird mit `cargo tree` und `cargo metadata` aus den Lizenzdateien der Crates erzeugt. Nach Änderungen an den Abhängigkeiten `UPDATE_THIRD_PARTY_LICENSES=1 cargo test -p hoplix-core --test third_party_licenses` (PowerShell: `$env:UPDATE_THIRD_PARTY_LICENSES = 1; cargo test -p hoplix-core --test third_party_licenses`) ausführen; die Tests schlagen fehl, wenn sie veraltet ist.
+Die Lizenzliste für Releases entsteht mit Python 3 (nur Standardbibliothek): `python scripts/third_party_licenses.py --title Hoplix --rust-std --platform x86_64-pc-windows-msvc --platform x86_64-unknown-linux-gnu --notice-file ring=LICENSE --notice-file ring=src/polyfill/once_cell/LICENSE-MIT --output THIRD-PARTY-LICENSES.txt`. Der Installer und die Pakete brauchen diese Datei. `python -m unittest discover -s scripts` testet die Skripte.
 
 #### Releases
 
@@ -456,4 +456,4 @@ Die Version steht nur in der `Cargo.toml` des Workspaces. Sobald eine neue Versi
 
 [MIT](LICENSE) © TripleT3005
 
-Die Lizenzen der verwendeten Bibliotheken stehen in [THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt), die dem Programm beiliegt.
+Release-Pakete, Installer und Linux-Pakete enthalten `THIRD-PARTY-LICENSES.txt` mit den Lizenzen aller Fremdkomponenten, die in Hoplix eingebaut sind. Die CI schlägt fehl, wenn eine Abhängigkeit eine Lizenz verwendet, die nicht auf der Liste erlaubter Lizenzen in [`scripts/third_party_licenses.py`](scripts/third_party_licenses.py) steht.
