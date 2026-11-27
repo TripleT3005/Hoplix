@@ -1014,7 +1014,10 @@ fn packages_contain_the_third_party_licenses() {
         .expect("reading the release workflow failed");
     for expected in [
         format!("cp LICENSE {DOCUMENT} README.md CHANGELOG.md \"dist/$name/\""),
-        format!("for file in LICENSE {DOCUMENT} README.md CHANGELOG.md; do"),
+        format!("required=(LICENSE {DOCUMENT} README.md CHANGELOG.md)"),
+        format!(
+            "install -m 644 LICENSE {DOCUMENT} README.md CHANGELOG.md installer/linux/copyright \"$stage/usr/share/doc/hoplix/\""
+        ),
         "--test third_party_licenses".to_string(),
     ] {
         assert!(
