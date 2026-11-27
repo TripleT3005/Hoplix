@@ -6,6 +6,7 @@ mod fakes;
 mod file_list;
 mod history;
 mod palette;
+mod portable;
 mod preview;
 mod queue;
 mod routes;
@@ -163,6 +164,26 @@ impl Harness {
         prepare: impl FnOnce(&TestRoot),
         updates: Arc<fakes::Updates>,
     ) -> Self {
+        Self::launch_with(name, layout, prepare, updates, false)
+    }
+
+    pub fn portable(name: &str, prepare: impl FnOnce(&TestRoot)) -> Self {
+        Self::launch_with(
+            name,
+            Layout::Modern,
+            prepare,
+            fakes::Updates::up_to_date(),
+            true,
+        )
+    }
+
+    fn launch_with(
+        name: &str,
+        layout: Layout,
+        prepare: impl FnOnce(&TestRoot),
+        updates: Arc<fakes::Updates>,
+        portable: bool,
+    ) -> Self {
         let root = TestRoot::new(name);
         Settings {
             language: Some("en".to_string()),
@@ -182,6 +203,7 @@ impl Harness {
             update_source: fakes::update_source(Arc::clone(&updates)),
             update_delay: Duration::ZERO,
             preview_delay: Duration::ZERO,
+            portable,
         };
         let (app, task) = Hoplix::load(Some(root.config()), services);
         let transfer_events = app.transfers.subscribe();

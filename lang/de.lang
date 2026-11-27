@@ -278,6 +278,7 @@ settings.secrets.keyring.windows = Windows-Anmeldeinformationsverwaltung
 settings.secrets.vault = Verschlüsselt mit Master-Passwort
 settings.secrets.change = Master-Passwort ändern
 settings.secrets.hint = Passwörter werden nie im Klartext gespeichert. Mit Master-Passwort liegen sie in einer verschlüsselten Datei, die du einmal pro Sitzung entsperrst.
+settings.secrets.portable = Portabler Modus: Die Einstellungen liegen im Ordner config neben Hoplix. Nutze ein Master-Passwort, damit gespeicherte Passwörter mit diesem Ordner umziehen; der Schlüsselbund des Systems bleibt auf diesem Computer.
 secrets.switched.vault = Gespeicherte Passwörter sind jetzt durch dein Master-Passwort geschützt.
 secrets.switched.keyring = Gespeicherte Passwörter liegen jetzt im Schlüsselbund des Systems.
 secrets.leftovers = Gespeicherte Passwörter sind jetzt durch dein Master-Passwort geschützt, aber {count} konnten nicht aus dem Schlüsselbund des Systems entfernt werden.

@@ -335,19 +335,25 @@ fn passwords(app: &Hoplix) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
     if app.secret_backend == SecretBackend::Vault {
+        let label = if app.vault.is_some() || app.vault_file_exists() {
+            "settings.secrets.change"
+        } else {
+            "master.create"
+        };
         secrets = secrets.push(
-            button(text(strings.get("settings.secrets.change")))
+            button(text(strings.get(label)))
                 .style(theme::secondary_button)
                 .on_press(Message::ChangeMasterPassword),
         );
     }
-    section(
-        strings.get("settings.section.passwords"),
-        vec![
-            setting(strings.get("settings.secrets"), secrets.into()),
-            hint(strings.get("settings.secrets.hint")),
-        ],
-    )
+    let mut rows = vec![
+        setting(strings.get("settings.secrets"), secrets.into()),
+        hint(strings.get("settings.secrets.hint")),
+    ];
+    if app.services.portable {
+        rows.push(hint(strings.get("settings.secrets.portable")));
+    }
+    section(strings.get("settings.section.passwords"), rows)
 }
 
 fn editor(app: &Hoplix) -> Element<'_, Message> {
