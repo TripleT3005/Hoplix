@@ -231,6 +231,16 @@ mod tests {
     }
 
     #[test]
+    fn scp_urls_need_a_user_and_use_the_ssh_port() {
+        let target = remote("scp://demo@files.example.test/~/a%20b");
+        assert_eq!(target.protocol, Protocol::Scp);
+        assert_eq!(target.port, 22);
+        assert_eq!(target.path, RemotePath::Home("a b".to_string()));
+        assert_eq!(remote("SCP://demo@[::1]:2222/srv").port, 2222);
+        assert!(Target::parse("scp://files.example.test/srv").is_err());
+    }
+
+    #[test]
     fn site_targets_name_a_saved_site() {
         assert_eq!(
             Target::parse("site://Web%20server"),

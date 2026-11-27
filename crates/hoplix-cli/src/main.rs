@@ -1,4 +1,5 @@
 mod arguments;
+mod prompt;
 mod target;
 
 use std::collections::BTreeMap;
@@ -12,12 +13,13 @@ use hoplix_core::{
     Authentication, ChecksumMode, CompareOptions, CompareStatus, ComparedEntry, ConflictPolicy,
     ConnectionOptions, ConnectionParams, DEFAULT_PARALLELISM, Error, ErrorKind, ExportError,
     ExportFile, ExportScope, FileSystem, HostKeyTrust, JobId, JobSnapshot, JobStatus, JumpHost,
-    Keyring, LocalFileSystem, Pattern, PermissionChange, ProxyCredentials, RetryPolicy, Route,
-    Search, SecretBackend, Site, SiteExport, SiteList, SortKey, SortOrder, SpeedLimits, SyncAction,
-    SyncDirection, SyncEndpoint, SyncMode, SyncOptions, SyncPlan, TransferEvent, TransferQueue,
-    TransferRequest, TrustStore, Vault, Verification, config_dir, decrypt_export, encrypt_export,
-    jump_secret_name, mode_text, permission_text, proxy_secret_name, remove_recursive, secret_name,
-    set_permissions_with, sort_entries, unlock_vault, utc_date,
+    Keyring, LocalFileSystem, PROMPT_UNAVAILABLE, Pattern, PermissionChange, ProxyCredentials,
+    RetryPolicy, Route, Search, SecretBackend, SharedPrompter, Site, SiteExport, SiteList, SortKey,
+    SortOrder, SpeedLimits, SyncAction, SyncDirection, SyncEndpoint, SyncMode, SyncOptions,
+    SyncPlan, TransferEvent, TransferQueue, TransferRequest, TrustStore, Vault, Verification,
+    config_dir, decrypt_export, encrypt_export, jump_secret_name, mode_text, permission_text,
+    proxy_secret_name, remove_recursive, secret_name, set_permissions_with, sort_entries,
+    unlock_vault, utc_date,
 };
 
 use arguments::{Command, Invocation, Options, USAGE};
@@ -320,6 +322,11 @@ async fn transfer(
         Err(error) if error.kind() == ErrorKind::NotFound => split(target),
         Err(error) => return Err(describe(error)),
     };
+    if options.resume
+        && !(source.file_system.supports_resume() && target.file_system.supports_resume())
+    {
+        eprintln!("SCP cannot resume: existing files are copied again from the start");
+    }
     let queue = queue_for(1, options);
     queue.set_policy(if options.resume {
         ConflictPolicy::Resume
@@ -762,15 +769,23 @@ async fn connect(
         trust_store.certificates.clone_from(path);
     }
     let hops = route.jump_hosts.len() + 1;
+    let prompter =
+        prompt::is_available().then(|| Arc::new(prompt::TerminalPrompter) as SharedPrompter);
     let mut trusted: Vec<HostKeyTrust> = Vec::new();
     loop {
-        let error =
-            match hoplix_core::connect_via_with(params, route, connection, &trust_store, &trusted)
-                .await
-            {
-                Ok(file_system) => return Ok(file_system),
-                Err(error) => error,
-            };
+        let error = match hoplix_core::connect_via_prompting(
+            params,
+            route,
+            connection,
+            &trust_store,
+            &trusted,
+            prompter.clone(),
+        )
+        .await
+        {
+            Ok(file_system) => return Ok(file_system),
+            Err(error) => error,
+        };
         let (trust, notice) = next_trust(error, &trusted, hops, &params.host, options)?;
         eprintln!("{notice}");
         trusted.push(trust);
@@ -854,7 +869,7 @@ fn jump_authentication(options: &Options) -> Result<Authentication, String> {
 fn authentication(remote: &RemoteTarget, options: &Options) -> Result<Authentication, String> {
     if options.agent {
         if !remote.protocol.supports_key_files() {
-            return Err("--agent only works with SFTP".to_string());
+            return Err("--agent only works with SFTP and SCP".to_string());
         }
         return Ok(Authentication::Agent);
     }
@@ -870,7 +885,13 @@ fn authentication(remote: &RemoteTarget, options: &Options) -> Result<Authentica
         None if remote.username == ANONYMOUS && !remote.protocol.supports_key_files() => {
             Ok(Authentication::Password(format!("{ANONYMOUS}@")))
         }
-        None => Err("sign in needs --key <file> or --password-env <name>".to_string()),
+        None if remote.protocol.uses_ssh() && prompt::is_available() => {
+            Ok(Authentication::Password(String::new()))
+        }
+        None => Err(
+            "sign in needs --key <file>, --agent or --password-env <name> (or a terminal that answers the server's prompts)"
+                .to_string(),
+        ),
     }
 }
 
@@ -1126,7 +1147,12 @@ fn describe_kind(error: &hoplix_core::Error) -> String {
         ErrorKind::AlreadyExists => format!("already exists: {detail}"),
         ErrorKind::DirectoryNotEmpty => format!("folder is not empty (use rm -r): {detail}"),
         ErrorKind::ConnectionFailed => format!("connection failed: {detail}"),
-        ErrorKind::AuthenticationFailed => format!("sign-in failed for {detail}"),
+        ErrorKind::AuthenticationFailed => match detail.strip_suffix(PROMPT_UNAVAILABLE) {
+            Some(host) => format!(
+                "sign-in failed for {host}the server asks for input such as a one-time code, but stdin is not a terminal. Run hoplix-cli in a terminal to answer"
+            ),
+            None => format!("sign-in failed for {detail}"),
+        },
         ErrorKind::InvalidKey => format!("the key file could not be read: {detail}"),
         ErrorKind::UnknownHostKey => format!("unknown server key: {detail}"),
         ErrorKind::UntrustedCertificate => format!("untrusted certificate: {detail}"),
