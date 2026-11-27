@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::key_value::{self, Section};
 use crate::sites::write_atomically;
-use crate::{Authentication, ConnectionParams, Protocol, SiteAuth, SiteJump, SiteProxy};
+use crate::{Authentication, ConnectionParams, Protocol, S3Options, SiteAuth, SiteJump, SiteProxy};
 
 // Constants
 
@@ -24,6 +24,7 @@ pub struct RecentConnection {
     pub key_path: String,
     pub jump: Option<SiteJump>,
     pub proxy: Option<SiteProxy>,
+    pub s3: S3Options,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -53,7 +54,18 @@ impl RecentConnection {
             key_path,
             jump: None,
             proxy: None,
+            s3: S3Options::default(),
         }
+    }
+
+    pub fn with_s3(mut self, options: &S3Options) -> Self {
+        if self.protocol.is_s3() {
+            self.s3 = S3Options {
+                session_token: None,
+                ..options.clone()
+            };
+        }
+        self
     }
 
     pub fn with_route(mut self, jump: Option<SiteJump>, proxy: Option<SiteProxy>) -> Self {
@@ -76,6 +88,9 @@ impl RecentConnection {
         } else {
             format!(":{}", self.port)
         };
+        if self.protocol.is_s3() {
+            return format!("s3://{} @ {}{port}", self.s3.bucket, self.host);
+        }
         format!(
             "{}://{}@{}{port}",
             self.protocol.scheme(),
@@ -96,7 +111,9 @@ impl RecentConnection {
         let protocol = section
             .get("protocol")
             .and_then(|scheme| Protocol::ALL.into_iter().find(|p| p.scheme() == scheme))?;
-        let host = section.get("host").filter(|host| !host.is_empty())?;
+        let host = section
+            .get("host")
+            .filter(|host| !host.is_empty() || protocol.is_s3())?;
         let auth = SiteAuth::from_key(section.get("auth").unwrap_or_default());
         Some(Self {
             protocol,
@@ -123,6 +140,11 @@ impl RecentConnection {
                 save_secret: false,
                 ..proxy
             }),
+            s3: if protocol.is_s3() {
+                S3Options::from_section(section)
+            } else {
+                S3Options::default()
+            },
         })
     }
 
@@ -139,6 +161,9 @@ impl RecentConnection {
             ("auth", self.auth.key().to_string()),
             ("key_path", self.key_path.clone()),
         ];
+        if self.protocol.is_s3() {
+            pairs.extend(self.s3.pairs());
+        }
         if let Some(jump) = &self.jump {
             pairs.extend(
                 jump.pairs()

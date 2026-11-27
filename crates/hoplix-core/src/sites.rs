@@ -7,7 +7,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use crate::key_value::{self, Section};
 use crate::options::{self, ConnectionOptions, FileNameEncoding, FtpMode};
 use crate::{
-    Bookmarks, ConnectionParams, Protocol, Route, SiteJump, SiteProxy, jump_secret_name,
+    Bookmarks, ConnectionParams, Protocol, Route, S3Options, SiteJump, SiteProxy, jump_secret_name,
     proxy_secret_name, secret_name,
 };
 
@@ -89,6 +89,14 @@ impl Site {
         } else {
             format!("/~/{}", self.remote_path)
         };
+        if self.protocol.is_s3() {
+            let path = if self.remote_path.starts_with('/') || self.remote_path.is_empty() {
+                self.remote_path.clone()
+            } else {
+                format!("/{}", self.remote_path)
+            };
+            return format!("s3://{}{path}", self.options.s3.bucket);
+        }
         format!("{}://{}{port}{path}", self.protocol.scheme(), self.host)
     }
 
@@ -186,6 +194,11 @@ impl Site {
                 .get("ftp_encoding")
                 .and_then(FileNameEncoding::from_key)
                 .unwrap_or_default(),
+            s3: if protocol.is_s3() {
+                S3Options::from_section(section)
+            } else {
+                S3Options::default()
+            },
         };
         Some(Self {
             id,
@@ -249,6 +262,9 @@ impl Site {
                     .unwrap_or_default(),
             ),
         ];
+        if self.protocol.is_s3() {
+            pairs.extend(self.options.s3.pairs());
+        }
         if let Some(jump) = &self.jump {
             pairs.extend(jump.pairs());
         }
@@ -541,11 +557,35 @@ mod tests {
             ftp_mode: FtpMode::Active,
             ftp_external_ip: false,
             ftp_encoding: FileNameEncoding::Windows1252,
+            s3: S3Options::default(),
         };
         ftp.max_transfers = Some(1);
         list.upsert(ftp.clone());
         let parsed = SiteList::parse(&list.to_text());
         assert_eq!(parsed.get(&ftp.id), Some(&ftp));
+        assert!(!list.to_text().contains("s3_bucket"));
+    }
+
+    #[test]
+    fn s3_sites_keep_bucket_and_endpoint_settings() {
+        let mut list = SiteList::default();
+        let mut s3 = site("Storage", "");
+        s3.protocol = Protocol::S3;
+        s3.host = "s3.example.test".to_string();
+        s3.port = 9000;
+        s3.username = "demo-access".to_string();
+        s3.remote_path = "/backups".to_string();
+        s3.options.s3 = S3Options {
+            bucket: "demo-bucket".to_string(),
+            region: "eu-central-1".to_string(),
+            path_style: true,
+            plain_http: true,
+            session_token: None,
+        };
+        list.upsert(s3.clone());
+        let parsed = SiteList::parse(&list.to_text());
+        assert_eq!(parsed.get(&s3.id), Some(&s3));
+        assert_eq!(s3.address(), "s3://demo-bucket/backups");
     }
 
     #[test]

@@ -21,7 +21,8 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin> Duplex for T {}
 
 pub(crate) type Stream = Box<dyn Duplex>;
 
-pub(crate) type Connector = Arc<dyn Fn() -> BoxFuture<'static, crate::Result<Stream>> + Send + Sync>;
+pub(crate) type Connector =
+    Arc<dyn Fn() -> BoxFuture<'static, crate::Result<Stream>> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Request {
@@ -462,7 +463,8 @@ mod tests {
 
     #[tokio::test]
     async fn truncated_and_oversized_bodies_fail() {
-        let (_, mut body) = respond(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nshort", false).await;
+        let (_, mut body) =
+            respond(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nshort", false).await;
         let error = body.read_all(100).await.expect_err("accepted");
         assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
 
@@ -473,7 +475,11 @@ mod tests {
         .await;
         assert!(body.read_all(100).await.is_err());
 
-        let (_, mut body) = respond(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789", false).await;
+        let (_, mut body) = respond(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789",
+            false,
+        )
+        .await;
         assert!(body.read_all(4).await.is_err());
     }
 
@@ -506,7 +512,11 @@ mod tests {
 
     #[tokio::test]
     async fn broken_heads_are_refused() {
-        for raw in [&b"garbage\r\n\r\n"[..], b"HTTP/1.1 abc OK\r\n\r\n", b"HTTP/1.1 200"] {
+        for raw in [
+            &b"garbage\r\n\r\n"[..],
+            b"HTTP/1.1 abc OK\r\n\r\n",
+            b"HTTP/1.1 200",
+        ] {
             let (client, mut server) = tokio::io::duplex(1024);
             let raw = raw.to_vec();
             tokio::spawn(async move {

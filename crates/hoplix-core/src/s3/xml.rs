@@ -206,11 +206,11 @@ mod tests {
 
     #[test]
     fn text_is_escaped_for_requests() {
-        assert_eq!(
-            escape("a<b>&\"c'\r"),
-            "a&lt;b&gt;&amp;&quot;c&apos;&#13;"
-        );
+        assert_eq!(escape("a<b>&\"c'\r"), "a&lt;b&gt;&amp;&quot;c&apos;&#13;");
         let document = format!("<Key>{}</Key>", escape("x & <y>"));
-        assert_eq!(parse(&document).map(|root| root.text), Some("x & <y>".to_string()));
+        assert_eq!(
+            parse(&document).map(|root| root.text),
+            Some("x & <y>".to_string())
+        );
     }
 }

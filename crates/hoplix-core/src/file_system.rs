@@ -42,6 +42,10 @@ pub trait FileSystem: Debug + Send + Sync {
 
     fn rename(&self, from: &str, to: &str) -> BoxFuture<'_, Result<()>>;
 
+    fn remove_tree(&self, _path: &str) -> Option<BoxFuture<'_, Result<()>>> {
+        None
+    }
+
     fn open_read(&self, path: &str, offset: u64) -> BoxFuture<'_, Result<Reader>>;
 
     fn open_write(&self, path: &str, offset: u64) -> BoxFuture<'_, Result<Writer>>;
@@ -93,6 +97,9 @@ pub trait FileSystem: Debug + Send + Sync {
 // Operations
 
 pub async fn remove_recursive(file_system: &dyn FileSystem, path: &str) -> Result<()> {
+    if let Some(removal) = file_system.remove_tree(path) {
+        return removal.await;
+    }
     let root = file_system.metadata(path).await?;
     if !root.is_directory() || root.is_link {
         return file_system.remove_file(path).await;

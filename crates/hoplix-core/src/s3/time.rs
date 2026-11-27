@@ -57,8 +57,12 @@ pub(crate) fn parse_http_date(text: &str) -> Option<i64> {
     parts.next()?;
     let day: u32 = parts.next()?.parse().ok()?;
     let month = parts.next()?;
-    let month = u32::try_from(MONTHS.iter().position(|name| name.eq_ignore_ascii_case(month))?)
-        .ok()?
+    let month = u32::try_from(
+        MONTHS
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(month))?,
+    )
+    .ok()?
         + 1;
     let year: i64 = parts.next()?.parse().ok()?;
     clock_seconds(year, month, day, parts.next()?)
@@ -82,7 +86,9 @@ fn clock_seconds(year: i64, month: u32, day: u32, time: &str) -> Option<i64> {
     if hours > 23 || minutes > 59 || seconds > 60 {
         return None;
     }
-    Some(days_from_civil(year, month, day) * SECONDS_PER_DAY + hours * 3600 + minutes * 60 + seconds)
+    Some(
+        days_from_civil(year, month, day) * SECONDS_PER_DAY + hours * 3600 + minutes * 60 + seconds,
+    )
 }
 
 // Calendar
@@ -92,9 +98,8 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let era = year.div_euclid(400);
     let year_of_era = year.rem_euclid(400);
     let month = i64::from(month);
-    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5
-        + i64::from(day)
-        - 1;
+    let day_of_year =
+        (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + i64::from(day) - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
 }
@@ -148,7 +153,12 @@ mod tests {
             parse_http_date("Sun, 15 Mar 2026 13:00:00 GMT"),
             Some(MARCH_15)
         );
-        for text in ["", "2026-13-15T13:00:00Z", "2026-03-15", "2026-03-15T25:00:00Z"] {
+        for text in [
+            "",
+            "2026-13-15T13:00:00Z",
+            "2026-03-15",
+            "2026-03-15T25:00:00Z",
+        ] {
             assert_eq!(parse_iso8601(text), None, "{text}");
         }
         assert_eq!(parse_http_date("Sun, 15 Foo 2026 13:00:00 GMT"), None);
