@@ -39,6 +39,7 @@ pub enum Field {
     Protocol(Protocol),
     Host(String),
     Port(String),
+    BasePath(String),
     Username(String),
     Method(AuthMethod),
     Password(String),
@@ -56,6 +57,7 @@ pub struct ConnectForm {
     pub protocol: Protocol,
     pub host: String,
     pub port: String,
+    pub base_path: String,
     pub username: String,
     pub method: AuthMethod,
     pub password: String,
@@ -125,6 +127,7 @@ impl ConnectForm {
                     self.port = port;
                 }
             }
+            Field::BasePath(path) => self.base_path = path,
             Field::Username(username) => self.username = username,
             Field::Method(method) => self.method = method,
             Field::Password(password) => {
@@ -159,7 +162,7 @@ impl ConnectForm {
         }
     }
 
-    fn target(&self) -> (Protocol, String, String, String, AuthMethod, String) {
+    fn target(&self) -> (Protocol, String, String, String, AuthMethod, String, String) {
         (
             self.protocol,
             self.host.trim().to_string(),
@@ -167,7 +170,16 @@ impl ConnectForm {
             self.username.trim().to_string(),
             self.effective_method(),
             self.key_path.trim().to_string(),
+            self.effective_base_path(),
         )
+    }
+
+    pub fn effective_base_path(&self) -> String {
+        if self.protocol.is_webdav() {
+            self.base_path.trim().to_string()
+        } else {
+            String::new()
+        }
     }
 
     pub fn fill_from_site(&mut self, site: &Site) {
@@ -179,6 +191,7 @@ impl ConnectForm {
             } else {
                 site.port.to_string()
             },
+            base_path: site.options.base_path.clone(),
             username: site.username.clone(),
             method: AuthMethod::from_site_auth(site.effective_auth()),
             key_path: site.key_path.clone(),
@@ -199,6 +212,7 @@ impl ConnectForm {
             } else {
                 recent.port.to_string()
             },
+            base_path: recent.base_path.clone(),
             username: recent.username.clone(),
             method: if recent.protocol.supports_key_files() {
                 AuthMethod::from_site_auth(recent.auth)
@@ -308,6 +322,7 @@ impl ConnectForm {
                 self.jump_settings().ok().flatten(),
                 self.proxy_settings().ok().flatten(),
             )
+            .with_base_path(&self.base_path)
             .with_s3(&self.s3.options())
     }
 

@@ -10,6 +10,7 @@ use iced::{Alignment, Element, Length};
 
 use crate::app::{Hoplix, Message};
 use crate::edits::EditMessage;
+use crate::file_list::{ListMessage, OptionalColumn};
 use crate::i18n::Strings;
 use crate::local_time;
 use crate::preview::{LIMIT_CHOICES, PreviewMessage};
@@ -130,6 +131,25 @@ fn general(app: &Hoplix) -> Element<'_, Message> {
                 })
                 .width(PICKER_WIDTH)
                 .into(),
+            ),
+            checkbox_row(
+                checkbox(app.settings.show_permissions)
+                    .label(strings.get("settings.column.permissions"))
+                    .on_toggle(|shown| {
+                        Message::List(ListMessage::ColumnToggled(
+                            OptionalColumn::Permissions,
+                            shown,
+                        ))
+                    })
+                    .into(),
+            ),
+            checkbox_row(
+                checkbox(app.settings.show_owner)
+                    .label(strings.get("settings.column.owner"))
+                    .on_toggle(|shown| {
+                        Message::List(ListMessage::ColumnToggled(OptionalColumn::Owner, shown))
+                    })
+                    .into(),
             ),
         ],
     )
@@ -335,19 +355,25 @@ fn passwords(app: &Hoplix) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
     if app.secret_backend == SecretBackend::Vault {
+        let label = if app.vault.is_some() || app.vault_file_exists() {
+            "settings.secrets.change"
+        } else {
+            "master.create"
+        };
         secrets = secrets.push(
-            button(text(strings.get("settings.secrets.change")))
+            button(text(strings.get(label)))
                 .style(theme::secondary_button)
                 .on_press(Message::ChangeMasterPassword),
         );
     }
-    section(
-        strings.get("settings.section.passwords"),
-        vec![
-            setting(strings.get("settings.secrets"), secrets.into()),
-            hint(strings.get("settings.secrets.hint")),
-        ],
-    )
+    let mut rows = vec![
+        setting(strings.get("settings.secrets"), secrets.into()),
+        hint(strings.get("settings.secrets.hint")),
+    ];
+    if app.services.portable {
+        rows.push(hint(strings.get("settings.secrets.portable")));
+    }
+    section(strings.get("settings.section.passwords"), rows)
 }
 
 fn editor(app: &Hoplix) -> Element<'_, Message> {

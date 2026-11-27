@@ -235,8 +235,25 @@ fn change_permissions(path: &str, _mode: u32) -> Result<()> {
     Err(Error::new(ErrorKind::Unsupported, path))
 }
 
+#[cfg(unix)]
+fn unix_details(metadata: Option<&fs::Metadata>) -> (Option<u32>, Option<String>) {
+    use std::os::unix::fs::MetadataExt;
+    metadata.map_or((None, None), |metadata| {
+        (
+            Some(metadata.mode() & crate::PERMISSION_BITS),
+            Some(metadata.uid().to_string()),
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn unix_details(_metadata: Option<&fs::Metadata>) -> (Option<u32>, Option<String>) {
+    (None, None)
+}
+
 fn entry_from(name: String, is_link: bool, metadata: Option<fs::Metadata>) -> Entry {
     let is_directory = metadata.as_ref().is_some_and(fs::Metadata::is_dir);
+    let (permissions, owner) = unix_details(metadata.as_ref());
     Entry {
         name,
         kind: if is_directory {
@@ -250,6 +267,8 @@ fn entry_from(name: String, is_link: bool, metadata: Option<fs::Metadata>) -> En
             .map(fs::Metadata::len),
         modified: metadata.and_then(|metadata| metadata.modified().ok()),
         is_link,
+        permissions,
+        owner,
     }
 }
 

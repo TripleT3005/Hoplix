@@ -223,6 +223,8 @@ fn entry(name: &str, object: Option<&ObjectInfo>) -> Entry {
         size: object.map(|object| object.size),
         modified: object.and_then(|object| object.modified),
         is_link: false,
+        permissions: None,
+        owner: None,
     }
 }
 

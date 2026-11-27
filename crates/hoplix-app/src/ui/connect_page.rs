@@ -218,6 +218,8 @@ pub fn connection_fields<'a>(
                     Protocol::Ftp => "connect.protocol.ftp",
                     Protocol::FtpsExplicit => "connect.protocol.ftpes",
                     Protocol::FtpsImplicit => "connect.protocol.ftps",
+                    Protocol::WebDav => "connect.protocol.dav",
+                    Protocol::WebDavs => "connect.protocol.davs",
                     Protocol::S3 => "connect.protocol.s3",
                 })
                 .to_string(),
@@ -318,8 +320,27 @@ pub fn connection_fields<'a>(
         }
     }
 
+    if form.protocol.is_webdav() {
+        fields.insert(
+            2,
+            setting(
+                strings.get("connect.base_path"),
+                input(
+                    strings.get("connect.base_path.placeholder"),
+                    &form.base_path,
+                    Field::BasePath,
+                )
+                .into(),
+            ),
+        );
+    }
     if !form.protocol.is_encrypted() {
-        fields.push(ui::warning(strings.get("connect.unencrypted").to_string()));
+        let key = if form.protocol.is_webdav() {
+            "connect.unencrypted.dav"
+        } else {
+            "connect.unencrypted"
+        };
+        fields.push(ui::warning(strings.get(key).to_string()));
     }
     if form.protocol.supports_key_files() {
         fields.push(setting(

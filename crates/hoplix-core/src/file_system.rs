@@ -50,6 +50,10 @@ pub trait FileSystem: Debug + Send + Sync {
 
     fn open_write(&self, path: &str, offset: u64) -> BoxFuture<'_, Result<Writer>>;
 
+    fn can_append(&self) -> bool {
+        true
+    }
+
     fn set_modified(&self, path: &str, _modified: SystemTime) -> BoxFuture<'_, Result<()>> {
         let path = path.to_string();
         Box::pin(async move { Err(Error::new(ErrorKind::Other, format!("{path}: unsupported"))) })
@@ -130,7 +134,7 @@ pub async fn copy_file(
     to: &str,
     resume: bool,
 ) -> Result<u64> {
-    let offset = if resume {
+    let offset = if resume && target.can_append() {
         match target.metadata(to).await {
             Ok(entry) => entry.size.unwrap_or(0),
             Err(error) if error.kind() == ErrorKind::NotFound => 0,

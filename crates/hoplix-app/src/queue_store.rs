@@ -109,7 +109,7 @@ impl Hoplix {
                 .connections
                 .get(&tab.id)
                 .cloned()
-                .map(Location::Direct),
+                .map(|connection| Location::Direct(Box::new(connection))),
         }
     }
 

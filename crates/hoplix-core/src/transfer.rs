@@ -1030,6 +1030,9 @@ impl TransferQueue {
             Resolution::Interrupted(signal) => return Ok(Some(Outcome::Interrupted(signal))),
             Resolution::Copy { path, offset } => (path, offset),
         };
+        if !request.target.can_append() {
+            offset = 0;
+        }
         self.change(id, |job| {
             job.partial.insert(target.to_string(), path.clone());
             if !job.snapshot.is_directory {
@@ -1099,6 +1102,9 @@ impl TransferQueue {
                     if offset > size {
                         offset = 0;
                         path = target.to_string();
+                    }
+                    if !request.target.can_append() {
+                        offset = 0;
                     }
                 }
                 Err(error) => return Err(error),

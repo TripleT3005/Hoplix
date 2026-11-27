@@ -1,0 +1,13 @@
+Package: hoplix
+Version: APP_VERSION
+Architecture: amd64
+Maintainer: TripleT3005 <97241354+TripleT3005@users.noreply.github.com>
+Installed-Size: INSTALLED_SIZE
+Depends: LINKED_LIBRARIES, libxkbcommon0, libwayland-client0, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxkbcommon-x11-0
+Recommends: libegl1, libwayland-egl1
+Section: net
+Priority: optional
+Homepage: https://github.com/TripleT3005/Hoplix
+Description: File transfer client for SFTP, FTP(S), WebDAV and S3
+ Desktop app and command line tool to browse servers, transfer files with
+ a queue, compare and synchronize folders, and manage saved sites.

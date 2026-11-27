@@ -42,6 +42,8 @@ use session::Session;
 
 const MIN_WINDOW_SIZE: iced::Size = iced::Size::new(640.0, 400.0);
 const WINDOW_ICON_SIZE: u8 = 64;
+#[cfg(target_os = "linux")]
+const APPLICATION_ID: &str = "hoplix";
 
 // Entry point
 
@@ -66,7 +68,21 @@ fn main() -> iced::Result {
             min_size: Some(MIN_WINDOW_SIZE),
             icon: icon::window_icon(WINDOW_ICON_SIZE),
             exit_on_close_request: false,
+            platform_specific: platform_window_settings(),
             ..iced::window::Settings::default()
         })
         .run()
+}
+
+#[cfg(target_os = "linux")]
+fn platform_window_settings() -> iced::window::settings::PlatformSpecific {
+    iced::window::settings::PlatformSpecific {
+        application_id: APPLICATION_ID.to_string(),
+        ..Default::default()
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn platform_window_settings() -> iced::window::settings::PlatformSpecific {
+    iced::window::settings::PlatformSpecific::default()
 }

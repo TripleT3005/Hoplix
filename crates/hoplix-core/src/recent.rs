@@ -25,6 +25,7 @@ pub struct RecentConnection {
     pub jump: Option<SiteJump>,
     pub proxy: Option<SiteProxy>,
     pub s3: Box<S3Options>,
+    pub base_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -55,6 +56,7 @@ impl RecentConnection {
             jump: None,
             proxy: None,
             s3: Box::default(),
+            base_path: String::new(),
         }
     }
 
@@ -65,6 +67,16 @@ impl RecentConnection {
                 ..options.clone()
             });
         }
+        self
+    }
+
+    #[must_use]
+    pub fn with_base_path(mut self, base_path: &str) -> Self {
+        self.base_path = if self.protocol.is_webdav() {
+            base_path.trim().to_string()
+        } else {
+            String::new()
+        };
         self
     }
 
@@ -91,8 +103,13 @@ impl RecentConnection {
         if self.protocol.is_s3() {
             return format!("s3://{} @ {}{port}", self.s3.bucket, self.host);
         }
+        let path = match self.base_path.trim_end_matches('/') {
+            "" => String::new(),
+            path if path.starts_with('/') => path.to_string(),
+            path => format!("/{path}"),
+        };
         format!(
-            "{}://{}@{}{port}",
+            "{}://{}@{}{port}{path}",
             self.protocol.scheme(),
             self.username,
             self.host
@@ -145,6 +162,11 @@ impl RecentConnection {
             } else {
                 Box::default()
             },
+            base_path: section
+                .get("base_path")
+                .filter(|_| protocol.is_webdav())
+                .unwrap_or_default()
+                .to_string(),
         })
     }
 
@@ -163,6 +185,9 @@ impl RecentConnection {
         ];
         if self.protocol.is_s3() {
             pairs.extend(self.s3.pairs());
+        }
+        if !self.base_path.is_empty() {
+            pairs.push(("base_path", self.base_path.clone()));
         }
         if let Some(jump) = &self.jump {
             pairs.extend(
@@ -399,5 +424,40 @@ mod tests {
         assert_eq!(parsed.entries.len(), 1);
         assert_eq!(parsed.entries[0].port, 21);
         assert!(!parsed.entries[0].uses_key_file());
+    }
+
+    #[test]
+    fn webdav_entries_keep_their_base_path() {
+        let mut dav = params(
+            "cloud.example.test",
+            Authentication::Password(test_password()),
+        );
+        dav.protocol = Protocol::WebDavs;
+        dav.port = 443;
+        let entry =
+            RecentConnection::from_params(&dav).with_base_path(" /remote.php/dav/files/demo/ ");
+        assert_eq!(entry.base_path, "/remote.php/dav/files/demo/");
+        assert_eq!(
+            entry.label(),
+            "davs://demo@cloud.example.test/remote.php/dav/files/demo"
+        );
+        let mut list = RecentList::default();
+        list.record(entry.clone());
+        assert_eq!(RecentList::parse(&list.to_text()).entries, [entry]);
+
+        let sftp = RecentConnection::from_params(&params(
+            "files.example.test",
+            Authentication::Password(test_password()),
+        ))
+        .with_base_path("/ignored");
+        assert_eq!(sftp.base_path, "");
+        let parsed = RecentList::parse(
+            "[connection]
+protocol = sftp
+host = a
+base_path = /x
+",
+        );
+        assert_eq!(parsed.entries[0].base_path, "");
     }
 }

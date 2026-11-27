@@ -30,6 +30,7 @@ pub struct ConnectionOptions {
     pub ftp_external_ip: bool,
     pub ftp_encoding: FileNameEncoding,
     pub s3: S3Options,
+    pub base_path: String,
 }
 
 // Defaults
@@ -43,6 +44,7 @@ impl Default for ConnectionOptions {
             ftp_external_ip: true,
             ftp_encoding: FileNameEncoding::default(),
             s3: S3Options::default(),
+            base_path: String::new(),
         }
     }
 }

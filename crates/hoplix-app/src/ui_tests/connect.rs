@@ -1,7 +1,7 @@
 use hoplix_core::{HostAddress, Protocol};
 use iced::keyboard::key::Named;
 
-use super::fakes::{fingerprint, password};
+use super::fakes::{fingerprint, options_used_for, password};
 use super::*;
 use crate::app::{Dialog, Page};
 use crate::connect_form::AuthMethod;
@@ -241,6 +241,53 @@ fn plain_ftp_connects_without_a_prompt() {
     assert!(harness.contains("demo@files.example.test"));
 }
 
+#[test]
+fn webdav_asks_for_a_base_path_and_remembers_it() {
+    const DAV_HOST: &str = "dav.example.test";
+    let mut harness = connect_page("webdav");
+    harness.pick("Protocol", 4);
+    assert_eq!(harness.app.connect_form.protocol, Protocol::WebDav);
+    assert!(harness.contains("WebDAV over HTTP is not encrypted"));
+    assert!(!harness.has("Sign in with"));
+    harness.fill("Server", DAV_HOST);
+    harness.fill("Base path", "/remote.php/dav/files/demo/");
+    harness.fill("User name", "demo");
+    harness.fill("Password", password());
+    harness.click("Connect");
+    assert!(harness.app.dialog.is_none());
+    assert_eq!(remote_tabs(&harness), 1);
+    let used = options_used_for(DAV_HOST).expect("no connection was made");
+    assert_eq!(used.base_path, "/remote.php/dav/files/demo/");
+    let recent = fs::read_to_string(harness.root.config().join("recent.conf")).expect("recent");
+    assert!(recent.contains("protocol = dav"));
+    assert!(recent.contains("base_path = /remote.php/dav/files/demo/"));
+    assert!(!recent.contains(password()));
+
+    harness.click("Connect");
+    harness.pick("Protocol", 5);
+    assert_eq!(harness.app.connect_form.protocol, Protocol::WebDavs);
+    assert_eq!(
+        harness.app.connect_form.base_path,
+        "/remote.php/dav/files/demo/"
+    );
+    assert!(!harness.contains("is not encrypted"));
+    harness.fill("Password", password());
+    harness.click("Connect");
+    assert!(matches!(
+        harness.app.dialog,
+        Some(Dialog::HostKey {
+            certificate: true,
+            ..
+        })
+    ));
+    harness.click("Trust once");
+    assert_eq!(remote_tabs(&harness), 2);
+
+    harness.click("Connect");
+    harness.pick("Protocol", 0);
+    assert!(!harness.has("Base path"));
+}
+
 // S3
 
 #[test]
@@ -248,7 +295,7 @@ fn s3_connections_pass_the_bucket_settings_and_keep_the_secret_out_of_recent() {
     use hoplix_core::RECENT_FILE;
 
     let mut harness = connect_page("s3");
-    harness.pick("Protocol", 4);
+    harness.pick("Protocol", 6);
     assert_eq!(harness.app.connect_form.protocol, Protocol::S3);
     assert!(harness.has("Access key ID") && harness.has("Secret access key"));
     assert!(!harness.has("Sign in with"));

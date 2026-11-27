@@ -16,6 +16,8 @@ pub struct Entry {
     pub size: Option<u64>,
     pub modified: Option<SystemTime>,
     pub is_link: bool,
+    pub permissions: Option<u32>,
+    pub owner: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -134,6 +136,8 @@ mod tests {
             size: Some(size),
             modified: None,
             is_link: false,
+            permissions: None,
+            owner: None,
         }
     }
 

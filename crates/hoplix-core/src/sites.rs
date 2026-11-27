@@ -199,6 +199,7 @@ impl Site {
             } else {
                 S3Options::default()
             },
+            base_path: text("base_path"),
         };
         Some(Self {
             id,
@@ -264,6 +265,9 @@ impl Site {
         ];
         if self.protocol.is_s3() {
             pairs.extend(self.options.s3.pairs());
+        }
+        if !self.options.base_path.is_empty() {
+            pairs.push(("base_path", self.options.base_path.clone()));
         }
         if let Some(jump) = &self.jump {
             pairs.extend(jump.pairs());
@@ -558,11 +562,19 @@ mod tests {
             ftp_external_ip: false,
             ftp_encoding: FileNameEncoding::Windows1252,
             s3: S3Options::default(),
+            base_path: String::new(),
         };
         ftp.max_transfers = Some(1);
         list.upsert(ftp.clone());
-        let parsed = SiteList::parse(&list.to_text());
+        let mut dav = site("Cloud", "");
+        dav.protocol = Protocol::WebDavs;
+        dav.options.base_path = "/remote.php/dav/files/demo/".to_string();
+        list.upsert(dav.clone());
+        let text = list.to_text();
+        assert_eq!(text.matches("base_path").count(), 1);
+        let parsed = SiteList::parse(&text);
         assert_eq!(parsed.get(&ftp.id), Some(&ftp));
+        assert_eq!(parsed.get(&dav.id), Some(&dav));
         assert!(!list.to_text().contains("s3_bucket"));
     }
 

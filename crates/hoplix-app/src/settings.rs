@@ -80,6 +80,9 @@ pub struct Settings {
     pub update_latest_version: Option<String>,
     pub update_latest_url: Option<String>,
     pub preview_limit: u32,
+    pub show_permissions: bool,
+    pub show_owner: bool,
+    pub portable_keyring: bool,
 }
 
 impl Default for Settings {
@@ -109,6 +112,9 @@ impl Default for Settings {
             update_latest_version: None,
             update_latest_url: None,
             preview_limit: DEFAULT_LIMIT_MIB,
+            show_permissions: false,
+            show_owner: false,
+            portable_keyring: false,
         }
     }
 }
@@ -328,6 +334,21 @@ impl Settings {
                         settings.preview_limit = limit;
                     }
                 }
+                "column_permissions" => {
+                    if let Ok(enabled) = value.parse::<bool>() {
+                        settings.show_permissions = enabled;
+                    }
+                }
+                "column_owner" => {
+                    if let Ok(enabled) = value.parse::<bool>() {
+                        settings.show_owner = enabled;
+                    }
+                }
+                "portable_keyring" => {
+                    if let Ok(enabled) = value.parse::<bool>() {
+                        settings.portable_keyring = enabled;
+                    }
+                }
                 _ => {}
             }
         }
@@ -400,6 +421,9 @@ impl Settings {
                 optional_text(self.update_latest_url.as_ref()),
             ),
             ("preview_limit_mib", self.preview_limit.to_string()),
+            ("column_permissions", self.show_permissions.to_string()),
+            ("column_owner", self.show_owner.to_string()),
+            ("portable_keyring", self.portable_keyring.to_string()),
         ])
     }
 
@@ -459,6 +483,9 @@ mod tests {
                 "https://github.com/TripleT3005/Hoplix/releases/tag/v1.0.0".to_string(),
             ),
             preview_limit: 0,
+            show_permissions: true,
+            show_owner: true,
+            portable_keyring: true,
         };
         assert_eq!(Settings::parse(&settings.to_text()), settings);
         assert!(settings.to_text().contains("update_check = off"));
@@ -475,7 +502,8 @@ mod tests {
              remember_recent_connections = sometimes\n\
              restore_unfinished_transfers = perhaps\nverify_checksums = always\n\
              transfer_history = yes\ntransfer_history_limit = 0\n\
-             update_latest_version = 1.0\nupdate_latest_url = https://example.com/\n",
+             update_latest_version = 1.0\nupdate_latest_url = https://example.com/\n\
+             column_permissions = yes\ncolumn_owner = 1\nportable_keyring = maybe\n",
         );
         assert_eq!(settings, Settings::default());
         let settings =

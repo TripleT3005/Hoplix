@@ -8,6 +8,7 @@ mod error;
 mod file_system;
 mod ftp;
 mod history;
+mod http;
 pub mod key_value;
 pub mod language;
 mod local;
@@ -30,6 +31,7 @@ mod ssh_agent;
 mod sync;
 mod transfer;
 pub mod update;
+mod webdav;
 
 #[cfg(test)]
 mod test_support;
@@ -60,7 +62,10 @@ pub use options::{
     ConnectionOptions, FileNameEncoding, FtpMode, MAX_TIMEOUT_SECONDS, seconds_from_text,
     seconds_text,
 };
-pub use paths::{TrustStore, config_dir};
+pub use paths::{
+    PORTABLE_CONFIG_DIR, PORTABLE_MARKER, TrustStore, config_dir, has_portable_marker, is_portable,
+    portable_dir, resolve_config_dir,
+};
 pub use properties::{
     FolderSize, PERMISSION_BITS, PermissionChange, Properties, WindowsAttributes, folder_size,
     mode_text, parse_mode, parse_permission_text, permission_text, set_permissions_with,
@@ -98,3 +103,4 @@ pub use transfer::{
     ResumePoint, RetryPolicy, SiteLimit, SpeedLimits, TransferDirection, TransferEvent,
     TransferQueue, TransferRequest,
 };
+pub use webdav::WebDavFileSystem;

@@ -190,6 +190,8 @@ mod tests {
             size: Some(1),
             modified: None,
             is_link: false,
+            permissions: None,
+            owner: None,
         }
     }
 
