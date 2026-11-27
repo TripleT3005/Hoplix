@@ -95,7 +95,7 @@ pub(crate) fn parse_record(line: &str) -> io::Result<Record> {
             let mode = parse_mode(parts.next().unwrap_or_default())?;
             let size = parse_number(parts.next().unwrap_or_default())?;
             let name = parts.next().unwrap_or_default().to_string();
-            if !is_valid_name(&name) || name.contains('\n') {
+            if name.is_empty() || name == "." || name == ".." || name.contains('/') {
                 return Err(protocol_error(format!("unexpected file name {name:?}")));
             }
             Ok(if kind == 'C' {
@@ -459,7 +459,7 @@ pub(crate) async fn receive_tree<S: AsyncRead + AsyncWrite + Unpin>(
                 if directories.len() > MAX_DEPTH {
                     return Err(protocol_error("folders nested too deeply"));
                 }
-                let path = current.join(&name);
+                let path = current.join(local_target(&name)?);
                 tokio::fs::create_dir_all(&path).await?;
                 directories.push(path);
                 summary.directories += 1;
@@ -474,7 +474,7 @@ pub(crate) async fn receive_tree<S: AsyncRead + AsyncWrite + Unpin>(
                 ack(stream).await?;
             }
             Record::File { size, name, .. } => {
-                let path = current.join(&name);
+                let path = current.join(local_target(&name)?);
                 let mut file = tokio::fs::File::create(&path).await?;
                 ack(stream).await?;
                 let copied = tokio::io::copy(&mut (&mut *stream).take(size), &mut file).await?;
@@ -497,6 +497,14 @@ pub(crate) async fn receive_tree<S: AsyncRead + AsyncWrite + Unpin>(
         return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
     }
     Ok(summary)
+}
+
+fn local_target(name: &str) -> io::Result<&str> {
+    if is_valid_name(name) && !name.contains(['\n', '\r', ':']) {
+        Ok(name)
+    } else {
+        Err(protocol_error(format!("unusable file name {name:?}")))
+    }
 }
 
 fn local_mode(metadata: &std::fs::Metadata) -> u32 {
@@ -642,7 +650,6 @@ mod tests {
             "",
             "C644 1 x",
             "C0644 -1 x",
-            "C0644 1 ../x",
             "C0644 1 a/b",
             "C0644 1 ..",
             "C0644 1 ",
@@ -653,6 +660,10 @@ mod tests {
         ] {
             assert!(parse_record(line).is_err(), "{line:?}");
         }
+        assert!(parse_record("C0644 1 a\\M-C").is_ok());
+        assert!(local_target("a\\M-C").is_err());
+        assert!(local_target("../x").is_err());
+        assert_eq!(local_target("Grüße 'x'").ok(), Some("Grüße 'x'"));
         assert_eq!(wire_name("a\nb/c"), "a_b_c");
         assert_eq!(wire_name(".."), "file");
         assert_eq!(wire_name("it's"), "it's");
