@@ -7,6 +7,7 @@ mod file_list;
 mod history;
 mod palette;
 mod preview;
+mod prompts;
 mod queue;
 mod routes;
 mod secrets;
@@ -182,6 +183,7 @@ impl Harness {
             update_source: fakes::update_source(Arc::clone(&updates)),
             update_delay: Duration::ZERO,
             preview_delay: Duration::ZERO,
+            prompts: crate::prompts::PromptBroker::default(),
         };
         let (app, task) = Hoplix::load(Some(root.config()), services);
         let transfer_events = app.transfers.subscribe();

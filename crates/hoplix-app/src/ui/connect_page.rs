@@ -272,6 +272,9 @@ pub fn connection_fields<'a>(
     if !form.protocol.is_encrypted() {
         fields.push(ui::warning(strings.get("connect.unencrypted").to_string()));
     }
+    if form.protocol == Protocol::Scp {
+        fields.push(hint(strings.get("connect.scp_hint")));
+    }
     if form.protocol.supports_key_files() {
         fields.push(setting(
             strings.get("connect.method"),

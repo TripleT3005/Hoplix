@@ -14,6 +14,7 @@ mod icon;
 mod local_time;
 mod opener;
 mod preview;
+mod prompts;
 mod properties;
 mod queue_store;
 mod recent_actions;

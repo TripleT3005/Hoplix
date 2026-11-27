@@ -1,5 +1,5 @@
 use hoplix_core::{
-    Bookmarks, ConnectionOptions, FileNameEncoding, FtpMode, MAX_SITE_TRANSFERS, Protocol, Site,
+    Bookmarks, ConnectionOptions, FileNameEncoding, FtpMode, MAX_SITE_TRANSFERS, Site,
     normalize_folder, seconds_from_text, seconds_text,
 };
 use iced::widget::text_editor;
@@ -249,10 +249,7 @@ impl SiteForm {
             .proxy_settings()
             .map_err(SiteFormError::Connection)?;
         let (options, max_transfers) = self.options.to_options()?;
-        if proxy.is_some()
-            && params.protocol != Protocol::Sftp
-            && options.ftp_mode == FtpMode::Active
-        {
+        if proxy.is_some() && !params.protocol.uses_ssh() && options.ftp_mode == FtpMode::Active {
             return Err(SiteFormError::ActiveModeWithProxy);
         }
         let notes = self.notes.text();
@@ -503,7 +500,7 @@ mod tests {
     #[test]
     fn connect_forms_become_new_sites() {
         let mut connection = ConnectForm::default();
-        connection.apply(Field::Protocol(Protocol::FtpsExplicit));
+        connection.apply(Field::Protocol(hoplix_core::Protocol::FtpsExplicit));
         connection.apply(Field::Host("ftp.example.test".to_string()));
         connection.apply(Field::Username("demo".to_string()));
         let password = test_password();
@@ -513,7 +510,7 @@ mod tests {
         let form = SiteForm::from_connection(&target, &connection);
         let (saved, secret) = form.to_site().expect("valid");
         assert_eq!(saved.id, target.id);
-        assert_eq!(saved.protocol, Protocol::FtpsExplicit);
+        assert_eq!(saved.protocol, hoplix_core::Protocol::FtpsExplicit);
         assert_eq!(saved.port, 21);
         assert!(saved.save_secrets);
         assert_eq!(secret.main, Some(password));

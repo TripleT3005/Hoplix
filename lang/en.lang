@@ -62,6 +62,8 @@ error.host_key_changed = Warning: the server key has changed ({detail}). Someone
 error.agent_missing = No SSH agent is running for {target}. Start the OpenSSH agent or Pageant, or choose another sign-in method.
 error.agent_empty = The SSH agent holds no keys for {target}. Add your key to the agent, for example with ssh-add, and try again.
 error.agent_rejected = {target} accepted none of the keys in the SSH agent.
+error.prompt_cancelled = The sign-in to {target} was cancelled.
+error.prompt_unavailable = {target} asks for more sign-in details, but nobody can answer here.
 error.at_hop = At {hop}: {detail}
 
 # Status
@@ -82,6 +84,7 @@ connect.protocol.ftp = FTP (unencrypted)
 connect.protocol.ftpes = FTPS (explicit TLS)
 connect.protocol.ftps = FTPS (implicit TLS)
 connect.protocol.scp = SCP (SSH, no resume)
+connect.scp_hint = SCP needs a POSIX shell with GNU ls on the server and cannot resume interrupted transfers. Prefer SFTP where the server offers it.
 connect.unencrypted = FTP is not encrypted: your password and all files are sent in plain text and can be read on the way. Use SFTP or FTPS if the server supports it.
 connect.host = Server
 connect.port = Port
@@ -132,6 +135,12 @@ hostkey.always = Always trust
 hostkey.cancel = Cancel
 hostkey.jump_title = Unknown jump host
 hostkey.jump_text = Hoplix has not connected to the jump host {host} before. Only continue if this fingerprint matches the jump host's key:
+
+# Sign-in prompts
+prompt.title = {host} asks for sign-in details
+prompt.jump_title = The jump host {host} asks for sign-in details
+prompt.confirm = Sign in
+prompt.hint = The server asks these questions, for example for a one-time code. Hoplix does not save the answers.
 
 # Certificates
 certificate.title = Untrusted certificate
