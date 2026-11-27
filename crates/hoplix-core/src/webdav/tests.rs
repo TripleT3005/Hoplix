@@ -697,3 +697,61 @@ async fn closed_connections_are_reopened() {
     assert_eq!(server.requests().len(), 5);
     assert_eq!(server.connections(), 5);
 }
+
+#[tokio::test]
+async fn unlisted_server_roots_still_connect() {
+    let server = mock(|request| match request.target.as_str() {
+        "/" => reply("403 Forbidden", "", ""),
+        "/dav/" => multistatus(&[("/dav/", true, 0)]),
+        _ => reply("404 Not Found", "", ""),
+    })
+    .await;
+    let file_system = connect_to(&server, "").await.expect("connected");
+    assert_eq!(
+        file_system.list("/dav").await.map(|entries| entries.len()),
+        Ok(0)
+    );
+    let error = connect_to(&server, "/missing/")
+        .await
+        .expect_err("connected");
+    assert_eq!(error.kind(), ErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn stale_nonces_are_renewed_before_an_upload_starts() {
+    let server = mock(|request| {
+        let authorization = request.header("authorization").unwrap_or_default();
+        let challenge = |nonce: &str, stale: bool| {
+            let stale = if stale { ", stale=true" } else { "" };
+            reply(
+                "401 Unauthorized",
+                &format!(
+                    "WWW-Authenticate: Digest realm=\"r\", nonce=\"{nonce}\", qop=\"auth\"{stale}\r\n"
+                ),
+                "",
+            )
+        };
+        match request.method.as_str() {
+            _ if authorization.is_empty() => challenge("n1", false),
+            "PUT" if authorization.contains("nonce=\"n1\"") => challenge("n2", true),
+            "PUT" if request.early => Vec::new(),
+            "PUT" => reply("204 No Content", "", ""),
+            _ => root("/"),
+        }
+    })
+    .await;
+    let file_system = connect_to(&server, "/").await.expect("connected");
+    let mut writer = file_system.open_write("/a.txt", 0).await.expect("opened");
+    writer.write_all(b"hello").await.expect("written");
+    writer.shutdown().await.expect("finished");
+    let put = server
+        .requests()
+        .into_iter()
+        .find(|request| request.method == "PUT")
+        .expect("no upload");
+    assert!(
+        put.header("authorization")
+            .is_some_and(|value| value.contains("nonce=\"n2\""))
+    );
+    assert_eq!(put.body, b"hello");
+}

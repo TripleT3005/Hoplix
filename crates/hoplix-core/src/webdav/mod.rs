@@ -102,9 +102,13 @@ impl WebDavFileSystem {
             owncloud: false,
         };
         let root = file_system.base.clone();
-        let resources = file_system
+        let probe = file_system
             .propfind(&file_system.collection_target("/"), "0", PROBE, &root)
-            .await?;
+            .await;
+        let resources = match probe {
+            Err(error) if root == "/" && is_unlisted_root(&error) => return Ok(file_system),
+            probe => probe?,
+        };
         let first = resources
             .first()
             .ok_or_else(|| Error::new(ErrorKind::NotFound, root.clone()))?;
@@ -517,6 +521,13 @@ fn decode_path(text: &str) -> String {
     }
     String::from_utf8(decoded)
         .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+}
+
+fn is_unlisted_root(error: &Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::PermissionDenied | ErrorKind::NotFound | ErrorKind::Unsupported
+    )
 }
 
 fn range_start(head: &Head) -> Option<u64> {
