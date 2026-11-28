@@ -317,6 +317,7 @@ jobs:
           rpm -qlp "$rpm" | grep -q '^/usr/share/icons/hicolor/256x256/apps/hoplix.png$'
           rpm -qlp "$rpm" | grep -q '^/usr/share/hoplix/lang/de.lang$'
           rpm -qlp "$rpm" | grep -q '^/usr/share/doc/hoplix/THIRD-PARTY-LICENSES.txt$'
+          rm -f /etc/dpkg/dpkg.cfg.d/excludes
           apt-get install -y "./$deb"
           test -x /usr/bin/hoplix
           test -f /usr/share/applications/hoplix.desktop
