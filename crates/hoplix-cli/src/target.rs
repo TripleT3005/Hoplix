@@ -53,6 +53,9 @@ impl Target {
             Some(index) => (&rest[..index], &rest[index..]),
             None => (rest, ""),
         };
+        if protocol.is_s3() {
+            return Self::parse_s3(text, authority, path);
+        }
         let (username, address) = match authority.rsplit_once('@') {
             Some((username, address)) => (decode(username)?, address),
             None if !protocol.supports_key_files() => (ANONYMOUS.to_string(), authority),
@@ -72,6 +75,33 @@ impl Target {
             port,
             username,
             path,
+        }))
+    }
+}
+
+impl Target {
+    fn parse_s3(text: &str, bucket: &str, path: &str) -> Result<Self, String> {
+        if bucket.contains('@') {
+            return Err(format!(
+                "do not put credentials into {text}, use --access-key and --secret-env"
+            ));
+        }
+        let bucket = decode(bucket)?;
+        if !hoplix_core::is_valid_bucket(&bucket) {
+            return Err(format!("invalid bucket name in {text}"));
+        }
+        let path = decode(path)?;
+        let path = if path.is_empty() {
+            "/".to_string()
+        } else {
+            path
+        };
+        Ok(Self::Remote(RemoteTarget {
+            protocol: Protocol::S3,
+            host: bucket,
+            port: Protocol::S3.default_port(),
+            username: String::new(),
+            path: RemotePath::Absolute(path),
         }))
     }
 }
@@ -228,6 +258,24 @@ mod tests {
         assert_eq!(target.protocol, Protocol::FtpsImplicit);
         assert_eq!(target.port, 2990);
         assert_eq!(remote("ftps://demo@files.example.test/").port, 990);
+    }
+
+    #[test]
+    fn s3_urls_name_the_bucket_and_key() {
+        let target = remote("s3://demo-bucket/backups/a%20b.txt");
+        assert_eq!(target.protocol, Protocol::S3);
+        assert_eq!(target.host, "demo-bucket");
+        assert_eq!(
+            target.path,
+            RemotePath::Absolute("/backups/a b.txt".to_string())
+        );
+        assert_eq!(
+            remote("S3://demo-bucket").path,
+            RemotePath::Absolute("/".to_string())
+        );
+        for text in ["s3://key@demo-bucket/", "s3:///path", "s3://a b/"] {
+            assert!(Target::parse(text).is_err(), "{text}");
+        }
     }
 
     #[test]

@@ -8,6 +8,6 @@ Recommends: libegl1, libwayland-egl1
 Section: net
 Priority: optional
 Homepage: https://github.com/TripleT3005/Hoplix
-Description: File transfer client for SFTP, FTP(S) and WebDAV
+Description: File transfer client for SFTP, FTP(S), WebDAV and S3
  Desktop app and command line tool to browse servers, transfer files with
  a queue, compare and synchronize folders, and manage saved sites.

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::key_value::{self, Section};
 use crate::sites::write_atomically;
-use crate::{Authentication, ConnectionParams, Protocol, SiteAuth, SiteJump, SiteProxy};
+use crate::{Authentication, ConnectionParams, Protocol, S3Options, SiteAuth, SiteJump, SiteProxy};
 
 // Constants
 
@@ -24,6 +24,7 @@ pub struct RecentConnection {
     pub key_path: String,
     pub jump: Option<SiteJump>,
     pub proxy: Option<SiteProxy>,
+    pub s3: Box<S3Options>,
     pub base_path: String,
 }
 
@@ -54,8 +55,19 @@ impl RecentConnection {
             key_path,
             jump: None,
             proxy: None,
+            s3: Box::default(),
             base_path: String::new(),
         }
+    }
+
+    pub fn with_s3(mut self, options: &S3Options) -> Self {
+        if self.protocol.is_s3() {
+            self.s3 = Box::new(S3Options {
+                session_token: None,
+                ..options.clone()
+            });
+        }
+        self
     }
 
     #[must_use]
@@ -88,6 +100,9 @@ impl RecentConnection {
         } else {
             format!(":{}", self.port)
         };
+        if self.protocol.is_s3() {
+            return format!("s3://{} @ {}{port}", self.s3.bucket, self.host);
+        }
         let path = match self.base_path.trim_end_matches('/') {
             "" => String::new(),
             path if path.starts_with('/') => path.to_string(),
@@ -113,7 +128,9 @@ impl RecentConnection {
         let protocol = section
             .get("protocol")
             .and_then(|scheme| Protocol::ALL.into_iter().find(|p| p.scheme() == scheme))?;
-        let host = section.get("host").filter(|host| !host.is_empty())?;
+        let host = section
+            .get("host")
+            .filter(|host| !host.is_empty() || protocol.is_s3())?;
         let auth = SiteAuth::from_key(section.get("auth").unwrap_or_default());
         Some(Self {
             protocol,
@@ -140,6 +157,11 @@ impl RecentConnection {
                 save_secret: false,
                 ..proxy
             }),
+            s3: if protocol.is_s3() {
+                Box::new(S3Options::from_section(section))
+            } else {
+                Box::default()
+            },
             base_path: section
                 .get("base_path")
                 .filter(|_| protocol.is_webdav())
@@ -161,6 +183,9 @@ impl RecentConnection {
             ("auth", self.auth.key().to_string()),
             ("key_path", self.key_path.clone()),
         ];
+        if self.protocol.is_s3() {
+            pairs.extend(self.s3.pairs());
+        }
         if !self.base_path.is_empty() {
             pairs.push(("base_path", self.base_path.clone()));
         }

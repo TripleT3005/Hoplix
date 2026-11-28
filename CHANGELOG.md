@@ -15,6 +15,8 @@ Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep 
 - Optional *Permissions* and *Owner* columns in the file list (*Settings → General*).
 - Search results can be copied to another tab or pane with the copy buttons or by dragging them there.
 - WebDAV over HTTPS (`davs://`) and HTTP (`dav://`) with Digest or Basic sign-in, a configurable base path (e.g. `/remote.php/dav/files/<user>/` for Nextcloud), certificate trust like FTPS and proxy support, in the app and in `hoplix-cli`; downloads continue where they stopped, interrupted uploads start again because WebDAV cannot append.
+- S3 and S3-compatible storage (MinIO, Ceph, Garage …): buckets with folders, uploads and downloads with resume, multipart uploads for large files, renaming, deleting and new folders; endpoint, region, path-style addresses and optional HTTP for local test servers.
+- `hoplix-cli` accepts `s3://bucket/path` with `--endpoint`, `--region`, `--path-style`, `--access-key`, `--secret-env` and `--session-token-env`.
 
 #### Changed
 
@@ -29,6 +31,8 @@ Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep 
 - Optionale Spalten *Berechtigungen* und *Besitzer* in der Dateiliste (*Einstellungen → Allgemein*).
 - Suchergebnisse lassen sich mit den Kopier-Buttons oder durch Ziehen in einen anderen Tab oder Bereich kopieren.
 - WebDAV über HTTPS (`davs://`) und HTTP (`dav://`) mit Digest- oder Basic-Anmeldung, einstellbarem Basispfad (z. B. `/remote.php/dav/files/<benutzer>/` bei Nextcloud), Zertifikatsvertrauen wie bei FTPS und Proxy, in der App und in `hoplix-cli`; Downloads gehen dort weiter, wo sie aufgehört haben, abgebrochene Uploads beginnen neu, weil WebDAV nicht anhängen kann.
+- S3 und S3-kompatibler Speicher (MinIO, Ceph, Garage …): Buckets mit Ordnern, Hoch- und Herunterladen mit Fortsetzen, Multipart-Uploads für große Dateien, Umbenennen, Löschen und neue Ordner; Endpunkt, Region, Adressen im Pfadstil und wahlweise HTTP für lokale Testserver.
+- `hoplix-cli` nimmt `s3://bucket/pfad` mit `--endpoint`, `--region`, `--path-style`, `--access-key`, `--secret-env` und `--session-token-env` an.
 
 #### Geändert
 

@@ -147,6 +147,7 @@ impl OptionsForm {
             ftp_mode: self.ftp_mode,
             ftp_external_ip: self.ftp_external_ip,
             ftp_encoding: self.ftp_encoding,
+            s3: hoplix_core::S3Options::default(),
             base_path: String::new(),
         };
         Ok((options, max_transfers))
@@ -249,7 +250,8 @@ impl SiteForm {
             .connection
             .proxy_settings()
             .map_err(SiteFormError::Connection)?;
-        let (mut options, max_transfers) = self.options.to_options()?;
+        let (options, max_transfers) = self.options.to_options()?;
+        let mut options = self.connection.connection_options(options);
         options.base_path = self.connection.effective_base_path();
         if proxy.is_some() && params.protocol.is_ftp() && options.ftp_mode == FtpMode::Active {
             return Err(SiteFormError::ActiveModeWithProxy);

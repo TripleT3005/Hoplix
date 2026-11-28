@@ -1020,13 +1020,14 @@ impl Hoplix {
             self.connect_form.error = Some(Error::new(ErrorKind::Other, "known_hosts"));
             return Task::none();
         };
-        let options = self
-            .connect_form
-            .site
-            .as_ref()
-            .and_then(|id| self.sites.get(id))
-            .map(|site| site.options.clone())
-            .unwrap_or_default();
+        let options = self.connect_form.connection_options(
+            self.connect_form
+                .site
+                .as_ref()
+                .and_then(|id| self.sites.get(id))
+                .map(|site| site.options.clone())
+                .unwrap_or_default(),
+        );
         let options = ConnectionOptions {
             base_path: self.connect_form.effective_base_path(),
             ..options

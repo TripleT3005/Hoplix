@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use crate::S3Options;
+
 // Constants
 
 pub const MAX_TIMEOUT_SECONDS: u64 = 3600;
@@ -27,6 +29,7 @@ pub struct ConnectionOptions {
     pub ftp_mode: FtpMode,
     pub ftp_external_ip: bool,
     pub ftp_encoding: FileNameEncoding,
+    pub s3: S3Options,
     pub base_path: String,
 }
 
@@ -40,6 +43,7 @@ impl Default for ConnectionOptions {
             ftp_mode: FtpMode::default(),
             ftp_external_ip: true,
             ftp_encoding: FileNameEncoding::default(),
+            s3: S3Options::default(),
             base_path: String::new(),
         }
     }

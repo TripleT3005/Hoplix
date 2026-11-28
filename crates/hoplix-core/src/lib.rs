@@ -20,6 +20,7 @@ mod queue_file;
 mod rate;
 mod recent;
 mod route;
+mod s3;
 mod search;
 mod secrets;
 mod sftp;
@@ -74,6 +75,7 @@ pub use queue_file::{Location, QUEUE_FILE, SavedJob, SavedQueue};
 pub use rate::RateLimiter;
 pub use recent::{MAX_RECENT, RECENT_FILE, RecentConnection, RecentList};
 pub use route::{JumpHost, Route, connect_via, connect_via_with};
+pub use s3::{S3_DEFAULT_REGION, S3FileSystem, S3Options, is_valid_bucket};
 pub use search::{NameFilter, Search, SearchBatch, SearchHit, Visited, Walk};
 pub use secrets::{
     DEFAULT_ITERATIONS, Keyring, Moved, SecretBackend, SecretSlot, SecretStore, VAULT_FILE, Vault,

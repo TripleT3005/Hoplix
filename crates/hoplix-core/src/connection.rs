@@ -17,6 +17,7 @@ pub enum Protocol {
     FtpsImplicit,
     WebDav,
     WebDavs,
+    S3,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -91,13 +92,14 @@ impl HostKeyTrust {
 }
 
 impl Protocol {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Sftp,
         Self::Ftp,
         Self::FtpsExplicit,
         Self::FtpsImplicit,
         Self::WebDav,
         Self::WebDavs,
+        Self::S3,
     ];
 
     pub fn default_port(self) -> u16 {
@@ -107,6 +109,7 @@ impl Protocol {
             Self::FtpsImplicit => 990,
             Self::WebDav => 80,
             Self::WebDavs => 443,
+            Self::S3 => 443,
         }
     }
 
@@ -118,6 +121,7 @@ impl Protocol {
             Self::FtpsImplicit => "ftps",
             Self::WebDav => "dav",
             Self::WebDavs => "davs",
+            Self::S3 => "s3",
         }
     }
 
@@ -143,10 +147,17 @@ impl Protocol {
             Self::FtpsExplicit | Self::FtpsImplicit | Self::WebDavs
         )
     }
+
+    pub fn is_s3(self) -> bool {
+        self == Self::S3
+    }
 }
 
 impl ConnectionParams {
     pub fn label(&self) -> String {
+        if self.protocol.is_s3() {
+            return self.host.clone();
+        }
         if self.port == self.protocol.default_port() {
             format!("{}@{}", self.username, self.host)
         } else {
@@ -170,6 +181,9 @@ impl ConnectionParams {
         } else {
             format!("/{}", encode_url_path(path))
         };
+        if self.protocol.is_s3() {
+            return format!("{}://{host}{port}{path}", self.protocol.scheme());
+        }
         format!(
             "{}://{}@{host}{port}{path}",
             self.protocol.scheme(),
@@ -291,18 +305,31 @@ mod tests {
         assert_eq!(url, "ftps://web%3Aadmin%40site@[::1]:2121/Gr%C3%BC%C3%9Fe");
         assert!(!url.contains(&secret) && !sftp.url("/").contains(&secret));
         assert_eq!(encode_url_path("/a:b@c/~d"), "/a:b@c/~d");
+        let mut s3 = params(443, Authentication::Password(secret.clone()));
+        s3.protocol = Protocol::S3;
+        s3.username = "demo-access".to_string();
+        s3.host = "s3.example.test".to_string();
+        assert_eq!(s3.url("/a b"), "s3://s3.example.test/a%20b");
+        assert_eq!(s3.label(), "s3.example.test");
+        assert!(!s3.url("/").contains("demo-access") && !s3.label().contains("demo-access"));
     }
 
     #[test]
     fn protocols_know_ports_and_schemes() {
         let ports: Vec<u16> = Protocol::ALL.iter().map(|p| p.default_port()).collect();
-        assert_eq!(ports, [22, 21, 21, 990, 80, 443]);
+        assert_eq!(ports, [22, 21, 21, 990, 80, 443, 443]);
         let schemes: Vec<&str> = Protocol::ALL.iter().map(|p| p.scheme()).collect();
-        assert_eq!(schemes, ["sftp", "ftp", "ftpes", "ftps", "dav", "davs"]);
+        assert_eq!(
+            schemes,
+            ["sftp", "ftp", "ftpes", "ftps", "dav", "davs", "s3"]
+        );
         assert!(!Protocol::Ftp.is_encrypted() && !Protocol::WebDav.is_encrypted());
         assert!(Protocol::WebDavs.is_encrypted() && Protocol::WebDavs.uses_tls());
         assert!(Protocol::WebDav.is_webdav() && !Protocol::WebDav.is_ftp());
         assert!(Protocol::FtpsExplicit.is_ftp() && !Protocol::Sftp.is_ftp());
+        assert!(Protocol::S3.is_s3() && Protocol::S3.is_encrypted());
+        assert!(!Protocol::S3.supports_key_files() && !Protocol::S3.uses_tls());
+        assert!(!Protocol::S3.is_ftp() && !Protocol::S3.is_webdav());
         assert!(Protocol::FtpsImplicit.is_encrypted() && Protocol::FtpsImplicit.uses_tls());
         assert!(!Protocol::Sftp.uses_tls() && Protocol::Sftp.supports_key_files());
         assert!(!Protocol::FtpsExplicit.supports_key_files());

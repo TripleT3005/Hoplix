@@ -368,7 +368,7 @@ fn connect(
             ErrorKind::UntrustedCertificate,
             ErrorKind::CertificateChanged,
         )),
-        Protocol::Ftp | Protocol::WebDav => None,
+        Protocol::Ftp | Protocol::WebDav | Protocol::S3 => None,
     };
     if let Some((file, unknown, changed)) = known {
         check_host_key(file, &params.host, params.port, trusted, unknown, changed)?;

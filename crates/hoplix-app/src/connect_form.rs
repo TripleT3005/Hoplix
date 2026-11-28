@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
 use hoplix_core::{
-    Authentication, ConnectionParams, Error, Protocol, RecentConnection, Route, Site, SiteAuth,
-    SiteJump, SiteProxy,
+    Authentication, ConnectionOptions, ConnectionParams, Error, Protocol, RecentConnection, Route,
+    Site, SiteAuth, SiteJump, SiteProxy,
 };
 
 use crate::route_form::{JumpField, JumpForm, ProxyField, ProxyForm, parse_port};
+use crate::s3_form::{S3Field, S3Form};
 
 // Types
 
@@ -29,6 +30,8 @@ pub enum FormError {
     MissingJumpKey,
     MissingProxyHost,
     InvalidProxyPort,
+    MissingBucket,
+    InvalidBucket,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +49,7 @@ pub enum Field {
     ToggleAdvanced,
     Jump(JumpField),
     Proxy(ProxyField),
+    S3(S3Field),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -68,6 +72,7 @@ pub struct ConnectForm {
     pub advanced_open: bool,
     pub jump: JumpForm,
     pub proxy: ProxyForm,
+    pub s3: S3Form,
 }
 
 impl AuthMethod {
@@ -87,13 +92,20 @@ impl FormError {
             Self::MissingJumpKey => "connect.invalid.jump_key",
             Self::MissingProxyHost => "connect.invalid.proxy_host",
             Self::InvalidProxyPort => "connect.invalid.proxy_port",
+            Self::MissingBucket => "connect.invalid.bucket",
+            Self::InvalidBucket => "connect.invalid.bucket_name",
         }
     }
 
     pub fn is_route(self) -> bool {
         !matches!(
             self,
-            Self::MissingHost | Self::InvalidPort | Self::MissingUsername | Self::MissingKey
+            Self::MissingHost
+                | Self::InvalidPort
+                | Self::MissingUsername
+                | Self::MissingKey
+                | Self::MissingBucket
+                | Self::InvalidBucket
         )
     }
 }
@@ -131,6 +143,7 @@ impl ConnectForm {
             Field::ToggleAdvanced => self.advanced_open = !self.advanced_open,
             Field::Jump(field) => self.jump.apply(field),
             Field::Proxy(field) => self.proxy.apply(field),
+            Field::S3(field) => self.s3.apply(field),
         }
         self.invalid = None;
     }
@@ -184,6 +197,7 @@ impl ConnectForm {
             key_path: site.key_path.clone(),
             site: Some(site.id.clone()),
             save_password: site.save_secrets,
+            s3: S3Form::fill(&site.options.s3),
             ..Self::default()
         };
         self.fill_route(site.jump.as_ref(), site.proxy.as_ref());
@@ -206,6 +220,7 @@ impl ConnectForm {
                 AuthMethod::Password
             },
             key_path: recent.key_path.clone(),
+            s3: S3Form::fill(&recent.s3),
             ..Self::default()
         };
         self.fill_route(recent.jump.as_ref(), recent.proxy.as_ref());
@@ -290,6 +305,35 @@ impl ConnectForm {
         })
     }
 
+    pub fn connection_options(&self, base: ConnectionOptions) -> ConnectionOptions {
+        if self.protocol.is_s3() {
+            ConnectionOptions {
+                s3: self.s3.options(),
+                ..base
+            }
+        } else {
+            base
+        }
+    }
+
+    pub fn recent_connection(&self, params: &ConnectionParams) -> RecentConnection {
+        RecentConnection::from_params(params)
+            .with_route(
+                self.jump_settings().ok().flatten(),
+                self.proxy_settings().ok().flatten(),
+            )
+            .with_base_path(&self.base_path)
+            .with_s3(&self.s3.options())
+    }
+
+    fn default_port(&self) -> u16 {
+        if self.protocol.is_s3() {
+            self.s3.options().default_port()
+        } else {
+            self.protocol.default_port()
+        }
+    }
+
     pub fn ready_to_connect(&self) -> bool {
         let main = self.effective_method() != AuthMethod::Password || !self.password.is_empty();
         let jump = !self.uses_jump()
@@ -305,11 +349,10 @@ impl ConnectForm {
 
     pub fn to_params(&self) -> Result<ConnectionParams, FormError> {
         let host = self.host.trim();
-        if host.is_empty() {
+        if host.is_empty() && !self.protocol.is_s3() {
             return Err(FormError::MissingHost);
         }
-        let port =
-            parse_port(&self.port, self.protocol.default_port()).ok_or(FormError::InvalidPort)?;
+        let port = parse_port(&self.port, self.default_port()).ok_or(FormError::InvalidPort)?;
         let username = self.username.trim();
         if username.is_empty() {
             return Err(FormError::MissingUsername);
@@ -328,6 +371,9 @@ impl ConnectForm {
             }
             AuthMethod::Agent => Authentication::Agent,
         };
+        if self.protocol.is_s3() {
+            self.s3.validate()?;
+        }
         Ok(ConnectionParams {
             protocol: self.protocol,
             host: host.to_string(),

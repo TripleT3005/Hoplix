@@ -18,6 +18,7 @@ mod properties;
 mod queue_store;
 mod recent_actions;
 mod route_form;
+mod s3_form;
 mod search;
 mod session;
 mod settings;

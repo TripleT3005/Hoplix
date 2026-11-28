@@ -1,4 +1,4 @@
-use hoplix_core::{RecentConnection, RecentList};
+use hoplix_core::RecentList;
 use iced::Task;
 
 use crate::app::{Hoplix, Message, Page};
@@ -50,13 +50,7 @@ impl Hoplix {
         let Ok(params) = self.connect_form.to_params() else {
             return;
         };
-        let form = &self.connect_form;
-        let entry = RecentConnection::from_params(&params)
-            .with_route(
-                form.jump_settings().ok().flatten(),
-                form.proxy_settings().ok().flatten(),
-            )
-            .with_base_path(&form.base_path);
+        let entry = self.connect_form.recent_connection(&params);
         self.recent.record(entry);
         self.save_recent();
     }

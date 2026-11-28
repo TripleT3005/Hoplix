@@ -65,6 +65,13 @@ pub struct JumpTarget {
     pub port: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Endpoint {
+    pub host: String,
+    pub port: Option<u16>,
+    pub plain_http: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Options {
     pub key: Option<PathBuf>,
@@ -101,6 +108,12 @@ pub struct Options {
     pub include_passwords: bool,
     pub folder: Option<String>,
     pub depth: Option<usize>,
+    pub endpoint: Option<Endpoint>,
+    pub region: Option<String>,
+    pub path_style: bool,
+    pub access_key: Option<String>,
+    pub secret_env: Option<String>,
+    pub session_token_env: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,11 +199,19 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
                 let depth = number("--depth", &value("--depth")?, 1, u32::MAX)?;
                 options.depth = Some(usize::try_from(depth).unwrap_or(usize::MAX));
             }
+            "--endpoint" => options.endpoint = Some(endpoint(&value("--endpoint")?)?),
+            "--region" => options.region = Some(value("--region")?),
+            "--path-style" => options.path_style = true,
+            "--access-key" => options.access_key = Some(value("--access-key")?),
+            "--secret-env" => options.secret_env = Some(value("--secret-env")?),
+            "--session-token-env" => {
+                options.session_token_env = Some(value("--session-token-env")?);
+            }
             "-r" | "--recursive" => recursive = true,
             "-h" | "--help" => positional.insert(0, "help".to_string()),
             "-V" | "--version" => positional.insert(0, "version".to_string()),
             "--password" | "--passphrase" | "--master-password" | "--jump-password"
-            | "--jump-passphrase" | "--proxy-password" => {
+            | "--jump-passphrase" | "--proxy-password" | "--secret" | "--session-token" => {
                 return Err(format!(
                     "{argument} is not supported, pass the name of an environment variable with {argument}-env"
                 ));
@@ -203,6 +224,7 @@ pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation,
     }
     let command = command_from(&positional, recursive)?;
     check_route(&options)?;
+    check_s3(&command, &options)?;
     if recursive
         && !matches!(
             command,
@@ -309,6 +331,89 @@ fn check_route(options: &Options) -> Result<(), String> {
         return Err("--proxy-user and --proxy-password-env belong together".to_string());
     }
     Ok(())
+}
+
+fn check_s3(command: &Command, options: &Options) -> Result<(), String> {
+    let s3_options = options.endpoint.is_some()
+        || options.region.is_some()
+        || options.path_style
+        || options.access_key.is_some()
+        || options.secret_env.is_some()
+        || options.session_token_env.is_some();
+    let targets = command.targets();
+    let s3_target = targets.iter().any(|target| match target {
+        Target::Remote(remote) => remote.protocol.is_s3(),
+        Target::Site(_) => true,
+        Target::Local(_) => false,
+    });
+    if s3_options && !s3_target {
+        return Err(
+            "--endpoint, --region, --path-style, --access-key, --secret-env and --session-token-env only work with s3:// targets"
+                .to_string(),
+        );
+    }
+    let direct = targets
+        .iter()
+        .any(|target| matches!(target, Target::Remote(remote) if remote.protocol.is_s3()));
+    if direct && (options.access_key.is_none() || options.secret_env.is_none()) {
+        return Err("s3:// targets need --access-key <id> and --secret-env <name>".to_string());
+    }
+    if options.secret_env.is_some() && options.password_env.is_some() {
+        return Err("use only one of --secret-env and --password-env".to_string());
+    }
+    Ok(())
+}
+
+impl Command {
+    pub fn targets(&self) -> Vec<&Target> {
+        match self {
+            Self::List(target)
+            | Self::Stat(target)
+            | Self::MakeDirectory(target)
+            | Self::Remove { target, .. }
+            | Self::Chmod { target, .. }
+            | Self::Find { target, .. } => vec![target],
+            Self::Copy { from, to, .. } | Self::Move { from, to } | Self::Sync { from, to, .. } => {
+                vec![from, to]
+            }
+            Self::Compare { left, right, .. } => vec![left, right],
+            Self::Help
+            | Self::Version
+            | Self::Sites
+            | Self::ExportSites(_)
+            | Self::ImportSites(_) => Vec::new(),
+        }
+    }
+}
+
+fn endpoint(text: &str) -> Result<Endpoint, String> {
+    let lower = text.trim().to_ascii_lowercase();
+    let (plain_http, rest) = if let Some(rest) = lower.strip_prefix("http://") {
+        (true, rest)
+    } else if let Some(rest) = lower.strip_prefix("https://") {
+        (false, rest)
+    } else if lower.contains("://") {
+        return Err(format!(
+            "--endpoint needs https://host[:port] or http://host[:port], got {text}"
+        ));
+    } else {
+        (false, lower.as_str())
+    };
+    let authority = rest.strip_suffix('/').unwrap_or(rest);
+    if authority.contains(['/', '@', '?', '#']) {
+        return Err(format!(
+            "--endpoint needs https://host[:port] or http://host[:port], got {text}"
+        ));
+    }
+    let (host, port) = split_host_port(authority, 0)?;
+    if host.is_empty() {
+        return Err(format!("missing host in --endpoint {text}"));
+    }
+    Ok(Endpoint {
+        host,
+        port: (port > 0).then_some(port),
+        plain_http,
+    })
 }
 
 fn jump_target(text: &str) -> Result<JumpTarget, String> {
@@ -518,6 +623,8 @@ davs://user@host/remote.php/dav/files/user/Documents. FTP URLs without a user
 sign in anonymously. WebDAV uploads cannot be resumed and start again.
 Saved sites are targets too: site://<name>/path (encode / in folder/name as %2F).
 They use the saved password or passphrase unless you pass --password-env or --key.
+S3 buckets are targets like s3://bucket/folder/file (Amazon S3 or a compatible
+server, see S3 below). Folders are key prefixes ending in /.
 
 Options:
   --key <file>              Sign in with this private key file
@@ -550,6 +657,20 @@ the jump host and proxy saved with a site):
   --proxy-user <name>       Sign in to the proxy with this user name
   --proxy-password-env <name>
                             Read the proxy password from this environment variable
+
+S3:
+  --endpoint <url>          The server: https://host[:port] (default) or
+                            http://host[:port] for local test servers only (not
+                            encrypted); default: Amazon S3 in --region
+  --region <name>           The region used for signing (default us-east-1)
+  --path-style              Address the bucket in the path (host/bucket/key)
+                            instead of the host name (bucket.host/key); most
+                            local servers such as MinIO need this
+  --access-key <id>         The access key ID
+  --secret-env <name>       Read the secret access key from this environment
+                            variable (saved S3 sites use the saved secret)
+  --session-token-env <name>
+                            Read a temporary session token from this variable
 
 Transfers:
   --resume                  Continue interrupted files (existing smaller files are
@@ -1048,5 +1169,78 @@ mod tests {
         assert!(run(&["find", "-r", "/tmp", "x"]).is_err());
         assert!(USAGE.contains("chmod [-r] <mode> <target>"));
         assert!(USAGE.contains("find <target> <pattern>"));
+    }
+
+    #[test]
+    fn s3_options_are_parsed_and_checked() {
+        let invocation = run(&[
+            "ls",
+            "s3://demo-bucket/backups",
+            "--endpoint",
+            "http://192.168.1.5:9000/",
+            "--region",
+            "eu-central-1",
+            "--path-style",
+            "--access-key",
+            "demo-access",
+            "--secret-env",
+            "DEMO_SECRET",
+            "--session-token-env",
+            "DEMO_TOKEN",
+        ])
+        .expect("valid");
+        let options = invocation.options;
+        assert_eq!(
+            options.endpoint,
+            Some(Endpoint {
+                host: "192.168.1.5".to_string(),
+                port: Some(9000),
+                plain_http: true,
+            })
+        );
+        assert_eq!(options.region.as_deref(), Some("eu-central-1"));
+        assert!(options.path_style);
+        assert_eq!(options.access_key.as_deref(), Some("demo-access"));
+        assert_eq!(options.secret_env.as_deref(), Some("DEMO_SECRET"));
+        assert_eq!(options.session_token_env.as_deref(), Some("DEMO_TOKEN"));
+        assert_eq!(
+            endpoint("S3.Example.Test"),
+            Ok(Endpoint {
+                host: "s3.example.test".to_string(),
+                port: None,
+                plain_http: false,
+            })
+        );
+        assert_eq!(
+            endpoint("https://[::1]:9443").map(|e| e.port),
+            Ok(Some(9443))
+        );
+        for text in [
+            "ftp://host",
+            "https://user@host",
+            "https://host/path",
+            "https://",
+        ] {
+            assert!(endpoint(text).is_err(), "{text}");
+        }
+
+        let error = run(&["ls", "s3://demo-bucket/"]).expect_err("accepted");
+        assert!(error.contains("--access-key"), "{error}");
+        let error = run(&["ls", "/tmp", "--region", "eu-west-1"]).expect_err("accepted");
+        assert!(error.contains("only work with s3://"), "{error}");
+        assert!(run(&["ls", "site://Storage", "--secret-env", "DEMO_SECRET"]).is_ok());
+        assert!(
+            run(&[
+                "ls",
+                "site://Storage",
+                "--secret-env",
+                "A",
+                "--password-env",
+                "B"
+            ])
+            .is_err()
+        );
+        assert!(run(&["ls", "s3://demo-bucket/", "--secret"]).is_err());
+        assert!(USAGE.contains("--path-style"));
     }
 }
