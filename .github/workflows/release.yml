@@ -312,18 +312,38 @@ jobs:
             echo "::error::$rpm does not have the version $package_version"
             exit 1
           fi
-          rpm -qpR "$rpm" | grep -q 'libxkbcommon.so.0'
-          rpm -qpR "$rpm" | grep -q 'libc.so.6'
-          rpm -qlp "$rpm" | grep -q '^/usr/share/icons/hicolor/256x256/apps/hoplix.png$'
-          rpm -qlp "$rpm" | grep -q '^/usr/share/hoplix/lang/de.lang$'
-          rpm -qlp "$rpm" | grep -q '^/usr/share/doc/hoplix/THIRD-PARTY-LICENSES.txt$'
+          requires=$(rpm -qpR "$rpm")
+          for library in libxkbcommon.so.0 libc.so.6; do
+            if ! grep -qF "$library" <<< "$requires"; then
+              echo "::error::$rpm does not require $library"
+              exit 1
+            fi
+          done
+          files=$(rpm -qlp "$rpm")
+          for file in /usr/share/icons/hicolor/256x256/apps/hoplix.png /usr/share/hoplix/lang/de.lang /usr/share/doc/hoplix/THIRD-PARTY-LICENSES.txt; do
+            if ! grep -qxF "$file" <<< "$files"; then
+              echo "::error::$rpm does not contain $file"
+              exit 1
+            fi
+          done
           rm -f /etc/dpkg/dpkg.cfg.d/excludes
           apt-get install -y "./$deb"
-          test -x /usr/bin/hoplix
-          test -f /usr/share/applications/hoplix.desktop
-          test -f /usr/share/hoplix/lang/en.lang
-          test -s /usr/share/doc/hoplix/THIRD-PARTY-LICENSES.txt
-          desktop-file-validate /usr/share/applications/hoplix.desktop
+          for file in /usr/bin/hoplix /usr/bin/hoplix-cli; do
+            if [ ! -x "$file" ]; then
+              echo "::error::The installed $deb has no executable $file"
+              exit 1
+            fi
+          done
+          for file in /usr/share/applications/hoplix.desktop /usr/share/hoplix/lang/en.lang /usr/share/doc/hoplix/THIRD-PARTY-LICENSES.txt; do
+            if [ ! -s "$file" ]; then
+              echo "::error::The installed $deb has no $file"
+              exit 1
+            fi
+          done
+          if ! desktop-file-validate /usr/share/applications/hoplix.desktop; then
+            echo "::error::The installed hoplix.desktop is not valid"
+            exit 1
+          fi
           for binary in /usr/bin/hoplix /usr/bin/hoplix-cli; do
             if ldd "$binary" | grep 'not found'; then
               echo "::error::$binary has missing libraries"
