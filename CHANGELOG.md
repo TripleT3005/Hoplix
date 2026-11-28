@@ -10,12 +10,14 @@ Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep 
 
 #### Fixed
 
+- The Linux packages (`.deb`, `.rpm`, `.tar.gz`) work again on older distributions such as Debian 12/13 and Ubuntu 22.04/24.04; 0.6.0 required glibc 2.43. They now need glibc 2.35 or newer.
 - WebDAV: sign-in works when folders on the same server use different sign-in methods (Digest, Basic) or realms.
 
 ### Deutsch
 
 #### Behoben
 
+- Die Linux-Pakete (`.deb`, `.rpm`, `.tar.gz`) laufen wieder auf älteren Distributionen wie Debian 12/13 und Ubuntu 22.04/24.04; 0.6.0 brauchte glibc 2.43. Sie benötigen jetzt glibc 2.35 oder neuer.
 - WebDAV: Die Anmeldung klappt jetzt auch, wenn Ordner auf demselben Server unterschiedliche Anmeldeverfahren (Digest, Basic) oder Bereiche verwenden.
 
 ## [0.6.0] – 2026-11-28
