@@ -358,7 +358,7 @@ fn connect(
             route: route.clone(),
         });
     let known = match params.protocol {
-        Protocol::Sftp => Some((
+        Protocol::Sftp | Protocol::Scp => Some((
             &trust_store.known_hosts,
             ErrorKind::UnknownHostKey,
             ErrorKind::HostKeyChanged,

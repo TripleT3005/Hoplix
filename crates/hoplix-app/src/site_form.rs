@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn connect_forms_become_new_sites() {
         let mut connection = ConnectForm::default();
-        connection.apply(Field::Protocol(Protocol::FtpsExplicit));
+        connection.apply(Field::Protocol(hoplix_core::Protocol::FtpsExplicit));
         connection.apply(Field::Host("ftp.example.test".to_string()));
         connection.apply(Field::Username("demo".to_string()));
         let password = test_password();
@@ -514,7 +514,7 @@ mod tests {
         let form = SiteForm::from_connection(&target, &connection);
         let (saved, secret) = form.to_site().expect("valid");
         assert_eq!(saved.id, target.id);
-        assert_eq!(saved.protocol, Protocol::FtpsExplicit);
+        assert_eq!(saved.protocol, hoplix_core::Protocol::FtpsExplicit);
         assert_eq!(saved.port, 21);
         assert!(saved.save_secrets);
         assert_eq!(secret.main, Some(password));

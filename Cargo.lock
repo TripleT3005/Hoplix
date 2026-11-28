@@ -1758,6 +1758,7 @@ version = "0.5.0"
 dependencies = [
  "hoplix-core",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

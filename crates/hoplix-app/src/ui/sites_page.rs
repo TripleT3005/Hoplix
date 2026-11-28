@@ -1,4 +1,4 @@
-use hoplix_core::{FileNameEncoding, FtpMode, Protocol, Site};
+use hoplix_core::{FileNameEncoding, FtpMode, Site};
 use iced::widget::{
     Column, Space, Text, button, checkbox, column, container, mouse_area, pick_list, row,
     scrollable, text, text_editor, text_input,
@@ -317,7 +317,7 @@ fn advanced<'a>(app: &'a Hoplix, form: &'a SiteForm) -> Element<'a, Message> {
 
 fn connection_options<'a>(strings: &'a Strings, form: &'a SiteForm) -> Vec<Element<'a, Message>> {
     let options = &form.options;
-    let keepalive_placeholder = if form.connection.protocol == Protocol::Sftp {
+    let keepalive_placeholder = if form.connection.protocol.uses_ssh() {
         strings.format(
             "sites.advanced.default_seconds",
             &[("count", &DEFAULT_SFTP_KEEPALIVE.to_string())],

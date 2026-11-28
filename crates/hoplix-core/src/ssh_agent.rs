@@ -1,4 +1,4 @@
-use russh::client::{Handle, Handler};
+use russh::client::{AuthResult, Handle, Handler};
 use russh::keys::agent::AgentIdentity;
 use russh::keys::agent::client::{AgentClient, AgentStream};
 
@@ -57,7 +57,7 @@ pub(crate) async fn authenticate<H: Handler>(
     handle: &mut Handle<H>,
     user: &str,
     label: &str,
-) -> Result<()> {
+) -> Result<AuthResult> {
     let mut answered = 0;
     let mut offered = 0;
     for mut agent in agents().await {
@@ -90,7 +90,13 @@ pub(crate) async fn authenticate<H: Handler>(
                 }
             };
             match result {
-                Ok(result) if result.success() => return Ok(()),
+                Ok(
+                    result @ (AuthResult::Success
+                    | AuthResult::Failure {
+                        partial_success: true,
+                        ..
+                    }),
+                ) => return Ok(result),
                 _ if handle.is_closed() => {
                     return Err(Error::new(
                         ErrorKind::AuthenticationFailed,

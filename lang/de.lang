@@ -67,6 +67,8 @@ error.host_key_changed = Achtung: Der Schlüssel des Servers hat sich geändert 
 error.agent_missing = Für {target} läuft kein SSH-Agent. Starte den OpenSSH-Agenten oder Pageant oder wähle eine andere Anmeldung.
 error.agent_empty = Der SSH-Agent enthält keine Schlüssel für {target}. Füge deinen Schlüssel dem Agenten hinzu, zum Beispiel mit ssh-add, und versuche es erneut.
 error.agent_rejected = {target} hat keinen der Schlüssel aus dem SSH-Agenten angenommen.
+error.prompt_cancelled = Die Anmeldung bei {target} wurde abgebrochen.
+error.prompt_unavailable = {target} fragt nach weiteren Anmeldedaten, aber hier kann niemand antworten.
 error.at_hop = Bei {hop}: {detail}
 
 # Status
@@ -88,6 +90,8 @@ connect.protocol.ftpes = FTPS (explizites TLS)
 connect.protocol.ftps = FTPS (implizites TLS)
 connect.protocol.dav = WebDAV (unverschlüsseltes HTTP)
 connect.protocol.davs = WebDAV (HTTPS)
+connect.protocol.scp = SCP (SSH, ohne Fortsetzen)
+connect.scp_hint = SCP braucht auf dem Server eine POSIX-Shell mit GNU ls und kann abgebrochene Übertragungen nicht fortsetzen. Nimm lieber SFTP, wenn der Server es anbietet.
 connect.unencrypted = FTP ist nicht verschlüsselt: Dein Passwort und alle Dateien werden im Klartext übertragen und können unterwegs mitgelesen werden. Nutze SFTP oder FTPS, wenn der Server es unterstützt.
 connect.unencrypted.dav = WebDAV über HTTP ist nicht verschlüsselt: Dein Passwort und alle Dateien werden im Klartext übertragen und können unterwegs mitgelesen werden. Nutze WebDAV über HTTPS, wenn der Server es unterstützt.
 connect.base_path = Basispfad
@@ -153,6 +157,12 @@ hostkey.always = Immer vertrauen
 hostkey.cancel = Abbrechen
 hostkey.jump_title = Unbekannter Jump-Host
 hostkey.jump_text = Hoplix war noch nie mit dem Jump-Host {host} verbunden. Fahre nur fort, wenn dieser Fingerabdruck zum Schlüssel des Jump-Hosts passt:
+
+# Sign-in prompts
+prompt.title = {host} fragt nach Anmeldedaten
+prompt.jump_title = Der Jump-Host {host} fragt nach Anmeldedaten
+prompt.confirm = Anmelden
+prompt.hint = Diese Fragen stellt der Server, zum Beispiel nach einem Einmalcode. Hoplix speichert die Antworten nicht.
 
 # Certificates
 certificate.title = Nicht vertrauenswürdiges Zertifikat

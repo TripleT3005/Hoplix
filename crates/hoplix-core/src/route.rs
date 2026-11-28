@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use crate::connection::{Authentication, ConnectionParams, HostKeyTrust, Protocol};
+use crate::keyboard_interactive::SharedPrompter;
 use crate::proxy::Proxy;
+use crate::scp::ScpFileSystem;
 use crate::{
     ConnectionOptions, Error, ErrorKind, FileSystem, FtpFileSystem, Result, S3FileSystem,
     SftpFileSystem, TrustStore, WebDavFileSystem,
@@ -75,14 +77,38 @@ pub async fn connect_via_with(
     trust_store: &TrustStore,
     trusted: &[HostKeyTrust],
 ) -> Result<Arc<dyn FileSystem>> {
+    connect_via_prompting(params, route, options, trust_store, trusted, None).await
+}
+
+pub async fn connect_via_prompting(
+    params: &ConnectionParams,
+    route: &Route,
+    options: &ConnectionOptions,
+    trust_store: &TrustStore,
+    trusted: &[HostKeyTrust],
+    prompter: Option<SharedPrompter>,
+) -> Result<Arc<dyn FileSystem>> {
     match params.protocol {
         Protocol::Sftp => {
-            let file_system = SftpFileSystem::connect_via_with(
+            let file_system = SftpFileSystem::connect_prompting(
                 params,
                 route,
                 options,
                 &trust_store.known_hosts,
                 trusted,
+                prompter,
+            )
+            .await?;
+            Ok(Arc::new(file_system))
+        }
+        Protocol::Scp => {
+            let file_system = ScpFileSystem::connect_prompting(
+                params,
+                route,
+                options,
+                &trust_store.known_hosts,
+                trusted,
+                prompter,
             )
             .await?;
             Ok(Arc::new(file_system))
@@ -91,7 +117,7 @@ pub async fn connect_via_with(
             if !route.jump_hosts.is_empty() {
                 return Err(Error::new(
                     ErrorKind::Other,
-                    "jump hosts only work with SFTP",
+                    "jump hosts only work with SFTP and SCP",
                 ));
             }
             let file_system = FtpFileSystem::connect_via_with(
@@ -231,6 +257,6 @@ mod tests {
         let error = connect_via(&params, &route, &trust_store, &[])
             .await
             .expect_err("refused");
-        assert_eq!(error.detail(), "jump hosts only work with SFTP");
+        assert_eq!(error.detail(), "jump hosts only work with SFTP and SCP");
     }
 }

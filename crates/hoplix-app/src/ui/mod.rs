@@ -13,7 +13,10 @@ mod transfers;
 
 use std::fmt;
 
-use hoplix_core::{AGENT_EMPTY, AGENT_MISSING, AGENT_REJECTED, Error, ErrorKind};
+use hoplix_core::{
+    AGENT_EMPTY, AGENT_MISSING, AGENT_REJECTED, Error, ErrorKind, PROMPT_CANCELLED,
+    PROMPT_UNAVAILABLE,
+};
 use iced::widget::{Space, button, column, container, row, stack, text};
 use iced::{Alignment, Element, Length};
 
@@ -232,6 +235,8 @@ pub fn connect_error_text(strings: &Strings, error: &Error) -> String {
             (AGENT_MISSING, "error.agent_missing"),
             (AGENT_EMPTY, "error.agent_empty"),
             (AGENT_REJECTED, "error.agent_rejected"),
+            (PROMPT_CANCELLED, "error.prompt_cancelled"),
+            (PROMPT_UNAVAILABLE, "error.prompt_unavailable"),
         ];
         for (marker, key) in agent {
             if let Some((target, _)) = detail.split_once(&format!(": {marker}")) {

@@ -621,6 +621,10 @@ ftps:// (FTPS with implicit TLS), dav:// (WebDAV over unencrypted HTTP) and
 davs:// (WebDAV over HTTPS); for WebDAV the path is the full server path, e.g.
 davs://user@host/remote.php/dav/files/user/Documents. FTP URLs without a user
 sign in anonymously. WebDAV uploads cannot be resumed and start again.
+scp:// is SSH without resume and needs a POSIX shell and GNU ls on the server.
+When an SSH server asks for more, such as a one-time code, hoplix-cli asks on
+the terminal; without --key, --agent or --password-env all of the server's
+questions are asked there. --password-env answers one 'Password:' question.
 Saved sites are targets too: site://<name>/path (encode / in folder/name as %2F).
 They use the saved password or passphrase unless you pass --password-env or --key.
 S3 buckets are targets like s3://bucket/folder/file (Amazon S3 or a compatible
@@ -628,7 +632,7 @@ server, see S3 below). Folders are key prefixes ending in /.
 
 Options:
   --key <file>              Sign in with this private key file
-  --agent                   Sign in with the keys of the running SSH agent (SFTP;
+  --agent                   Sign in with the keys of the running SSH agent (SSH;
                             Windows: OpenSSH agent or Pageant, else SSH_AUTH_SOCK)
   --passphrase-env <name>   Read the key passphrase from this environment variable
   --password-env <name>     Read the password from this environment variable
@@ -643,7 +647,7 @@ Options:
 
 Jump host and proxy (they apply to all servers of the command and replace
 the jump host and proxy saved with a site):
-  --jump <user@host[:port]> Connect to the SFTP server through this SSH jump host
+  --jump <user@host[:port]> Connect to the SFTP or SCP server through this SSH host
   --jump-key <file>         Sign in to the jump host with this private key file
   --jump-passphrase-env <name>
                             Read the passphrase of --jump-key from this variable
@@ -674,7 +678,8 @@ S3:
 
 Transfers:
   --resume                  Continue interrupted files (existing smaller files are
-                            completed, equal ones skipped); default: overwrite
+                            completed, equal ones skipped; not with SCP, which
+                            copies them again); default: overwrite
   --skip-existing           Leave files that already exist untouched
   --keep-both               Store new files next to existing ones as name (1).ext
   --retries <n>             Retry a file this often when the connection drops

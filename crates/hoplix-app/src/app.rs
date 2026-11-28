@@ -7,9 +7,9 @@ use std::collections::{HashMap, VecDeque};
 use hoplix_core::{
     Bookmarks, BoxFuture, Conflict, ConflictDecision, ConnectionOptions, ConnectionParams, Entry,
     Error, ErrorKind, FileSystem, HostAddress, HostKeyTrust, JobId, JobSnapshot, Keyring,
-    LocalFileSystem, Moved, RecentList, Route, SecretBackend, SiteList, SortKey, SortOrder,
-    TransferEvent, TransferQueue, TrustStore, Vault, config_dir, is_valid_name, remove_recursive,
-    sort_entries,
+    LocalFileSystem, Moved, RecentList, Route, SecretBackend, SharedPrompter, SiteList, SortKey,
+    SortOrder, TransferEvent, TransferQueue, TrustStore, Vault, config_dir, is_valid_name,
+    remove_recursive, sort_entries,
 };
 use iced::keyboard::{Key, Modifiers};
 use iced::theme::Mode;
@@ -24,6 +24,7 @@ use crate::file_drop::FileDrop;
 use crate::file_list::{BookmarksDialog, ListMessage, ListState};
 use crate::i18n::{self, LanguageInfo, Strings};
 use crate::preview::{PreviewMessage, PreviewState};
+use crate::prompts::{PromptBroker, PromptDialog, PromptMessage, PromptQueue};
 use crate::properties::{PropertiesDialog, PropertiesMessage};
 use crate::queue_store::{HistoryMessage, HistoryView, QueueStore};
 use crate::search::{SearchDialog, SearchMessage, SearchResults};
@@ -36,7 +37,8 @@ use crate::transfer_settings::TransferSetting;
 use crate::transfers::{Drag, DropTarget, TransferAction, TransferTarget};
 use crate::updates::{CheckState, UpdateMessage, UpdateSource};
 use crate::{
-    edits, file_list, opener, preview, queue_store, theme, title_bar, transfers, ui, updates,
+    edits, file_list, opener, preview, prompts, queue_store, theme, title_bar, transfers, ui,
+    updates,
 };
 
 // Types
@@ -156,6 +158,7 @@ pub enum Dialog {
     Search(Box<SearchDialog>),
     Properties(Box<PropertiesDialog>),
     Bookmarks(Box<BookmarksDialog>),
+    Prompt(Box<PromptDialog>),
 }
 
 #[derive(Debug, Clone)]
@@ -240,6 +243,7 @@ pub enum Message {
     Search(SearchMessage),
     Properties(PropertiesMessage),
     Preview(PreviewMessage),
+    Prompt(PromptMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -304,6 +308,7 @@ pub struct Hoplix {
     pub preview: PreviewState,
     pub pointer: Option<DropTarget>,
     pub file_drop: Option<FileDrop>,
+    pub prompts: PromptQueue,
     next_tab_id: TabId,
 }
 
@@ -329,17 +334,28 @@ pub(crate) struct Services {
     pub update_source: UpdateSource,
     pub update_delay: Duration,
     pub preview_delay: Duration,
+    pub prompts: PromptBroker,
     pub portable: bool,
 }
 
 impl Default for Services {
     fn default() -> Self {
+        let prompts = PromptBroker::default();
+        let prompter: SharedPrompter = Arc::new(prompts.clone());
         Self {
             keyring: Keyring::default(),
-            connector: Arc::new(|params, route, options, trust_store, trusted| {
+            connector: Arc::new(move |params, route, options, trust_store, trusted| {
+                let prompter = Arc::clone(&prompter);
                 Box::pin(async move {
-                    hoplix_core::connect_via_with(&params, &route, &options, &trust_store, &trusted)
-                        .await
+                    hoplix_core::connect_via_prompting(
+                        &params,
+                        &route,
+                        &options,
+                        &trust_store,
+                        &trusted,
+                        Some(prompter),
+                    )
+                    .await
                 })
             }),
             local: Arc::new(LocalFileSystem),
@@ -348,6 +364,7 @@ impl Default for Services {
             update_source: updates::github_source(),
             update_delay: updates::STARTUP_DELAY,
             preview_delay: preview::DEBOUNCE,
+            prompts,
             portable: false,
         }
     }
@@ -423,7 +440,7 @@ impl Dialog {
             Self::ImportSites(dialog) => dialog.can_confirm(),
             Self::Search(dialog) => dialog.can_start(),
             Self::Properties(dialog) => dialog.can_confirm(),
-            Self::Bookmarks(_) => true,
+            Self::Bookmarks(_) | Self::Prompt(_) => true,
             Self::Delete { .. }
             | Self::Conflict { .. }
             | Self::HostKey { .. }
@@ -535,6 +552,7 @@ impl Hoplix {
             preview: PreviewState::default(),
             pointer: None,
             file_drop: None,
+            prompts: PromptQueue::default(),
             settings,
         }
     }
@@ -571,6 +589,7 @@ impl Hoplix {
             queue_store::subscription(self),
             file_list::subscription(),
             preview::subscription(self),
+            prompts::subscription(self),
         ])
     }
 
@@ -586,6 +605,11 @@ impl Hoplix {
         let task = match self.follow_active_tabs(&active) {
             Some(follow) => Task::batch([task, follow]),
             None => task,
+        };
+        let task = if self.dialog.is_none() && self.has_waiting_prompts() {
+            Task::batch([task, self.show_next_prompt()])
+        } else {
+            task
         };
         match self.sync_preview() {
             Some(preview) => Task::batch([task, preview]),
@@ -669,6 +693,9 @@ impl Hoplix {
                 if matches!(self.dialog, Some(Dialog::HostKey { .. })) {
                     return self.answer_host_key(None);
                 }
+                if matches!(self.dialog, Some(Dialog::Prompt(_))) {
+                    return self.answer_prompt(false);
+                }
                 if let Some(Dialog::Conflict { conflict, .. }) = &self.dialog {
                     self.transfers.cancel(conflict.job);
                     self.dialog = None;
@@ -738,6 +765,7 @@ impl Hoplix {
             Message::Search(message) => return self.update_search(message),
             Message::Properties(message) => return self.update_properties(message),
             Message::Preview(message) => return self.update_preview(message),
+            Message::Prompt(message) => return self.update_prompt(message),
             Message::TransferSetting(setting) => self.update_transfer_setting(setting),
             message => return self.update_sites(message),
         }
@@ -1105,6 +1133,7 @@ impl Hoplix {
         };
         match dialog {
             Dialog::HostKey { .. } => return self.answer_host_key(Some(false)),
+            Dialog::Prompt(_) => return self.answer_prompt(true),
             Dialog::Conflict { .. } => return self.answer_conflict(ConflictDecision::Overwrite),
             Dialog::Sync(_) => return self.start_sync(),
             Dialog::Update { url, .. } => {

@@ -5,6 +5,7 @@ use iced::widget::{
 use iced::{Alignment, Background, Color, Element, Length};
 
 use crate::app::{Dialog, Hoplix, MasterMode, Message};
+use crate::prompts::{FIRST_INPUT_ID, PromptDialog, PromptMessage};
 use crate::{format, theme, ui};
 
 // Constants
@@ -167,6 +168,19 @@ pub fn view<'a>(app: &'a Hoplix, dialog: &'a Dialog) -> Element<'a, Message> {
             "bookmarks.save",
             false,
         ),
+        Dialog::Prompt(prompt) => (
+            strings.format(
+                if prompt.request.jump {
+                    "prompt.jump_title"
+                } else {
+                    "prompt.title"
+                },
+                &[("host", &prompt.request.host)],
+            ),
+            prompt_body(app, prompt),
+            "prompt.confirm",
+            false,
+        ),
     };
 
     let buttons = if let Dialog::Conflict { conflict, .. } = dialog {
@@ -299,7 +313,7 @@ fn conflict_buttons<'a>(app: &'a Hoplix, conflict: &'a Conflict) -> Element<'a, 
     ]
     .spacing(8)
     .align_y(Alignment::Center);
-    if conflict.target_size < conflict.source_size {
+    if conflict.can_resume && conflict.target_size < conflict.source_size {
         buttons = buttons.push(choice("transfer.conflict.resume", ConflictDecision::Resume));
     }
     buttons
@@ -357,6 +371,38 @@ fn master_password<'a>(
         body = body.push(ui::notice(ui::error_text(strings, error)));
     }
     (strings.get(title).to_string(), body.into(), action, false)
+}
+
+// Prompts
+
+fn prompt_body<'a>(app: &'a Hoplix, prompt: &'a PromptDialog) -> Element<'a, Message> {
+    let strings = &app.strings;
+    let request = &prompt.request;
+    let mut body = column![].spacing(10);
+    for line in [&request.name, &request.instruction] {
+        if !line.is_empty() {
+            body = body.push(text(line.as_str()).wrapping(text::Wrapping::WordOrGlyph));
+        }
+    }
+    for (index, field) in request.fields.iter().enumerate() {
+        let value = prompt.answers.get(index).map_or("", String::as_str);
+        let mut input = text_input(field.text.trim(), value)
+            .secure(!field.echo)
+            .on_input(move |value| Message::Prompt(PromptMessage::Input(index, value)))
+            .on_submit(Message::DialogConfirmed)
+            .padding(8);
+        if index == 0 {
+            input = input.id(FIRST_INPUT_ID);
+        }
+        body = body.push(
+            column![
+                text(field.text.trim()).wrapping(text::Wrapping::WordOrGlyph),
+                input
+            ]
+            .spacing(4),
+        );
+    }
+    body.push(text(strings.get("prompt.hint")).size(13)).into()
 }
 
 fn name_input<'a>(placeholder: &'a str, value: &'a str, valid: bool) -> Element<'a, Message> {

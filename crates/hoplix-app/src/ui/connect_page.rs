@@ -221,6 +221,7 @@ pub fn connection_fields<'a>(
                     Protocol::WebDav => "connect.protocol.dav",
                     Protocol::WebDavs => "connect.protocol.davs",
                     Protocol::S3 => "connect.protocol.s3",
+                    Protocol::Scp => "connect.protocol.scp",
                 })
                 .to_string(),
         })
@@ -341,6 +342,9 @@ pub fn connection_fields<'a>(
             "connect.unencrypted"
         };
         fields.push(ui::warning(strings.get(key).to_string()));
+    }
+    if form.protocol == Protocol::Scp {
+        fields.push(hint(strings.get("connect.scp_hint")));
     }
     if form.protocol.supports_key_files() {
         fields.push(setting(

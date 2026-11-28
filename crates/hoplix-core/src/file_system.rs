@@ -50,6 +50,19 @@ pub trait FileSystem: Debug + Send + Sync {
 
     fn open_write(&self, path: &str, offset: u64) -> BoxFuture<'_, Result<Writer>>;
 
+    fn open_write_sized(
+        &self,
+        path: &str,
+        offset: u64,
+        _size: u64,
+    ) -> BoxFuture<'_, Result<Writer>> {
+        self.open_write(path, offset)
+    }
+
+    fn can_read_from_offset(&self) -> bool {
+        true
+    }
+
     fn can_append(&self) -> bool {
         true
     }
@@ -127,6 +140,10 @@ pub async fn remove_recursive(file_system: &dyn FileSystem, path: &str) -> Resul
     Ok(())
 }
 
+pub fn can_resume(source: &dyn FileSystem, target: &dyn FileSystem) -> bool {
+    source.can_read_from_offset() && target.can_append()
+}
+
 pub async fn copy_file(
     source: &dyn FileSystem,
     from: &str,
@@ -134,7 +151,7 @@ pub async fn copy_file(
     to: &str,
     resume: bool,
 ) -> Result<u64> {
-    let offset = if resume && target.can_append() {
+    let offset = if resume && can_resume(source, target) {
         match target.metadata(to).await {
             Ok(entry) => entry.size.unwrap_or(0),
             Err(error) if error.kind() == ErrorKind::NotFound => 0,
@@ -148,7 +165,9 @@ pub async fn copy_file(
         return Ok(0);
     }
     let mut reader = source.open_read(from, offset).await?;
-    let mut writer = target.open_write(to, offset).await?;
+    let mut writer = target
+        .open_write_sized(to, offset, total.saturating_sub(offset))
+        .await?;
     let copied = tokio::io::copy(&mut reader, &mut writer)
         .await
         .map_err(|error| Error::from_io(&error, to))?;

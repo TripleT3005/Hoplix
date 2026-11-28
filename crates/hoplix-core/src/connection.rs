@@ -18,6 +18,7 @@ pub enum Protocol {
     WebDav,
     WebDavs,
     S3,
+    Scp,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -92,7 +93,7 @@ impl HostKeyTrust {
 }
 
 impl Protocol {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Sftp,
         Self::Ftp,
         Self::FtpsExplicit,
@@ -100,11 +101,12 @@ impl Protocol {
         Self::WebDav,
         Self::WebDavs,
         Self::S3,
+        Self::Scp,
     ];
 
     pub fn default_port(self) -> u16 {
         match self {
-            Self::Sftp => 22,
+            Self::Sftp | Self::Scp => 22,
             Self::Ftp | Self::FtpsExplicit => 21,
             Self::FtpsImplicit => 990,
             Self::WebDav => 80,
@@ -122,6 +124,7 @@ impl Protocol {
             Self::WebDav => "dav",
             Self::WebDavs => "davs",
             Self::S3 => "s3",
+            Self::Scp => "scp",
         }
     }
 
@@ -138,7 +141,11 @@ impl Protocol {
     }
 
     pub fn supports_key_files(self) -> bool {
-        self == Self::Sftp
+        self.uses_ssh()
+    }
+
+    pub fn uses_ssh(self) -> bool {
+        matches!(self, Self::Sftp | Self::Scp)
     }
 
     pub fn uses_tls(self) -> bool {
@@ -317,11 +324,11 @@ mod tests {
     #[test]
     fn protocols_know_ports_and_schemes() {
         let ports: Vec<u16> = Protocol::ALL.iter().map(|p| p.default_port()).collect();
-        assert_eq!(ports, [22, 21, 21, 990, 80, 443, 443]);
+        assert_eq!(ports, [22, 21, 21, 990, 80, 443, 443, 22]);
         let schemes: Vec<&str> = Protocol::ALL.iter().map(|p| p.scheme()).collect();
         assert_eq!(
             schemes,
-            ["sftp", "ftp", "ftpes", "ftps", "dav", "davs", "s3"]
+            ["sftp", "ftp", "ftpes", "ftps", "dav", "davs", "s3", "scp"]
         );
         assert!(!Protocol::Ftp.is_encrypted() && !Protocol::WebDav.is_encrypted());
         assert!(Protocol::WebDavs.is_encrypted() && Protocol::WebDavs.uses_tls());
@@ -330,6 +337,9 @@ mod tests {
         assert!(Protocol::S3.is_s3() && Protocol::S3.is_encrypted());
         assert!(!Protocol::S3.supports_key_files() && !Protocol::S3.uses_tls());
         assert!(!Protocol::S3.is_ftp() && !Protocol::S3.is_webdav());
+        assert!(Protocol::Scp.uses_ssh() && Protocol::Scp.supports_key_files());
+        assert!(Protocol::Scp.is_encrypted() && !Protocol::Scp.uses_tls());
+        assert!(!Protocol::Scp.is_ftp() && !Protocol::S3.uses_ssh());
         assert!(Protocol::FtpsImplicit.is_encrypted() && Protocol::FtpsImplicit.uses_tls());
         assert!(!Protocol::Sftp.uses_tls() && Protocol::Sftp.supports_key_files());
         assert!(!Protocol::FtpsExplicit.supports_key_files());
