@@ -99,17 +99,35 @@ jobs:
         include:
           - os: windows-latest
             platform: windows-x64
+            container: ''
           - os: ubuntu-latest
             platform: linux-x64
+            container: ubuntu:22.04
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    defaults:
+      run:
+        shell: bash
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      GLIBC_MAX: '2.35'
     steps:
-      - uses: actions/checkout@v7
-
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev dpkg-dev desktop-file-utils
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential binutils pkg-config \
+            libxkbcommon-dev libwayland-dev dpkg-dev desktop-file-utils rpm cpio python3
+
+      - name: Install rustup
+        if: runner.os == 'Linux'
+        run: |
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
@@ -222,7 +240,6 @@ jobs:
           sed -e "s/APP_VERSION/$package_version/" -e "s/INSTALLED_SIZE/$size/" -e "s/LINKED_LIBRARIES/$linked/" installer/linux/control > "$deb_root/DEBIAN/control"
           dpkg-deb --root-owner-group --build "$deb_root" "$deb"
 
-          sudo apt-get install -y --no-install-recommends rpm > /dev/null
           rpm_top="$RUNNER_TEMP/package/rpmbuild"
           sed "s/APP_VERSION/$package_version/" installer/linux/hoplix.spec > "$RUNNER_TEMP/package/hoplix.spec"
           rpmbuild -bb --quiet --define "_topdir $rpm_top" --define "_sourcedir $RUNNER_TEMP/package" "$RUNNER_TEMP/package/hoplix.spec"
@@ -232,6 +249,52 @@ jobs:
           for package in *.deb *.rpm; do
             sha256sum "$package" > "$package.sha256"
           done
+
+      - name: Check glibc versions
+        if: runner.os == 'Linux'
+        run: |
+          package_version="${VERSION//-/\~}"
+          deb="dist/hoplix_${package_version}_amd64.deb"
+          rpm="$PWD/dist/hoplix-${package_version}-1.x86_64.rpm"
+          unpacked="$RUNNER_TEMP/glibc"
+          mkdir -p "$unpacked/tar" "$unpacked/deb" "$unpacked/rpm"
+          tar -xzf "dist/Hoplix-$VERSION-linux-x64.tar.gz" -C "$unpacked/tar"
+          dpkg-deb -x "$deb" "$unpacked/deb"
+          (cd "$unpacked/rpm" && rpm2cpio "$rpm" | cpio -idm --quiet)
+          newer() {
+            [ "$(printf '%s\n' "$1" "$GLIBC_MAX" | sort -V | tail -n 1)" != "$GLIBC_MAX" ]
+          }
+          newest() {
+            grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -n 1
+          }
+          failed=false
+          binaries=$(find "$unpacked" -type f \( -name hoplix -o -name hoplix-cli \) | sort)
+          if [ "$(grep -c . <<< "$binaries")" -ne 6 ]; then
+            echo "::error::Expected 6 packaged Linux binaries, found: $binaries"
+            exit 1
+          fi
+          while read -r binary; do
+            version=$(objdump -T "$binary" | newest)
+            echo "${binary#"$unpacked"/}: GLIBC_$version"
+            if [ -z "$version" ] || newer "$version"; then
+              echo "::error::${binary#"$unpacked"/} needs GLIBC_$version, but at most GLIBC_$GLIBC_MAX is allowed"
+              failed=true
+            fi
+          done <<< "$binaries"
+          depends=$(dpkg-deb --field "$deb" Depends)
+          echo "deb Depends: $depends"
+          libc=$(grep -o 'libc6 (>= [0-9.]*)' <<< "$depends" | grep -o '[0-9][0-9.]*' || true)
+          if [ -z "$libc" ] || newer "$libc"; then
+            echo "::error::The .deb depends on libc6 (>= $libc), expected at most $GLIBC_MAX"
+            failed=true
+          fi
+          required=$(rpm -qpR "$rpm" | newest)
+          echo "rpm Requires: newest GLIBC_$required"
+          if [ -z "$required" ] || newer "$required"; then
+            echo "::error::The .rpm requires GLIBC_$required, expected at most GLIBC_$GLIBC_MAX"
+            failed=true
+          fi
+          [ "$failed" = false ]
 
       - name: Check Linux packages
         if: runner.os == 'Linux'
@@ -254,7 +317,7 @@ jobs:
           rpm -qlp "$rpm" | grep -q '^/usr/share/icons/hicolor/256x256/apps/hoplix.png$'
           rpm -qlp "$rpm" | grep -q '^/usr/share/hoplix/lang/de.lang$'
           rpm -qlp "$rpm" | grep -q '^/usr/share/doc/hoplix/THIRD-PARTY-LICENSES.txt$'
-          sudo apt-get install -y "./$deb"
+          apt-get install -y "./$deb"
           test -x /usr/bin/hoplix
           test -f /usr/share/applications/hoplix.desktop
           test -f /usr/share/hoplix/lang/en.lang
@@ -270,7 +333,7 @@ jobs:
             echo "::error::The installed hoplix-cli does not report $VERSION"
             exit 1
           fi
-          sudo apt-get purge -y hoplix
+          apt-get purge -y hoplix
 
       - name: Build installer
         if: runner.os == 'Windows'
