@@ -227,7 +227,7 @@ impl Client {
         }
         let mut state = self.auth.lock().unwrap_or_else(PoisonError::into_inner);
         if authorized {
-            return state.refresh(challenges);
+            return state.refresh(challenges) || state.switch(challenges, self.allow_basic);
         }
         if *state != State::None {
             return true;
