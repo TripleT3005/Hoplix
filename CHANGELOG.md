@@ -4,6 +4,20 @@ All notable changes to Hoplix, grouped by version in the style of [Keep a Change
 
 Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep a Changelog](https://keepachangelog.com/de/). Der Abschnitt einer Version wird als ihre Release-Notizen verwendet. Änderungen auf `main`, die noch nicht veröffentlicht sind, stehen unter [Unreleased] und wandern mit der nächsten Version in deren Abschnitt.
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- The Linux packages (`.deb`, `.rpm`, `.tar.gz`) work again on older distributions such as Debian 12/13 and Ubuntu 22.04/24.04; 0.6.0 required glibc 2.43. They now need glibc 2.35 or newer.
+
+### Deutsch
+
+#### Behoben
+
+- Die Linux-Pakete (`.deb`, `.rpm`, `.tar.gz`) laufen wieder auf älteren Distributionen wie Debian 12/13 und Ubuntu 22.04/24.04; 0.6.0 brauchte glibc 2.43. Sie benötigen jetzt glibc 2.35 oder neuer.
+
 ## [0.6.0] – 2026-11-28
 
 ### English
