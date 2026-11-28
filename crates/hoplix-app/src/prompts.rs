@@ -219,6 +219,7 @@ mod tests {
                 text: "Code:".to_string(),
                 echo: false,
             }],
+            repeated: false,
         }
     }
 

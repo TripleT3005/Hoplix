@@ -778,6 +778,7 @@ mod tests {
             name: String::new(),
             instruction: String::new(),
             fields: Vec::new(),
+            repeated: false,
         };
         let started = Instant::now();
         assert_eq!(prompter.answer(request).await, Some(Vec::new()));

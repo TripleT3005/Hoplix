@@ -23,6 +23,7 @@ fn request(host: &str, jump: bool, fields: &[(&str, bool)]) -> PromptRequest {
                 echo: *echo,
             })
             .collect(),
+        repeated: false,
     }
 }
 
@@ -67,6 +68,28 @@ fn prompts_show_the_server_text_and_return_the_answers() {
         Some(Some(vec![code.clone(), "laptop".to_string()]))
     );
     assert!(!harness.contains(&code));
+}
+
+#[test]
+fn repeated_questions_say_the_answer_was_not_accepted() {
+    let mut harness = Harness::new("prompt-repeated");
+    let hint = "The server did not accept the answer and asks again.";
+    let mut first = ask(
+        &mut harness,
+        request("demo@files.example.test", false, &[("Password:", false)]),
+    );
+    assert!(harness.has("demo@files.example.test asks for sign-in details"));
+    assert!(!harness.contains(hint));
+    harness.click("Cancel");
+    assert_eq!(answered(&mut first), Some(None));
+
+    let mut again = request("demo@files.example.test", false, &[("Password:", false)]);
+    again.repeated = true;
+    let mut second = ask(&mut harness, again);
+    assert!(harness.has(hint));
+    assert!(harness.has("Password:"));
+    harness.click("Cancel");
+    assert_eq!(answered(&mut second), Some(None));
 }
 
 #[test]

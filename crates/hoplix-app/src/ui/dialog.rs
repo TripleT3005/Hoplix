@@ -379,6 +379,9 @@ fn prompt_body<'a>(app: &'a Hoplix, prompt: &'a PromptDialog) -> Element<'a, Mes
     let strings = &app.strings;
     let request = &prompt.request;
     let mut body = column![].spacing(10);
+    if request.repeated {
+        body = body.push(ui::notice(strings.get("prompt.repeated").to_string()));
+    }
     for line in [&request.name, &request.instruction] {
         if !line.is_empty() {
             body = body.push(text(line.as_str()).wrapping(text::Wrapping::WordOrGlyph));
