@@ -11,12 +11,14 @@ Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep 
 #### Fixed
 
 - The Linux packages (`.deb`, `.rpm`, `.tar.gz`) work again on older distributions such as Debian 12/13 and Ubuntu 22.04/24.04; 0.6.0 required glibc 2.43. They now need glibc 2.35 or newer.
+- `hoplix-cli cp`, `sync` and `compare` between S3 and another server accept `--secret-env` and `--password-env` together: the secret is used for S3, the password for the other server.
 
 ### Deutsch
 
 #### Behoben
 
 - Die Linux-Pakete (`.deb`, `.rpm`, `.tar.gz`) laufen wieder auf älteren Distributionen wie Debian 12/13 und Ubuntu 22.04/24.04; 0.6.0 brauchte glibc 2.43. Sie benötigen jetzt glibc 2.35 oder neuer.
+- `hoplix-cli cp`, `sync` und `compare` zwischen S3 und einem anderen Server nehmen `--secret-env` und `--password-env` gemeinsam an: das Geheimnis gilt für S3, das Passwort für den anderen Server.
 
 ## [0.6.0] – 2026-11-28
 

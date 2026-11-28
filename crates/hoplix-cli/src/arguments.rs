@@ -122,6 +122,17 @@ pub struct Invocation {
     pub options: Options,
 }
 
+impl Options {
+    pub fn sign_in_variable(&self, s3: bool) -> Option<&str> {
+        let (own, other) = if s3 {
+            (&self.secret_env, &self.password_env)
+        } else {
+            (&self.password_env, &self.secret_env)
+        };
+        own.as_deref().or(other.as_deref())
+    }
+}
+
 // Parsing
 
 pub fn parse<I: IntoIterator<Item = String>>(arguments: I) -> Result<Invocation, String> {
@@ -358,7 +369,7 @@ fn check_s3(command: &Command, options: &Options) -> Result<(), String> {
     if direct && (options.access_key.is_none() || options.secret_env.is_none()) {
         return Err("s3:// targets need --access-key <id> and --secret-env <name>".to_string());
     }
-    if options.secret_env.is_some() && options.password_env.is_some() {
+    if targets.len() < 2 && options.secret_env.is_some() && options.password_env.is_some() {
         return Err("use only one of --secret-env and --password-env".to_string());
     }
     Ok(())
@@ -672,7 +683,10 @@ S3:
                             local servers such as MinIO need this
   --access-key <id>         The access key ID
   --secret-env <name>       Read the secret access key from this environment
-                            variable (saved S3 sites use the saved secret)
+                            variable (saved S3 sites use the saved secret).
+                            In cp, sync and compare between S3 and another
+                            server, --secret-env is used for S3 and
+                            --password-env for the other server
   --session-token-env <name>
                             Read a temporary session token from this variable
 
@@ -1247,5 +1261,95 @@ mod tests {
         );
         assert!(run(&["ls", "s3://demo-bucket/", "--secret"]).is_err());
         assert!(USAGE.contains("--path-style"));
+    }
+
+    #[test]
+    fn two_targets_take_secret_and_password_variables() {
+        let invocation = run(&[
+            "cp",
+            "--verify",
+            "dav://demo@files.example.test:8080/files/docs/readme.txt",
+            "s3://demo-bucket/from-dav.txt",
+            "--password-env",
+            "DEMO_DAV",
+            "--endpoint",
+            "http://s3.example.test:5000",
+            "--path-style",
+            "--access-key",
+            "demo-access",
+            "--secret-env",
+            "DEMO_S3",
+        ])
+        .expect("valid");
+        let options = invocation.options;
+        assert_eq!(options.sign_in_variable(true), Some("DEMO_S3"));
+        assert_eq!(options.sign_in_variable(false), Some("DEMO_DAV"));
+
+        let invocation = run(&[
+            "sync",
+            "s3://demo-bucket/backups",
+            "sftp://demo@files.example.test/backups",
+            "--access-key",
+            "demo-access",
+            "--secret-env",
+            "DEMO_S3",
+            "--session-token-env",
+            "DEMO_TOKEN",
+            "--password-env",
+            "DEMO_SFTP",
+        ])
+        .expect("valid");
+        let options = invocation.options;
+        assert_eq!(options.sign_in_variable(true), Some("DEMO_S3"));
+        assert_eq!(options.sign_in_variable(false), Some("DEMO_SFTP"));
+        assert_eq!(options.session_token_env.as_deref(), Some("DEMO_TOKEN"));
+
+        assert!(
+            run(&[
+                "compare",
+                "site://Storage",
+                "site://Web",
+                "--secret-env",
+                "DEMO_S3",
+                "--password-env",
+                "DEMO_SFTP",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn one_variable_still_signs_in_to_every_site() {
+        let invocation =
+            run(&["ls", "site://Storage", "--password-env", "DEMO_PASS"]).expect("valid");
+        assert_eq!(invocation.options.sign_in_variable(true), Some("DEMO_PASS"));
+        assert_eq!(
+            invocation.options.sign_in_variable(false),
+            Some("DEMO_PASS")
+        );
+        let invocation = run(&["ls", "site://Storage", "--secret-env", "DEMO_S3"]).expect("valid");
+        assert_eq!(invocation.options.sign_in_variable(true), Some("DEMO_S3"));
+        assert_eq!(invocation.options.sign_in_variable(false), Some("DEMO_S3"));
+        assert_eq!(Options::default().sign_in_variable(true), None);
+
+        let error = run(&[
+            "ls",
+            "s3://demo-bucket/",
+            "--access-key",
+            "demo-access",
+            "--password-env",
+            "DEMO_PASS",
+        ])
+        .expect_err("accepted");
+        assert!(error.contains("--secret-env"), "{error}");
+        let error = run(&[
+            "cp",
+            "/tmp/a",
+            "sftp://demo@files.example.test/a",
+            "--secret-env",
+            "DEMO_S3",
+        ])
+        .expect_err("accepted");
+        assert!(error.contains("only work with s3://"), "{error}");
     }
 }
