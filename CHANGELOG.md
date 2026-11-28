@@ -4,6 +4,28 @@ All notable changes to Hoplix, grouped by version in the style of [Keep a Change
 
 Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep a Changelog](https://keepachangelog.com/de/). Der Abschnitt einer Version wird als ihre Release-Notizen verwendet. Änderungen auf `main`, die noch nicht veröffentlicht sind, stehen unter [Unreleased] und wandern mit der nächsten Version in deren Abschnitt.
 
+## [Unreleased]
+
+### English
+
+#### Changed
+
+- When an SSH server asks the same sign-in questions again, for example after a wrong one-time code or a wrong saved password, the dialog and `hoplix-cli` say that the server did not accept the answer.
+
+#### Security
+
+- `hoplix-cli` hides the input before it shows a secret sign-in question, so answers typed or sent early are no longer shown in clear text.
+
+### Deutsch
+
+#### Geändert
+
+- Stellt ein SSH-Server dieselben Anmeldefragen erneut, etwa nach einem falschen Einmalcode oder einem falschen gespeicherten Passwort, weisen der Dialog und `hoplix-cli` darauf hin, dass der Server die Antwort nicht angenommen hat.
+
+#### Sicherheit
+
+- `hoplix-cli` verdeckt die Eingabe, bevor eine geheime Anmeldefrage erscheint, damit früh getippte oder gesendete Antworten nicht mehr im Klartext zu sehen sind.
+
 ## [0.6.0] – 2026-11-28
 
 ### English

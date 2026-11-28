@@ -25,6 +25,7 @@ pub struct PromptRequest {
     pub name: String,
     pub instruction: String,
     pub fields: Vec<PromptField>,
+    pub repeated: bool,
 }
 
 pub trait Prompter: Send + Sync {
@@ -75,6 +76,11 @@ pub(crate) struct SignIn<'a> {
     pub prompter: Option<&'a SharedPrompter>,
 }
 
+struct Rounds<'a> {
+    autofill: Option<&'a str>,
+    answered: Option<Vec<PromptField>>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Last {
     Primary,
@@ -102,20 +108,31 @@ pub fn clean_text(text: &str) -> String {
         .to_string()
 }
 
+fn clean_fields(fields: &[PromptField]) -> Vec<PromptField> {
+    fields
+        .iter()
+        .map(|field| PromptField {
+            text: clean_text(&field.text),
+            echo: field.echo,
+        })
+        .collect()
+}
+
 impl PromptRequest {
-    fn new(sign_in: &SignIn<'_>, name: &str, instruction: &str, fields: &[PromptField]) -> Self {
+    fn new(
+        sign_in: &SignIn<'_>,
+        name: &str,
+        instruction: &str,
+        fields: Vec<PromptField>,
+        repeated: bool,
+    ) -> Self {
         Self {
             host: sign_in.label.to_string(),
             jump: sign_in.jump,
             name: clean_text(name),
             instruction: clean_text(instruction),
-            fields: fields
-                .iter()
-                .map(|field| PromptField {
-                    text: clean_text(&field.text),
-                    echo: field.echo,
-                })
-                .collect(),
+            fields,
+            repeated,
         }
     }
 }
@@ -131,16 +148,19 @@ pub(crate) async fn sign_in(channel: &mut impl AuthChannel, context: &SignIn<'_>
         Outcome::Success => return Ok(()),
         Outcome::Failure { methods, .. } => methods,
     };
-    let mut autofill = context.password.filter(|password| !password.is_empty());
+    let mut rounds = Rounds {
+        autofill: context.password.filter(|password| !password.is_empty()),
+        answered: None,
+    };
     let mut keyboard_attempts = 0;
     let (mut outcome, mut last) = match context.password {
         Some(password) if prefers_keyboard(password, offered) => {
             keyboard_attempts += 1;
-            let outcome = keyboard(channel, context, &mut autofill).await?;
+            let outcome = keyboard(channel, context, &mut rounds).await?;
             (outcome, Last::Keyboard)
         }
         Some(password) => {
-            autofill = None;
+            rounds.autofill = None;
             let outcome = channel.password(password.to_string()).await?;
             (outcome, Last::Password)
         }
@@ -154,14 +174,14 @@ pub(crate) async fn sign_in(channel: &mut impl AuthChannel, context: &SignIn<'_>
         let retry = last == Last::Keyboard && keyboard_attempts < MAX_KEYBOARD_ATTEMPTS;
         if methods.keyboard && (partial || retry) {
             keyboard_attempts += 1;
-            outcome = keyboard(channel, context, &mut autofill).await?;
+            outcome = keyboard(channel, context, &mut rounds).await?;
             last = Last::Keyboard;
         } else if partial && methods.password && !password_used {
             let Some(password) = context.password.filter(|password| !password.is_empty()) else {
                 return Err(failed(context.label));
             };
             password_used = true;
-            autofill = None;
+            rounds.autofill = None;
             outcome = channel.password(password.to_string()).await?;
             last = Last::Password;
         } else {
@@ -178,7 +198,7 @@ fn prefers_keyboard(password: &str, offered: Methods) -> bool {
 async fn keyboard(
     channel: &mut impl AuthChannel,
     sign_in: &SignIn<'_>,
-    autofill: &mut Option<&str>,
+    rounds: &mut Rounds<'_>,
 ) -> Result<Outcome> {
     let mut step = channel.keyboard_start().await?;
     for _ in 0..MAX_REQUESTS {
@@ -190,22 +210,28 @@ async fn keyboard(
                 fields,
             } => (name, instruction, fields),
         };
-        let answers = if fields.is_empty() {
-            Vec::new()
-        } else if let Some(password) = autofill.filter(|_| can_autofill(&fields)) {
-            *autofill = None;
+        if fields.is_empty() {
+            step = channel.keyboard_respond(Vec::new()).await?;
+            continue;
+        }
+        let fields = clean_fields(&fields);
+        let repeated = rounds.answered.as_ref() == Some(&fields);
+        let answers = if let Some(password) = rounds.autofill.filter(|_| can_autofill(&fields)) {
+            rounds.autofill = None;
             vec![password.to_string()]
         } else {
-            *autofill = None;
+            rounds.autofill = None;
             let Some(prompter) = sign_in.prompter else {
                 return Err(Error::new(
                     ErrorKind::AuthenticationFailed,
                     format!("{}: {PROMPT_UNAVAILABLE}", sign_in.label),
                 ));
             };
-            let request = PromptRequest::new(sign_in, &name, &instruction, &fields);
+            let count = fields.len();
+            let request =
+                PromptRequest::new(sign_in, &name, &instruction, fields.clone(), repeated);
             match prompter.answer(request).await {
-                Some(answers) if answers.len() == fields.len() => answers,
+                Some(answers) if answers.len() == count => answers,
                 Some(_) => return Err(failed(sign_in.label)),
                 None => {
                     return Err(Error::new(
@@ -215,6 +241,7 @@ async fn keyboard(
                 }
             }
         };
+        rounds.answered = Some(fields);
         step = channel.keyboard_respond(answers).await?;
     }
     Err(failed(sign_in.label))
@@ -415,6 +442,7 @@ mod tests {
         assert_eq!(requests[0].host, "demo@example.test");
         assert_eq!(requests[0].instruction, "Use your token[2J");
         assert_eq!(requests[0].fields, [field("Verification code:", false)]);
+        assert!(!requests[0].repeated);
     }
 
     #[tokio::test]
@@ -444,7 +472,25 @@ mod tests {
                 Call::Respond(vec![code]),
             ]
         );
-        assert_eq!(answers.requests().len(), 2);
+        let repeated: Vec<bool> = answers.requests().iter().map(|r| r.repeated).collect();
+        assert_eq!(repeated, [true, false]);
+    }
+
+    #[tokio::test]
+    async fn a_second_step_with_other_questions_is_no_repeat() {
+        let mut script = Script::new(KEYBOARD);
+        script.primary = partial(KEYBOARD);
+        script.steps = VecDeque::from([
+            ask(vec![field("Password: ", false)]),
+            ask(vec![field("Verification code: ", false)]),
+            ask(vec![field("Verification code: ", false)]),
+            Step::Done(Outcome::Success),
+        ]);
+        let replies = (0..3).map(|_| Some(vec![test_password()])).collect();
+        let answers = Answers::new(replies);
+        assert_eq!(run(&mut script, None, &shared(&answers)).await, Ok(()));
+        let repeated: Vec<bool> = answers.requests().iter().map(|r| r.repeated).collect();
+        assert_eq!(repeated, [false, false, true]);
     }
 
     #[tokio::test]
@@ -500,7 +546,10 @@ mod tests {
             .expect_err("signed in");
         assert_eq!(error.kind(), ErrorKind::AuthenticationFailed);
         assert!(!is_cancelled(&error));
-        assert_eq!(answers.requests().len(), MAX_KEYBOARD_ATTEMPTS);
+        let requests = answers.requests();
+        assert_eq!(requests.len(), MAX_KEYBOARD_ATTEMPTS);
+        assert!(!requests[0].repeated);
+        assert!(requests[1..].iter().all(|request| request.repeated));
     }
 
     #[tokio::test]

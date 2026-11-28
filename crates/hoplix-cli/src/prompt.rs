@@ -2,6 +2,10 @@ use std::io::{BufRead, IsTerminal, Write};
 
 use hoplix_core::{BoxFuture, PromptRequest, Prompter};
 
+// Constants
+
+pub const REPEATED: &str = "The server did not accept the answer and asks again.";
+
 // Types
 
 pub struct TerminalPrompter;
@@ -29,6 +33,9 @@ pub fn heading(request: &PromptRequest) -> Vec<String> {
     } else {
         format!("{} asks:", request.host)
     }];
+    if request.repeated {
+        lines.push(REPEATED.to_string());
+    }
     lines.extend(
         [&request.name, &request.instruction]
             .into_iter()
@@ -55,12 +62,12 @@ fn ask(request: &PromptRequest) -> Option<Vec<String>> {
         } else {
             format!("{} ", field.text)
         };
-        let _ = write!(output, "{label}");
-        let _ = output.flush();
         let answer = if field.echo {
+            show_label(&mut output, &label);
             read_line()
         } else {
             let echo = Echo::hide();
+            show_label(&mut output, &label);
             let answer = read_line();
             drop(echo);
             let _ = writeln!(output);
@@ -69,6 +76,11 @@ fn ask(request: &PromptRequest) -> Option<Vec<String>> {
         answers.push(answer?);
     }
     Some(answers)
+}
+
+fn show_label(output: &mut impl Write, label: &str) {
+    let _ = write!(output, "{label}");
+    let _ = output.flush();
 }
 
 fn read_line() -> Option<String> {
@@ -159,6 +171,7 @@ mod tests {
                 text: "Code:".to_string(),
                 echo: false,
             }],
+            repeated: false,
         };
         assert_eq!(
             heading(&request),
@@ -171,5 +184,28 @@ mod tests {
             "The jump host demo@example.test asks:"
         );
         assert_eq!(heading(&request).len(), 3);
+        assert!(!heading(&request).iter().any(|line| line == REPEATED));
+    }
+
+    #[test]
+    fn repeated_rounds_say_the_answer_was_not_accepted() {
+        let request = PromptRequest {
+            host: "demo@example.test".to_string(),
+            jump: false,
+            name: String::new(),
+            instruction: String::new(),
+            fields: vec![PromptField {
+                text: "Password:".to_string(),
+                echo: false,
+            }],
+            repeated: true,
+        };
+        assert_eq!(
+            heading(&request),
+            [
+                "demo@example.test asks:",
+                "The server did not accept the answer and asks again."
+            ]
+        );
     }
 }

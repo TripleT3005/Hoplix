@@ -162,6 +162,7 @@ hostkey.jump_text = Hoplix war noch nie mit dem Jump-Host {host} verbunden. Fahr
 prompt.title = {host} fragt nach Anmeldedaten
 prompt.jump_title = Der Jump-Host {host} fragt nach Anmeldedaten
 prompt.confirm = Anmelden
+prompt.repeated = Der Server hat die Antwort nicht angenommen und fragt erneut.
 prompt.hint = Diese Fragen stellt der Server, zum Beispiel nach einem Einmalcode. Hoplix speichert die Antworten nicht.
 
 # Certificates

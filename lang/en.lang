@@ -161,6 +161,7 @@ hostkey.jump_text = Hoplix has not connected to the jump host {host} before. Onl
 prompt.title = {host} asks for sign-in details
 prompt.jump_title = The jump host {host} asks for sign-in details
 prompt.confirm = Sign in
+prompt.repeated = The server did not accept the answer and asks again.
 prompt.hint = The server asks these questions, for example for a one-time code. Hoplix does not save the answers.
 
 # Certificates
