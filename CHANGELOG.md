@@ -4,7 +4,7 @@ All notable changes to Hoplix, grouped by version in the style of [Keep a Change
 
 Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep a Changelog](https://keepachangelog.com/de/). Der Abschnitt einer Version wird als ihre Release-Notizen verwendet. Änderungen auf `main`, die noch nicht veröffentlicht sind, stehen unter [Unreleased] und wandern mit der nächsten Version in deren Abschnitt.
 
-## [Unreleased]
+## [0.6.0] – 2026-11-28
 
 ### English
 
