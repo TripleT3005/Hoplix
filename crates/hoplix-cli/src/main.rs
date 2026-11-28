@@ -995,10 +995,7 @@ async fn site_connection(
     options: &Options,
 ) -> Result<(ConnectionParams, Route), String> {
     let own_route = options.jump.is_some() || options.proxy.is_some();
-    let password_env = options
-        .password_env
-        .as_ref()
-        .or(options.secret_env.as_ref());
+    let password_env = options.sign_in_variable(site.protocol.is_s3());
     let own_sign_in = options.agent || options.key.is_some() || password_env.is_some();
     let mut wanted = Vec::new();
     if !own_sign_in {
