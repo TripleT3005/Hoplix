@@ -210,7 +210,7 @@ fn direct_connections_open_the_prefilled_connect_page() {
             jobs: vec![SavedJob {
                 source: Location::Local,
                 source_path: text_of(&root.data().join("a.txt")),
-                target: Location::Direct(connection),
+                target: Location::Direct(Box::new(connection)),
                 target_directory: text_of(&root.remote()),
                 target_name: Some("copy.txt".to_string()),
                 policy: Some(ConflictPolicy::Overwrite),

@@ -8,6 +8,7 @@ mod error;
 mod file_system;
 mod ftp;
 mod history;
+mod http;
 pub mod key_value;
 mod keyboard_interactive;
 pub mod language;
@@ -21,6 +22,7 @@ mod rate;
 mod recent;
 mod remote_shell;
 mod route;
+mod s3;
 mod scp;
 mod scp_protocol;
 mod search;
@@ -34,6 +36,7 @@ mod ssh_agent;
 mod sync;
 mod transfer;
 pub mod update;
+mod webdav;
 
 #[cfg(test)]
 mod test_support;
@@ -52,7 +55,8 @@ pub use encoding::{decode_windows_1252, encode_windows_1252};
 pub use entry::{Entry, EntryKind, SortKey, SortOrder, compare_names, sort_entries};
 pub use error::{Error, ErrorKind, Result};
 pub use file_system::{
-    BoxFuture, FileSystem, Reader, Writer, copy_file, is_valid_name, read_head, remove_recursive,
+    BoxFuture, FileSystem, Reader, Writer, can_resume, copy_file, is_valid_name, read_head,
+    remove_recursive,
 };
 pub use ftp::{FtpFileSystem, ensure_passive_mode};
 pub use history::{
@@ -68,7 +72,10 @@ pub use options::{
     ConnectionOptions, FileNameEncoding, FtpMode, MAX_TIMEOUT_SECONDS, seconds_from_text,
     seconds_text,
 };
-pub use paths::{TrustStore, config_dir};
+pub use paths::{
+    PORTABLE_CONFIG_DIR, PORTABLE_MARKER, TrustStore, config_dir, has_portable_marker, is_portable,
+    portable_dir, resolve_config_dir,
+};
 pub use properties::{
     FolderSize, PERMISSION_BITS, PermissionChange, Properties, WindowsAttributes, folder_size,
     mode_text, parse_mode, parse_permission_text, permission_text, set_permissions_with,
@@ -78,6 +85,7 @@ pub use queue_file::{Location, QUEUE_FILE, SavedJob, SavedQueue};
 pub use rate::RateLimiter;
 pub use recent::{MAX_RECENT, RECENT_FILE, RecentConnection, RecentList};
 pub use route::{JumpHost, Route, connect_via, connect_via_prompting, connect_via_with};
+pub use s3::{S3_DEFAULT_REGION, S3FileSystem, S3Options, is_valid_bucket};
 pub use scp::{SCP_NO_RESUME, ScpFileSystem};
 pub use scp_protocol::TreeSummary;
 pub use search::{NameFilter, Search, SearchBatch, SearchHit, Visited, Walk};
@@ -108,3 +116,4 @@ pub use transfer::{
     ResumePoint, RetryPolicy, SiteLimit, SpeedLimits, TransferDirection, TransferEvent,
     TransferQueue, TransferRequest,
 };
+pub use webdav::WebDavFileSystem;

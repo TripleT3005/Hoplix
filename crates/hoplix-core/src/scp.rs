@@ -374,7 +374,11 @@ impl FileSystem for ScpFileSystem {
         Some(self.target.params.url(path))
     }
 
-    fn supports_resume(&self) -> bool {
+    fn can_read_from_offset(&self) -> bool {
+        false
+    }
+
+    fn can_append(&self) -> bool {
         false
     }
 

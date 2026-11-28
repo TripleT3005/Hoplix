@@ -90,7 +90,8 @@ async fn scp_file_operations_work_remotely() {
     let trust_store = trust_store();
     let remote = connected(&params, &trust_store).await;
     let file_system: &dyn FileSystem = remote.as_ref();
-    assert!(!file_system.supports_resume());
+    assert!(!file_system.can_read_from_offset() && !file_system.can_append());
+    assert!(!hoplix_core::can_resume(&LocalFileSystem, file_system));
     assert!(
         file_system
             .checksum_algorithms()

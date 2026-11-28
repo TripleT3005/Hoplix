@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use hoplix_core::{
-    Error, ErrorKind, FileSystem, Location, SecretBackend, SecretSlot, Site,
+    Error, ErrorKind, FileSystem, Location, SecretBackend, SecretSlot, Site, Vault,
     change_master_password, create_vault, jump_secret_name, move_to_keyring, move_to_vault,
     proxy_secret_name, secret_name, site_id_of, unlock_vault,
 };
@@ -124,9 +124,11 @@ impl Hoplix {
             Message::ChangeMasterPassword => {
                 if self.vault.is_some() {
                     self.open_master_dialog(MasterMode::Change);
-                } else {
+                } else if self.vault_file_exists() {
                     self.pending = Some(PendingAction::ChangePassword);
                     self.open_master_dialog(MasterMode::Unlock);
+                } else {
+                    self.open_master_dialog(MasterMode::Create);
                 }
                 return ui::focus_input();
             }
@@ -136,6 +138,7 @@ impl Hoplix {
                     self.vault = Some(moved.target);
                     self.secret_backend = SecretBackend::Vault;
                     self.dialog = None;
+                    self.remember_portable_keyring(false);
                     self.notice = Some(if moved.leftovers.is_empty() {
                         self.strings.get("secrets.switched.vault").to_string()
                     } else {
@@ -144,6 +147,7 @@ impl Hoplix {
                             &[("count", &moved.leftovers.len().to_string())],
                         )
                     });
+                    return self.resume_pending();
                 }
                 Err(error) => self.fail_master_dialog(error),
             },
@@ -159,6 +163,7 @@ impl Hoplix {
                 Ok(_) => {
                     self.vault = None;
                     self.secret_backend = SecretBackend::Keyring;
+                    self.remember_portable_keyring(true);
                     self.notice = Some(self.strings.get("secrets.switched.keyring").to_string());
                 }
                 Err(error) => self.report_secret_error(&error),
@@ -293,6 +298,10 @@ impl Hoplix {
         }
         self.vault = Some(vault);
         self.dialog = None;
+        self.resume_pending()
+    }
+
+    fn resume_pending(&mut self) -> Task<Message> {
         match self.pending.take() {
             Some(PendingAction::Connect { site, names }) => self.load_secrets(&site, names),
             Some(PendingAction::StoreSecret { name, secret }) => {
@@ -325,11 +334,49 @@ impl Hoplix {
                 if self.vault.is_some() {
                     return self.restore_keyring();
                 }
+                if !self.vault_file_exists() {
+                    self.secret_backend = SecretBackend::Keyring;
+                    self.remember_portable_keyring(true);
+                    return Task::none();
+                }
                 self.pending = Some(PendingAction::SwitchToKeyring);
                 self.open_master_dialog(MasterMode::Unlock);
             }
         }
         ui::focus_input()
+    }
+
+    pub(crate) fn default_secret_backend(&self) -> SecretBackend {
+        if self.vault_file_exists()
+            || (self.config_dir.is_some()
+                && self.services.portable
+                && !self.settings.portable_keyring)
+        {
+            SecretBackend::Vault
+        } else {
+            SecretBackend::Keyring
+        }
+    }
+
+    pub(crate) fn vault_file_exists(&self) -> bool {
+        self.config_dir.as_deref().is_some_and(Vault::exists)
+    }
+
+    pub(crate) fn request_vault(&mut self, action: PendingAction) -> Task<Message> {
+        self.pending = Some(action);
+        self.open_master_dialog(if self.vault_file_exists() {
+            MasterMode::Unlock
+        } else {
+            MasterMode::Create
+        });
+        ui::focus_input()
+    }
+
+    fn remember_portable_keyring(&mut self, keyring: bool) {
+        if self.services.portable && self.settings.portable_keyring != keyring {
+            self.settings.portable_keyring = keyring;
+            self.save_settings();
+        }
     }
 
     fn restore_keyring(&mut self) -> Task<Message> {
@@ -378,9 +425,7 @@ impl Hoplix {
                 }
                 (None, None) => Task::none(),
                 (None, Some(secret)) => {
-                    self.pending = Some(PendingAction::StoreSecret { name, secret });
-                    self.open_master_dialog(MasterMode::Unlock);
-                    ui::focus_input()
+                    self.request_vault(PendingAction::StoreSecret { name, secret })
                 }
             },
         }
@@ -414,6 +459,7 @@ impl Hoplix {
                         .collect();
                     self.finish_secret_load(&id, result)
                 }
+                None if !self.vault_file_exists() => self.finish_secret_load(&id, Ok(Vec::new())),
                 None => {
                     self.pending = Some(PendingAction::Connect { site: id, names });
                     self.open_master_dialog(MasterMode::Unlock);
@@ -656,7 +702,7 @@ impl Hoplix {
         };
         let location = match (&self.connect_form.site, &direct) {
             (Some(id), _) => Some(Location::Site(id.clone())),
-            (None, Some(connection)) => Some(Location::Direct(connection.clone())),
+            (None, Some(connection)) => Some(Location::Direct(Box::new(connection.clone()))),
             (None, None) => None,
         };
         if let Some(location) = &location {

@@ -11,6 +11,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
+use crate::http::Framing;
 use crate::{Error, ErrorKind, Result};
 
 // Constants
@@ -169,56 +170,30 @@ pub(crate) async fn get(url: &str, user_agent: &str) -> Result<Vec<u8>> {
 
 pub(crate) fn parse_response(raw: &[u8]) -> Result<Response> {
     let end = find(raw, b"\r\n\r\n").ok_or_else(|| malformed("incomplete header"))?;
-    let head = std::str::from_utf8(&raw[..end]).map_err(|_| malformed("header"))?;
+    let head = crate::http::parse_head(&raw[..end])?;
     let body = &raw[end + 4..];
-    let mut lines = head.split("\r\n");
-    let status = lines.next().unwrap_or_default();
-    let mut parts = status.splitn(3, ' ');
-    let (Some(protocol), Some(code)) = (parts.next(), parts.next()) else {
-        return Err(malformed("status line"));
-    };
-    if !protocol.starts_with("HTTP/1.") {
-        return Err(malformed("status line"));
-    }
-    let code: u16 = code.parse().map_err(|_| malformed("status code"))?;
-    let headers: Vec<(String, &str)> = lines
-        .filter_map(|line| line.split_once(':'))
-        .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim()))
-        .collect();
-    let header = |wanted: &str| {
-        headers
-            .iter()
-            .find(|(name, _)| name == wanted)
-            .map(|(_, value)| *value)
-    };
-    match code {
+    match head.status {
         200 => {}
         301 | 302 | 303 | 307 | 308 => {
-            let location = header("location").ok_or_else(|| malformed("redirect"))?;
+            let location = head
+                .header("location")
+                .ok_or_else(|| malformed("redirect"))?;
             return Ok(Response::Redirect(location.to_string()));
         }
-        _ => return Err(Error::new(ErrorKind::Other, format!("HTTP {code}"))),
+        code => return Err(Error::new(ErrorKind::Other, format!("HTTP {code}"))),
     }
-    let chunked = header("transfer-encoding").is_some_and(|value| {
-        value
-            .rsplit(',')
-            .next()
-            .is_some_and(|coding| coding.trim().eq_ignore_ascii_case("chunked"))
-    });
-    if chunked {
-        return dechunk(body).map(Response::Body);
-    }
-    match header("content-length") {
-        Some(length) => {
-            let length: usize = length.parse().map_err(|_| malformed("content length"))?;
-            if length > MAX_RESPONSE {
-                return Err(too_large());
-            }
+    match head.framing(false)? {
+        Framing::Chunked => dechunk(body).map(Response::Body),
+        Framing::Length(length) => {
+            let length = usize::try_from(length)
+                .ok()
+                .filter(|length| *length <= MAX_RESPONSE)
+                .ok_or_else(too_large)?;
             body.get(..length)
                 .map(|body| Response::Body(body.to_vec()))
                 .ok_or_else(|| malformed("truncated body"))
         }
-        None => Ok(Response::Body(body.to_vec())),
+        Framing::Empty | Framing::UntilClose => Ok(Response::Body(body.to_vec())),
     }
 }
 

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Hoplix
+GenericName=File Transfer Client
+GenericName[de]=Dateiübertragungsprogramm
+Comment=Transfer files between your computer and servers
+Comment[de]=Dateien zwischen deinem Computer und Servern übertragen
+Exec=hoplix
+Icon=hoplix
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=SFTP;SCP;FTP;FTPS;WebDAV;S3;SSH;Transfer;Upload;Download;
+StartupNotify=true
+StartupWMClass=hoplix

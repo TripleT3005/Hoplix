@@ -498,3 +498,43 @@ fn site_limits_are_shown_in_the_queue() {
     );
     assert!(harness.root.remote().join("c.txt").is_file());
 }
+
+// S3
+
+#[test]
+fn s3_sites_are_edited_and_connected_with_their_bucket() {
+    let mut storage = site("Storage", "storage.example.test");
+    storage.protocol = Protocol::S3;
+    storage.port = 443;
+    storage.username = "demo-access".to_string();
+    storage.save_secrets = true;
+    storage.options.s3.bucket = "demo-bucket".to_string();
+    let id = storage.id.clone();
+    let mut harness = with_sites("s3-site", Layout::Modern, vec![storage]);
+    harness.store_keyring_secret(&id, password());
+    harness.click("Sites");
+    harness.click("Storage");
+    assert!(harness.has("Bucket") && harness.has("Save secret access key"));
+    assert_eq!(
+        harness
+            .app
+            .site_form
+            .as_ref()
+            .map(|form| form.connection.s3.bucket.clone()),
+        Some("demo-bucket".to_string())
+    );
+    harness.fill("Region", "eu-west-1");
+    harness.click("Save");
+    let saved = stored(&harness).sites[0].clone();
+    assert_eq!(saved.options.s3.bucket, "demo-bucket");
+    assert_eq!(saved.options.s3.region, "eu-west-1");
+    let text =
+        fs::read_to_string(harness.root.config().join(hoplix_core::SITES_FILE)).expect("sites");
+    assert!(text.contains("s3_bucket = demo-bucket") && !text.contains(password()));
+
+    harness.double_click("Storage");
+    assert_eq!(harness.app.page, Page::Browser);
+    let options = options_used_for("storage.example.test").expect("no connection");
+    assert_eq!(options.s3.bucket, "demo-bucket");
+    assert_eq!(options.s3.region, "eu-west-1");
+}

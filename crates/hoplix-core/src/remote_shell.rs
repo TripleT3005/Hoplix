@@ -273,6 +273,8 @@ impl Listed {
             size: resolved.size.filter(|_| !is_directory),
             modified: resolved.modified,
             is_link: self.is_link(),
+            permissions: resolved.mode.map(|mode| mode & crate::PERMISSION_BITS),
+            owner: Some(resolved.owner.clone()),
         }
     }
 
@@ -464,6 +466,8 @@ crw-rw-rw- 1 0 0 1, 3 1773579600 null\n\
         assert!(directory.is_directory() && directory.size.is_none());
         let link = listed[3].entry(Some(&listed[2]), "link -> x");
         assert!(link.is_directory() && link.is_link);
+        assert_eq!(directory.permissions, Some(0o2755));
+        assert_eq!(directory.owner.as_deref(), Some("1000"));
         let properties = listed[0].properties(None, "a b.txt");
         assert_eq!(properties.permissions, Some(0o644));
         assert_eq!(properties.owner.as_deref(), Some("1000"));

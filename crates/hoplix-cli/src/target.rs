@@ -53,6 +53,9 @@ impl Target {
             Some(index) => (&rest[..index], &rest[index..]),
             None => (rest, ""),
         };
+        if protocol.is_s3() {
+            return Self::parse_s3(text, authority, path);
+        }
         let (username, address) = match authority.rsplit_once('@') {
             Some((username, address)) => (decode(username)?, address),
             None if !protocol.supports_key_files() => (ANONYMOUS.to_string(), authority),
@@ -72,6 +75,33 @@ impl Target {
             port,
             username,
             path,
+        }))
+    }
+}
+
+impl Target {
+    fn parse_s3(text: &str, bucket: &str, path: &str) -> Result<Self, String> {
+        if bucket.contains('@') {
+            return Err(format!(
+                "do not put credentials into {text}, use --access-key and --secret-env"
+            ));
+        }
+        let bucket = decode(bucket)?;
+        if !hoplix_core::is_valid_bucket(&bucket) {
+            return Err(format!("invalid bucket name in {text}"));
+        }
+        let path = decode(path)?;
+        let path = if path.is_empty() {
+            "/".to_string()
+        } else {
+            path
+        };
+        Ok(Self::Remote(RemoteTarget {
+            protocol: Protocol::S3,
+            host: bucket,
+            port: Protocol::S3.default_port(),
+            username: String::new(),
+            path: RemotePath::Absolute(path),
         }))
     }
 }
@@ -238,6 +268,39 @@ mod tests {
         assert_eq!(target.path, RemotePath::Home("a b".to_string()));
         assert_eq!(remote("SCP://demo@[::1]:2222/srv").port, 2222);
         assert!(Target::parse("scp://files.example.test/srv").is_err());
+    }
+
+    #[test]
+    fn s3_urls_name_the_bucket_and_key() {
+        let target = remote("s3://demo-bucket/backups/a%20b.txt");
+        assert_eq!(target.protocol, Protocol::S3);
+        assert_eq!(target.host, "demo-bucket");
+        assert_eq!(
+            target.path,
+            RemotePath::Absolute("/backups/a b.txt".to_string())
+        );
+        assert_eq!(
+            remote("S3://demo-bucket").path,
+            RemotePath::Absolute("/".to_string())
+        );
+        for text in ["s3://key@demo-bucket/", "s3:///path", "s3://a b/"] {
+            assert!(Target::parse(text).is_err(), "{text}");
+        }
+    }
+
+    #[test]
+    fn webdav_urls_keep_the_full_server_path() {
+        let target = remote("davs://demo@cloud.example.test/remote.php/dav/files/demo/a%20b");
+        assert_eq!(target.protocol, Protocol::WebDavs);
+        assert_eq!(target.port, 443);
+        assert_eq!(
+            target.path,
+            RemotePath::Absolute("/remote.php/dav/files/demo/a b".to_string())
+        );
+        let target = remote("dav://demo@[::1]:8080/");
+        assert_eq!(target.protocol, Protocol::WebDav);
+        assert_eq!((target.host.as_str(), target.port), ("::1", 8080));
+        assert_eq!(remote("DAV://demo@host").port, 80);
     }
 
     #[test]

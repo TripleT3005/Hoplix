@@ -7,7 +7,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::rate::RateLimiter;
-use crate::{ChecksumMode, Error, ErrorKind, FileSystem, Result, Verification, verify_copy};
+use crate::{
+    ChecksumMode, Error, ErrorKind, FileSystem, Result, Verification, can_resume, verify_copy,
+};
 
 // Constants
 
@@ -1024,7 +1026,7 @@ impl TransferQueue {
             size,
             modified,
         } = *file;
-        let resumable = request.source.supports_resume() && request.target.supports_resume();
+        let resumable = can_resume(request.source.as_ref(), request.target.as_ref());
         let (mut path, mut offset) = match self
             .resolve(
                 id,

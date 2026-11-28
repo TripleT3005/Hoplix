@@ -19,7 +19,7 @@ const TARGET_SECTION: &str = "target";
 pub enum Location {
     Local,
     Site(String),
-    Direct(RecentConnection),
+    Direct(Box<RecentConnection>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,7 +138,7 @@ impl SavedJob {
                     .map(|id| Location::Site(id.to_string())),
                 "direct" => details
                     .and_then(RecentConnection::from_section)
-                    .map(Location::Direct),
+                    .map(|connection| Location::Direct(Box::new(connection))),
                 _ => None,
             }
         };
@@ -318,7 +318,7 @@ mod tests {
                     },
                 },
                 SavedJob {
-                    source: Location::Direct(direct(password)),
+                    source: Location::Direct(Box::new(direct(password))),
                     source_path: "/home/demo/photos".to_string(),
                     target: Location::Local,
                     target_directory: "D:\\Backup".to_string(),

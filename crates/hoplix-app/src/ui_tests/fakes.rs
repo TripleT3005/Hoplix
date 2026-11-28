@@ -84,7 +84,20 @@ impl FileSystem for Folder {
     }
 
     fn list(&self, path: &str) -> BoxFuture<'_, Result<Vec<Entry>>> {
-        self.inner.list(path)
+        if self.label.is_none() {
+            return self.inner.list(path);
+        }
+        let path = path.to_string();
+        Box::pin(async move {
+            let mut entries = self.inner.list(&path).await?;
+            for entry in &mut entries {
+                let default = if entry.is_directory() { 0o755 } else { 0o644 };
+                let full = self.inner.join(&path, &entry.name);
+                entry.permissions = Some(permission_of(&full).unwrap_or(default));
+                entry.owner = Some(FAKE_OWNER.to_string());
+            }
+            Ok(entries)
+        })
     }
 
     fn metadata(&self, path: &str) -> BoxFuture<'_, Result<Entry>> {
@@ -350,12 +363,12 @@ fn connect(
             ErrorKind::UnknownHostKey,
             ErrorKind::HostKeyChanged,
         )),
-        Protocol::FtpsExplicit | Protocol::FtpsImplicit => Some((
+        Protocol::FtpsExplicit | Protocol::FtpsImplicit | Protocol::WebDavs => Some((
             &trust_store.certificates,
             ErrorKind::UntrustedCertificate,
             ErrorKind::CertificateChanged,
         )),
-        Protocol::Ftp => None,
+        Protocol::Ftp | Protocol::WebDav | Protocol::S3 => None,
     };
     if let Some((file, unknown, changed)) = known {
         check_host_key(file, &params.host, params.port, trusted, unknown, changed)?;

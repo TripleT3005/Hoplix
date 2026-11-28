@@ -5,8 +5,8 @@ use crate::keyboard_interactive::SharedPrompter;
 use crate::proxy::Proxy;
 use crate::scp::ScpFileSystem;
 use crate::{
-    ConnectionOptions, Error, ErrorKind, FileSystem, FtpFileSystem, Result, SftpFileSystem,
-    TrustStore,
+    ConnectionOptions, Error, ErrorKind, FileSystem, FtpFileSystem, Result, S3FileSystem,
+    SftpFileSystem, TrustStore, WebDavFileSystem,
 };
 
 // Types
@@ -129,6 +129,54 @@ pub async fn connect_via_prompting(
                     .iter()
                     .rev()
                     .find(|trust| trust.address.is(&params.host, params.port))
+                    .cloned(),
+            )
+            .await?;
+            Ok(Arc::new(file_system))
+        }
+        Protocol::WebDav | Protocol::WebDavs => {
+            if !route.jump_hosts.is_empty() {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "jump hosts only work with SFTP",
+                ));
+            }
+            let file_system = WebDavFileSystem::connect(
+                params,
+                route.proxy.as_ref(),
+                options,
+                &trust_store.certificates,
+                trusted
+                    .iter()
+                    .rev()
+                    .find(|trust| trust.address.is(&params.host, params.port))
+                    .cloned(),
+            )
+            .await?;
+            Ok(Arc::new(file_system))
+        }
+        Protocol::S3 => {
+            if !route.jump_hosts.is_empty() {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "jump hosts only work with SFTP",
+                ));
+            }
+            let host = if params.host.trim().is_empty() {
+                options.s3.default_endpoint()
+            } else {
+                params.host.clone()
+            };
+            let file_system = S3FileSystem::connect(
+                params,
+                route.proxy.as_ref(),
+                options,
+                &trust_store.certificates,
+                trusted
+                    .iter()
+                    .rev()
+                    .find(|trust| trust.address.port == params.port)
+                    .filter(|trust| trust.address.host.ends_with(&host))
                     .cloned(),
             )
             .await?;

@@ -9,6 +9,7 @@ use crate::app::{Hoplix, Message};
 use crate::connect_form::{AuthMethod, ConnectForm, Field};
 use crate::i18n::Strings;
 use crate::route_form::{JumpField, ProxyField};
+use crate::s3_form::S3Field;
 use crate::theme;
 use crate::ui::{self, Choice};
 
@@ -134,6 +135,8 @@ fn recent_list(app: &Hoplix) -> Option<Element<'_, Message>> {
             strings.format("connect.recent.key", &[("path", &entry.key_path)])
         } else if entry.uses_agent() {
             strings.get("connect.recent.agent").to_string()
+        } else if entry.protocol.is_s3() {
+            strings.get("connect.recent.access_key").to_string()
         } else {
             strings.get("connect.recent.password").to_string()
         };
@@ -215,6 +218,9 @@ pub fn connection_fields<'a>(
                     Protocol::Ftp => "connect.protocol.ftp",
                     Protocol::FtpsExplicit => "connect.protocol.ftpes",
                     Protocol::FtpsImplicit => "connect.protocol.ftps",
+                    Protocol::WebDav => "connect.protocol.dav",
+                    Protocol::WebDavs => "connect.protocol.davs",
+                    Protocol::S3 => "connect.protocol.s3",
                     Protocol::Scp => "connect.protocol.scp",
                 })
                 .to_string(),
@@ -239,7 +245,27 @@ pub fn connection_fields<'a>(
         }
     };
 
-    let default_port = form.protocol.default_port().to_string();
+    let s3 = form.protocol.is_s3();
+    let default_port = if s3 {
+        form.s3.options().default_port().to_string()
+    } else {
+        form.protocol.default_port().to_string()
+    };
+    let (host_label, host_hint, username_label, password_label) = if s3 {
+        (
+            "connect.s3.endpoint",
+            "connect.s3.endpoint.hint",
+            "connect.s3.access_key",
+            "connect.s3.secret",
+        )
+    } else {
+        (
+            "connect.host",
+            "connect.host",
+            "connect.username",
+            "connect.password",
+        )
+    };
     let mut fields: Vec<Element<'a, Message>> = vec![
         setting(
             strings.get("connect.protocol"),
@@ -250,27 +276,72 @@ pub fn connection_fields<'a>(
             .into(),
         ),
         setting(
-            strings.get("connect.host"),
+            strings.get(host_label),
             row![
-                input(strings.get("connect.host"), &form.host, Field::Host),
+                input(strings.get(host_hint), &form.host, Field::Host),
                 input(&default_port, &form.port, Field::Port).width(PORT_WIDTH),
             ]
             .spacing(8)
             .into(),
         ),
         setting(
-            strings.get("connect.username"),
-            input(
-                strings.get("connect.username"),
-                &form.username,
-                Field::Username,
-            )
-            .into(),
+            strings.get(username_label),
+            input(strings.get(username_label), &form.username, Field::Username).into(),
         ),
     ];
+    if s3 {
+        fields.push(setting(
+            strings.get("connect.s3.bucket"),
+            input(strings.get("connect.s3.bucket"), &form.s3.bucket, |value| {
+                Field::S3(S3Field::Bucket(value))
+            })
+            .into(),
+        ));
+        fields.push(setting(
+            strings.get("connect.s3.region"),
+            input(hoplix_core::S3_DEFAULT_REGION, &form.s3.region, |value| {
+                Field::S3(S3Field::Region(value))
+            })
+            .into(),
+        ));
+        fields.push(indented_checkbox(
+            strings.get("connect.s3.path_style"),
+            form.s3.path_style,
+            enabled.then_some(move |value| wrap(Field::S3(S3Field::PathStyle(value)))),
+        ));
+        fields.push(indented_checkbox(
+            strings.get("connect.s3.http"),
+            form.s3.plain_http,
+            enabled.then_some(move |value| wrap(Field::S3(S3Field::PlainHttp(value)))),
+        ));
+        if form.s3.plain_http {
+            fields.push(ui::warning(
+                strings.get("connect.s3.http.warning").to_string(),
+            ));
+        }
+    }
 
+    if form.protocol.is_webdav() {
+        fields.insert(
+            2,
+            setting(
+                strings.get("connect.base_path"),
+                input(
+                    strings.get("connect.base_path.placeholder"),
+                    &form.base_path,
+                    Field::BasePath,
+                )
+                .into(),
+            ),
+        );
+    }
     if !form.protocol.is_encrypted() {
-        fields.push(ui::warning(strings.get("connect.unencrypted").to_string()));
+        let key = if form.protocol.is_webdav() {
+            "connect.unencrypted.dav"
+        } else {
+            "connect.unencrypted"
+        };
+        fields.push(ui::warning(strings.get(key).to_string()));
     }
     if form.protocol == Protocol::Scp {
         fields.push(hint(strings.get("connect.scp_hint")));
@@ -288,9 +359,9 @@ pub fn connection_fields<'a>(
 
     match form.effective_method() {
         AuthMethod::Password => fields.push(setting(
-            strings.get("connect.password"),
+            strings.get(password_label),
             input(
-                secret_placeholder("connect.password"),
+                secret_placeholder(password_label),
                 &form.password,
                 Field::Password,
             )
@@ -330,6 +401,7 @@ pub fn save_secret_checkbox<'a>(
     enabled: bool,
 ) -> Option<Element<'a, Message>> {
     let label = match form.effective_method() {
+        AuthMethod::Password if form.protocol.is_s3() => strings.get("connect.s3.save_secret"),
         AuthMethod::Password => strings.get("connect.save_password"),
         AuthMethod::KeyFile => strings.get("connect.save_passphrase"),
         AuthMethod::Agent => return None,

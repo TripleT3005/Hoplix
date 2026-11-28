@@ -42,6 +42,10 @@ pub trait FileSystem: Debug + Send + Sync {
 
     fn rename(&self, from: &str, to: &str) -> BoxFuture<'_, Result<()>>;
 
+    fn remove_tree(&self, _path: &str) -> Option<BoxFuture<'_, Result<()>>> {
+        None
+    }
+
     fn open_read(&self, path: &str, offset: u64) -> BoxFuture<'_, Result<Reader>>;
 
     fn open_write(&self, path: &str, offset: u64) -> BoxFuture<'_, Result<Writer>>;
@@ -55,7 +59,11 @@ pub trait FileSystem: Debug + Send + Sync {
         self.open_write(path, offset)
     }
 
-    fn supports_resume(&self) -> bool {
+    fn can_read_from_offset(&self) -> bool {
+        true
+    }
+
+    fn can_append(&self) -> bool {
         true
     }
 
@@ -106,6 +114,9 @@ pub trait FileSystem: Debug + Send + Sync {
 // Operations
 
 pub async fn remove_recursive(file_system: &dyn FileSystem, path: &str) -> Result<()> {
+    if let Some(removal) = file_system.remove_tree(path) {
+        return removal.await;
+    }
     let root = file_system.metadata(path).await?;
     if !root.is_directory() || root.is_link {
         return file_system.remove_file(path).await;
@@ -129,6 +140,10 @@ pub async fn remove_recursive(file_system: &dyn FileSystem, path: &str) -> Resul
     Ok(())
 }
 
+pub fn can_resume(source: &dyn FileSystem, target: &dyn FileSystem) -> bool {
+    source.can_read_from_offset() && target.can_append()
+}
+
 pub async fn copy_file(
     source: &dyn FileSystem,
     from: &str,
@@ -136,7 +151,7 @@ pub async fn copy_file(
     to: &str,
     resume: bool,
 ) -> Result<u64> {
-    let offset = if resume && source.supports_resume() && target.supports_resume() {
+    let offset = if resume && can_resume(source, target) {
         match target.metadata(to).await {
             Ok(entry) => entry.size.unwrap_or(0),
             Err(error) if error.kind() == ErrorKind::NotFound => 0,

@@ -293,7 +293,7 @@ fn advanced<'a>(app: &'a Hoplix, form: &'a SiteForm) -> Element<'a, Message> {
     for element in route_fields(strings, &form.connection, wrap, true, None, saving) {
         content = content.push(element);
     }
-    if !form.connection.protocol.uses_ssh() {
+    if form.connection.protocol.is_ftp() {
         content = content.push(subheading(strings.get("sites.advanced.ftp")));
         for element in ftp_options(strings, form) {
             content = content.push(element);

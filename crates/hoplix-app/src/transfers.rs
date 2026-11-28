@@ -230,18 +230,18 @@ impl Hoplix {
         if source.path.is_empty() || target.path.is_empty() {
             return Task::none();
         }
-        let names: Vec<String> = source
-            .selected_entries()
-            .iter()
-            .map(|entry| entry.name.clone())
-            .collect();
-        if names.is_empty() {
+        let mut sources = source.transfer_sources();
+        if sources.is_empty() {
             return Task::none();
         }
-        if same_file_system(&source.file_system, &target.file_system) && source.path == target.path
-        {
-            self.notice = Some(self.strings.get("transfer.same_folder").to_string());
-            return Task::none();
+        if same_file_system(&source.file_system, &target.file_system) {
+            sources.retain(|path| {
+                source.file_system.parent(path).as_deref() != Some(target.path.as_str())
+            });
+            if sources.is_empty() {
+                self.notice = Some(self.strings.get("transfer.same_folder").to_string());
+                return Task::none();
+            }
         }
         let direction = match (
             source.file_system.label().is_some(),
@@ -257,13 +257,12 @@ impl Hoplix {
             .zip(self.location_of(target))
             .map(|(source, target)| Endpoints { source, target });
         let source_file_system = Arc::clone(&source.file_system);
-        let source_path = source.path.clone();
         let target_file_system = Arc::clone(&target.file_system);
         let target_path = target.path.clone();
-        for name in names {
+        for source_path in sources {
             let request = TransferRequest {
                 source: Arc::clone(&source_file_system),
-                source_path: source_file_system.join(&source_path, &name),
+                source_path,
                 target: Arc::clone(&target_file_system),
                 target_directory: target_path.clone(),
                 target_name: None,
@@ -553,6 +552,8 @@ mod tests {
                     size: Some(1),
                     modified: None,
                     is_link: false,
+                    permissions: None,
+                    owner: None,
                 })
                 .collect();
         }

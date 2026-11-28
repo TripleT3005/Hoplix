@@ -17,9 +17,9 @@ use hoplix_core::{
     RetryPolicy, Route, Search, SecretBackend, SharedPrompter, Site, SiteExport, SiteList, SortKey,
     SortOrder, SpeedLimits, SyncAction, SyncDirection, SyncEndpoint, SyncMode, SyncOptions,
     SyncPlan, TransferEvent, TransferQueue, TransferRequest, TrustStore, Vault, Verification,
-    config_dir, decrypt_export, encrypt_export, jump_secret_name, mode_text, permission_text,
-    proxy_secret_name, remove_recursive, secret_name, set_permissions_with, sort_entries,
-    unlock_vault, utc_date,
+    can_resume, config_dir, decrypt_export, encrypt_export, jump_secret_name, mode_text,
+    permission_text, proxy_secret_name, remove_recursive, secret_name, set_permissions_with,
+    sort_entries, unlock_vault, utc_date,
 };
 
 use arguments::{Command, Invocation, Options, USAGE};
@@ -322,10 +322,8 @@ async fn transfer(
         Err(error) if error.kind() == ErrorKind::NotFound => split(target),
         Err(error) => return Err(describe(error)),
     };
-    if options.resume
-        && !(source.file_system.supports_resume() && target.file_system.supports_resume())
-    {
-        eprintln!("SCP cannot resume: existing files are copied again from the start");
+    if options.resume && !can_resume(source.file_system.as_ref(), target.file_system.as_ref()) {
+        eprintln!("this connection cannot resume: existing files are copied again from the start");
     }
     let queue = queue_for(1, options);
     queue.set_policy(if options.resume {
@@ -700,6 +698,17 @@ async fn open(target: &Target, options: &Options) -> Result<Opened, String> {
             path: path.clone(),
             max_transfers: None,
         }),
+        Target::Remote(remote) if remote.protocol.is_s3() => {
+            let (params, connection) = s3_connection(remote, options)?;
+            let route = route(options)?;
+            let file_system = connect(&params, &route, &connection, options).await?;
+            let path = locate(file_system.as_ref(), &remote.path).await?;
+            Ok(Opened {
+                file_system,
+                path,
+                max_transfers: None,
+            })
+        }
         Target::Remote(remote) => {
             let params = ConnectionParams {
                 protocol: remote.protocol,
@@ -722,7 +731,15 @@ async fn open(target: &Target, options: &Options) -> Result<Opened, String> {
             let sites = load_sites()?;
             let site = find_site(&sites, target)?;
             let (params, route) = site_connection(site, options).await?;
-            let file_system = connect(&params, &route, &site.options, options).await?;
+            let mut connection = site.options.clone();
+            if site.protocol.is_s3() {
+                connection.s3.session_token = options
+                    .session_token_env
+                    .as_deref()
+                    .map(secret)
+                    .transpose()?;
+            }
+            let file_system = connect(&params, &route, &connection, options).await?;
             let path = target
                 .path
                 .clone()
@@ -735,6 +752,59 @@ async fn open(target: &Target, options: &Options) -> Result<Opened, String> {
             })
         }
     }
+}
+
+fn s3_connection(
+    remote: &RemoteTarget,
+    options: &Options,
+) -> Result<(ConnectionParams, ConnectionOptions), String> {
+    let access_key = options
+        .access_key
+        .clone()
+        .ok_or("s3:// targets need --access-key <id> and --secret-env <name>")?;
+    let variable = options
+        .secret_env
+        .as_deref()
+        .ok_or("s3:// targets need --access-key <id> and --secret-env <name>")?;
+    let mut settings = hoplix_core::S3Options {
+        bucket: remote.host.clone(),
+        region: options.region.clone().unwrap_or_default(),
+        path_style: options.path_style,
+        plain_http: options
+            .endpoint
+            .as_ref()
+            .is_some_and(|endpoint| endpoint.plain_http),
+        session_token: options
+            .session_token_env
+            .as_deref()
+            .map(secret)
+            .transpose()?,
+    };
+    let (host, port) = match &options.endpoint {
+        Some(endpoint) => (
+            endpoint.host.clone(),
+            endpoint.port.unwrap_or_else(|| settings.default_port()),
+        ),
+        None => (settings.default_endpoint(), settings.default_port()),
+    };
+    if settings.plain_http {
+        eprintln!(
+            "Warning: {host} is reached over unencrypted HTTP; use it only for local test servers"
+        );
+    }
+    settings.region = settings.region.trim().to_string();
+    let params = ConnectionParams {
+        protocol: hoplix_core::Protocol::S3,
+        host,
+        port,
+        username: access_key,
+        authentication: Authentication::Password(secret(variable)?),
+    };
+    let connection = ConnectionOptions {
+        s3: settings,
+        ..ConnectionOptions::default()
+    };
+    Ok((params, connection))
 }
 
 async fn locate(file_system: &dyn FileSystem, path: &RemotePath) -> Result<String, String> {
@@ -925,7 +995,11 @@ async fn site_connection(
     options: &Options,
 ) -> Result<(ConnectionParams, Route), String> {
     let own_route = options.jump.is_some() || options.proxy.is_some();
-    let own_sign_in = options.agent || options.key.is_some() || options.password_env.is_some();
+    let password_env = options
+        .password_env
+        .as_ref()
+        .or(options.secret_env.as_ref());
+    let own_sign_in = options.agent || options.key.is_some() || password_env.is_some();
     let mut wanted = Vec::new();
     if !own_sign_in {
         wanted.push(secret_name(&site.id));
@@ -961,7 +1035,14 @@ async fn site_connection(
         };
         return Ok((params, route));
     }
-    if let Some(name) = &options.password_env {
+    if let Some(access_key) = options
+        .access_key
+        .as_ref()
+        .filter(|_| site.protocol.is_s3())
+    {
+        params.username.clone_from(access_key);
+    }
+    if let Some(name) = password_env {
         params.authentication = Authentication::Password(secret(name)?);
         return Ok((params, route));
     }
@@ -972,7 +1053,15 @@ async fn site_connection(
             site.name
         ));
     }
-    Ok((site.to_params(saved), route))
+    let mut params = site.to_params(saved);
+    if let Some(access_key) = options
+        .access_key
+        .as_ref()
+        .filter(|_| site.protocol.is_s3())
+    {
+        params.username.clone_from(access_key);
+    }
+    Ok((params, route))
 }
 
 async fn saved_secrets(

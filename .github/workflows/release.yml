@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/release.yml
       - installer/**
+      - scripts/**
       - build/**
       - assets/icons/**
   workflow_dispatch:
@@ -28,6 +29,8 @@ jobs:
       exists: ${{ steps.check.outputs.exists }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Read version
         id: version
@@ -49,21 +52,22 @@ jobs:
               exit 1
             fi
           done
-          if grep -nE '^[[:space:]]*#define[[:space:]]+AppVersion' installer/hoplix.iss; then
-            echo "::error::installer/hoplix.iss must not define its own version; it is passed with /DAppVersion"
+          if grep -nE '^[[:space:]]*#define[[:space:]]+AppVersion' installer/Hoplix.iss; then
+            echo "::error::installer/Hoplix.iss must not define its own version; it is passed with /DAppVersion"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Check for existing tag
+      - name: Check for existing release
         id: check
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           exists=false
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             exists=true
           fi
           if [ "$exists" = false ] && awk '/^## \[Unreleased\]/ { found = 1; next } /^## \[/ { found = 0 } found && NF' CHANGELOG.md | grep -q .; then
@@ -71,6 +75,18 @@ jobs:
             exit 1
           fi
           echo "exists=$exists" >> "$GITHUB_OUTPUT"
+
+      - name: Check dependency updates in changelog
+        if: steps.check.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          rustup toolchain install stable --profile minimal && rustup default stable
+          if ! python3 scripts/dependency_updates.py --check "$VERSION" \
+            --platform x86_64-pc-windows-msvc --platform x86_64-unknown-linux-gnu; then
+            echo "::error::CHANGELOG.md does not mention every Dependabot update since the last release; add them to the section for $VERSION"
+            exit 1
+          fi
 
   build:
     needs: version
@@ -93,13 +109,13 @@ jobs:
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev dpkg-dev desktop-file-utils
 
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
-      - name: Check versions, language files and third-party licenses
-        run: cargo test -p hoplix-core --test version --test languages --test third_party_licenses --locked
+      - name: Check versions and language files
+        run: cargo test -p hoplix-core --test version --test languages --locked
 
       - name: Build
         run: cargo build --workspace --release --locked
@@ -125,6 +141,16 @@ jobs:
             exit 1
           fi
 
+      - name: Collect third-party licenses
+        shell: bash
+        run: |
+          python=python3
+          command -v python3 > /dev/null || python=python
+          "$python" scripts/third_party_licenses.py --title Hoplix --rust-std \
+            --platform x86_64-pc-windows-msvc --platform x86_64-unknown-linux-gnu \
+            --notice-file ring=LICENSE --notice-file ring=src/polyfill/once_cell/LICENSE-MIT \
+            --output THIRD-PARTY-LICENSES.txt
+
       - name: Package
         shell: bash
         run: |
@@ -139,6 +165,11 @@ jobs:
           cp "${binaries[@]}" "dist/$name/"
           cp lang/*.lang "dist/$name/lang/"
           cp LICENSE THIRD-PARTY-LICENSES.txt README.md CHANGELOG.md "dist/$name/"
+          required=(LICENSE THIRD-PARTY-LICENSES.txt README.md CHANGELOG.md)
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp installer/hoplix.portable "dist/$name/"
+            required+=(hoplix.portable)
+          fi
           cd dist
           if [ "$RUNNER_OS" = Windows ]; then
             archive="$name.zip"
@@ -149,7 +180,7 @@ jobs:
             tar -czf "$archive" "$name"
             contents=$(tar -tzf "$archive")
           fi
-          for file in LICENSE THIRD-PARTY-LICENSES.txt README.md CHANGELOG.md; do
+          for file in "${required[@]}"; do
             if ! grep -qxF "$name/$file" <<< "$contents"; then
               echo "::error::$archive does not contain $file"
               exit 1
@@ -158,10 +189,97 @@ jobs:
           sha256sum "$archive" > "$archive.sha256"
           rm -r "$name"
 
+      - name: Package Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          package_version="${VERSION//-/\~}"
+          stage="$RUNNER_TEMP/package/root"
+          mkdir -p "$stage/usr/bin" "$stage/usr/share/hoplix/lang" "$stage/usr/share/applications" "$stage/usr/share/doc/hoplix"
+          install -m 755 target/release/hoplix target/release/hoplix-cli "$stage/usr/bin/"
+          install -m 644 lang/*.lang "$stage/usr/share/hoplix/lang/"
+          install -m 644 installer/linux/hoplix.desktop "$stage/usr/share/applications/hoplix.desktop"
+          for size in 16 32 64 128 256; do
+            install -D -m 644 "assets/icons/icon-$size.png" "$stage/usr/share/icons/hicolor/${size}x${size}/apps/hoplix.png"
+          done
+          install -D -m 644 assets/icons/icon.svg "$stage/usr/share/icons/hicolor/scalable/apps/hoplix.svg"
+          install -m 644 LICENSE THIRD-PARTY-LICENSES.txt README.md CHANGELOG.md installer/linux/copyright "$stage/usr/share/doc/hoplix/"
+          desktop-file-validate "$stage/usr/share/applications/hoplix.desktop"
+
+          shlibs="$RUNNER_TEMP/package/shlibs"
+          mkdir -p "$shlibs/debian"
+          printf 'Source: hoplix\n\nPackage: hoplix\nArchitecture: any\n' > "$shlibs/debian/control"
+          linked=$(cd "$shlibs" && dpkg-shlibdeps -O "$stage/usr/bin/hoplix" "$stage/usr/bin/hoplix-cli" 2> /dev/null | sed -n 's/^shlibs:Depends=//p')
+          if [ -z "$linked" ]; then
+            echo "::error::dpkg-shlibdeps found no linked libraries"
+            exit 1
+          fi
+
+          deb="dist/hoplix_${package_version}_amd64.deb"
+          deb_root="$RUNNER_TEMP/package/deb"
+          mkdir -p "$deb_root/DEBIAN"
+          cp -R "$stage/." "$deb_root/"
+          size=$(du -sk "$deb_root" | cut -f 1)
+          sed -e "s/APP_VERSION/$package_version/" -e "s/INSTALLED_SIZE/$size/" -e "s/LINKED_LIBRARIES/$linked/" installer/linux/control > "$deb_root/DEBIAN/control"
+          dpkg-deb --root-owner-group --build "$deb_root" "$deb"
+
+          sudo apt-get install -y --no-install-recommends rpm > /dev/null
+          rpm_top="$RUNNER_TEMP/package/rpmbuild"
+          sed "s/APP_VERSION/$package_version/" installer/linux/hoplix.spec > "$RUNNER_TEMP/package/hoplix.spec"
+          rpmbuild -bb --quiet --define "_topdir $rpm_top" --define "_sourcedir $RUNNER_TEMP/package" "$RUNNER_TEMP/package/hoplix.spec"
+          cp "$rpm_top"/RPMS/x86_64/*.rpm dist/
+
+          cd dist
+          for package in *.deb *.rpm; do
+            sha256sum "$package" > "$package.sha256"
+          done
+
+      - name: Check Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          package_version="${VERSION//-/\~}"
+          deb="dist/hoplix_${package_version}_amd64.deb"
+          rpm="dist/hoplix-${package_version}-1.x86_64.rpm"
+          dpkg-deb --info "$deb"
+          if [ "$(dpkg-deb --field "$deb" Version)" != "$package_version" ]; then
+            echo "::error::$deb does not have the version $package_version"
+            exit 1
+          fi
+          rpm -qpi "$rpm"
+          if [ "$(rpm -qp --queryformat '%{VERSION}' "$rpm")" != "$package_version" ]; then
+            echo "::error::$rpm does not have the version $package_version"
+            exit 1
+          fi
+          rpm -qpR "$rpm" | grep -q 'libxkbcommon.so.0'
+          rpm -qpR "$rpm" | grep -q 'libc.so.6'
+          rpm -qlp "$rpm" | grep -q '^/usr/share/icons/hicolor/256x256/apps/hoplix.png$'
+          rpm -qlp "$rpm" | grep -q '^/usr/share/hoplix/lang/de.lang$'
+          rpm -qlp "$rpm" | grep -q '^/usr/share/doc/hoplix/THIRD-PARTY-LICENSES.txt$'
+          sudo apt-get install -y "./$deb"
+          test -x /usr/bin/hoplix
+          test -f /usr/share/applications/hoplix.desktop
+          test -f /usr/share/hoplix/lang/en.lang
+          test -s /usr/share/doc/hoplix/THIRD-PARTY-LICENSES.txt
+          desktop-file-validate /usr/share/applications/hoplix.desktop
+          for binary in /usr/bin/hoplix /usr/bin/hoplix-cli; do
+            if ldd "$binary" | grep 'not found'; then
+              echo "::error::$binary has missing libraries"
+              exit 1
+            fi
+          done
+          if ! /usr/bin/hoplix-cli --version | grep -qF "$VERSION"; then
+            echo "::error::The installed hoplix-cli does not report $VERSION"
+            exit 1
+          fi
+          sudo apt-get purge -y hoplix
+
       - name: Build installer
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          if (-not (Select-String -Path installer\Hoplix.iss -SimpleMatch -Quiet 'Source: "..\THIRD-PARTY-LICENSES.txt"; DestDir: "{app}"')) {
+            Write-Output "::error::installer\Hoplix.iss does not install THIRD-PARTY-LICENSES.txt"
+            exit 1
+          }
           $compiler = @(
             (Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe"),
             (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe")
@@ -173,7 +291,7 @@ jobs:
               (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe")
             ) | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
-          & $compiler /Qp "/DAppVersion=$env:VERSION" installer\hoplix.iss
+          & $compiler /Qp "/DAppVersion=$env:VERSION" installer\Hoplix.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Set-Location dist
           $setup = "Hoplix-$env:VERSION-windows-x64-setup.exe"
@@ -192,6 +310,8 @@ jobs:
             dist/*.zip
             dist/*.tar.gz
             dist/*.exe
+            dist/*.deb
+            dist/*.rpm
             dist/*.sha256
           if-no-files-found: error
 

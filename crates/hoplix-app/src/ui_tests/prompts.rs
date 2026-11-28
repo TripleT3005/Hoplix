@@ -136,7 +136,7 @@ fn prompts_wait_for_an_open_dialog() {
 fn scp_can_be_chosen_and_explains_its_limits() {
     let mut harness = Harness::start("prompt-scp", Layout::Modern, |_| {});
     harness.click("Connect");
-    harness.pick("Protocol", 4);
+    harness.pick("Protocol", 7);
     assert_eq!(harness.app.connect_form.protocol, Protocol::Scp);
     assert!(harness.contains("SCP needs a POSIX shell"));
     assert!(harness.has("Sign in with"));

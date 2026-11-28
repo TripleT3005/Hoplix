@@ -1,6 +1,50 @@
 # Changelog
 
-All notable changes are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/).
+All notable changes to Hoplix, grouped by version in the style of [Keep a Changelog](https://keepachangelog.com/). The section of each version is used as its release notes. Changes on `main` that are not released yet are collected under [Unreleased] and move into the section of the next version.
+
+Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep a Changelog](https://keepachangelog.com/de/). Der Abschnitt einer Version wird als ihre Release-Notizen verwendet. Änderungen auf `main`, die noch nicht veröffentlicht sind, stehen unter [Unreleased] und wandern mit der nächsten Version in deren Abschnitt.
+
+## [Unreleased]
+
+### English
+
+#### Added
+
+- Portable mode: with the file `hoplix.portable` next to the program (included in the portable ZIP), Hoplix keeps all configuration in the `config` folder beside it; saved passwords then go to the file encrypted with a master password by default.
+- `.deb` and `.rpm` packages for Linux with a menu entry and icons.
+- Optional *Permissions* and *Owner* columns in the file list (*Settings → General*).
+- Search results can be copied to another tab or pane with the copy buttons or by dragging them there.
+- WebDAV over HTTPS (`davs://`) and HTTP (`dav://`) with Digest or Basic sign-in, a configurable base path (e.g. `/remote.php/dav/files/<user>/` for Nextcloud), certificate trust like FTPS and proxy support, in the app and in `hoplix-cli`; downloads continue where they stopped, interrupted uploads start again because WebDAV cannot append.
+- S3 and S3-compatible storage (MinIO, Ceph, Garage …): buckets with folders, uploads and downloads with resume, multipart uploads for large files, renaming, deleting and new folders; endpoint, region, path-style addresses and optional HTTP for local test servers.
+- `hoplix-cli` accepts `s3://bucket/path` with `--endpoint`, `--region`, `--path-style`, `--access-key`, `--secret-env` and `--session-token-env`.
+- SCP connections (`scp://`) for servers without SFTP, with the same SSH sign-in, host key check, jump host and proxy; SCP cannot resume, so interrupted files are copied again.
+- Sign-in questions from SSH servers (keyboard-interactive, e.g. one-time codes) are asked in a dialog that names the server or jump host; answers are never saved. The saved password answers a plain "Password:" question once.
+- `hoplix-cli` asks SSH sign-in questions on the terminal and accepts `scp://` targets.
+
+#### Changed
+
+- The site editor shows the FTP options for FTP sites only.
+- The conflict dialog offers *Resume* only where the connection can continue the file.
+
+### Deutsch
+
+#### Neu
+
+- Portabler Modus: Mit der Datei `hoplix.portable` neben dem Programm (in der portablen ZIP enthalten) speichert Hoplix die gesamte Konfiguration im Ordner `config` daneben; gespeicherte Passwörter landen dann standardmäßig in der mit einem Master-Passwort verschlüsselten Datei.
+- Pakete `.deb` und `.rpm` für Linux mit Menüeintrag und Icons.
+- Optionale Spalten *Berechtigungen* und *Besitzer* in der Dateiliste (*Einstellungen → Allgemein*).
+- Suchergebnisse lassen sich mit den Kopier-Buttons oder durch Ziehen in einen anderen Tab oder Bereich kopieren.
+- WebDAV über HTTPS (`davs://`) und HTTP (`dav://`) mit Digest- oder Basic-Anmeldung, einstellbarem Basispfad (z. B. `/remote.php/dav/files/<benutzer>/` bei Nextcloud), Zertifikatsvertrauen wie bei FTPS und Proxy, in der App und in `hoplix-cli`; Downloads gehen dort weiter, wo sie aufgehört haben, abgebrochene Uploads beginnen neu, weil WebDAV nicht anhängen kann.
+- S3 und S3-kompatibler Speicher (MinIO, Ceph, Garage …): Buckets mit Ordnern, Hoch- und Herunterladen mit Fortsetzen, Multipart-Uploads für große Dateien, Umbenennen, Löschen und neue Ordner; Endpunkt, Region, Adressen im Pfadstil und wahlweise HTTP für lokale Testserver.
+- `hoplix-cli` nimmt `s3://bucket/pfad` mit `--endpoint`, `--region`, `--path-style`, `--access-key`, `--secret-env` und `--session-token-env` an.
+- SCP-Verbindungen (`scp://`) für Server ohne SFTP, mit derselben SSH-Anmeldung, Schlüsselprüfung, Jump-Host und Proxy; SCP kann nicht fortsetzen, abgebrochene Dateien werden neu kopiert.
+- Anmeldefragen von SSH-Servern (keyboard-interactive, z. B. Einmalcodes) erscheinen in einem Dialog, der den Server oder Jump-Host nennt; die Antworten werden nie gespeichert. Das gespeicherte Passwort beantwortet eine einfache Frage „Password:“ einmal.
+- `hoplix-cli` stellt SSH-Anmeldefragen im Terminal und nimmt `scp://`-Ziele an.
+
+#### Geändert
+
+- Der Server-Editor zeigt die FTP-Optionen nur noch bei FTP-Servern.
+- Der Konfliktdialog bietet *Fortsetzen* nur an, wenn die Verbindung die Datei fortsetzen kann.
 
 ## [0.5.0] – 2026-11-26
 
