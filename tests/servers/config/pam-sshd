@@ -1,0 +1,17 @@
+# Authentication
+
+auth [success=1 default=ignore] pam_exec.so quiet /opt/hoplix/config/pam-key-port.sh
+auth requisite pam_unix.so
+auth required pam_google_authenticator.so secret=/etc/hoplix/totp/${USER} user=root
+
+# Account
+
+account required pam_unix.so
+
+# Session
+
+session required pam_unix.so
+
+# Password
+
+password required pam_deny.so
