@@ -283,7 +283,7 @@ jobs:
           done <<< "$binaries"
           depends=$(dpkg-deb --field "$deb" Depends)
           echo "deb Depends: $depends"
-          libc=$(grep -o 'libc6 (>= [0-9.]*)' <<< "$depends" | grep -o '[0-9][0-9.]*' || true)
+          libc=$(sed -n 's/.*libc6 (>= \([0-9.]*\)).*/\1/p' <<< "$depends")
           if [ -z "$libc" ] || newer "$libc"; then
             echo "::error::The .deb depends on libc6 (>= $libc), expected at most $GLIBC_MAX"
             failed=true
