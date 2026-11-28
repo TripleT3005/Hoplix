@@ -182,6 +182,28 @@ impl State {
         }
     }
 
+    pub fn switch(&mut self, challenges: &[Challenge], allow_basic: bool) -> bool {
+        match Self::choose(challenges, allow_basic) {
+            Some(chosen) if !chosen.same_protection(self) => {
+                *self = chosen;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn same_protection(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::None, Self::None) | (Self::Basic, Self::Basic) => true,
+            (Self::Digest(first), Self::Digest(second)) => {
+                first.realm == second.realm
+                    && first.algorithm == second.algorithm
+                    && first.session == second.session
+            }
+            _ => false,
+        }
+    }
+
     pub fn header(
         &mut self,
         credentials: &Credentials,
@@ -471,6 +493,38 @@ mod tests {
             .expect("some header");
         assert!(header.contains("nonce=\"new\""));
         assert!(!State::Basic.refresh(&stale));
+    }
+
+    #[test]
+    fn other_schemes_and_realms_are_switched_to_once() {
+        let digest = |realm: &str, nonce: &str, algorithm: &str| {
+            parse_challenges(std::iter::once(
+                format!("Digest realm=\"{realm}\", nonce=\"{nonce}\", qop=\"auth\", algorithm={algorithm}")
+                    .as_str(),
+            ))
+        };
+        let basic = parse_challenges(std::iter::once("Basic realm=\"b\""));
+        let mut state = State::choose(&digest("a", "n1", "MD5"), true).expect("digest");
+
+        assert!(!state.switch(&digest("a", "n2", "MD5"), true));
+        assert!(matches!(&state, State::Digest(current) if current.nonce == "n1"));
+
+        assert!(state.switch(&digest("b", "n3", "MD5"), true));
+        assert!(matches!(&state, State::Digest(current) if current.realm == "b"));
+
+        assert!(state.switch(&digest("b", "n4", "SHA-256"), true));
+        assert!(matches!(&state, State::Digest(current) if current.algorithm == Algorithm::Sha256));
+        assert!(state.switch(&digest("b", "n5", "SHA-256-sess"), true));
+        assert!(matches!(&state, State::Digest(current) if current.session));
+
+        let before = state.clone();
+        assert!(!state.switch(&basic, false));
+        assert_eq!(state, before);
+        assert!(state.switch(&basic, true));
+        assert_eq!(state, State::Basic);
+        assert!(!state.switch(&basic, true));
+        assert!(!state.switch(&[], true));
+        assert_eq!(state, State::Basic);
     }
 
     #[test]

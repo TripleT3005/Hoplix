@@ -4,6 +4,20 @@ All notable changes to Hoplix, grouped by version in the style of [Keep a Change
 
 Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep a Changelog](https://keepachangelog.com/de/). Der Abschnitt einer Version wird als ihre Release-Notizen verwendet. Änderungen auf `main`, die noch nicht veröffentlicht sind, stehen unter [Unreleased] und wandern mit der nächsten Version in deren Abschnitt.
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- WebDAV: sign-in works when folders on the same server use different sign-in methods (Digest, Basic) or realms.
+
+### Deutsch
+
+#### Behoben
+
+- WebDAV: Die Anmeldung klappt jetzt auch, wenn Ordner auf demselben Server unterschiedliche Anmeldeverfahren (Digest, Basic) oder Bereiche verwenden.
+
 ## [0.6.0] – 2026-11-28
 
 ### English

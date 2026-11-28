@@ -367,6 +367,152 @@ async fn wrong_passwords_are_reported() {
     assert_eq!(server.requests().len(), 2);
 }
 
+fn digest_challenge(realm: &str, nonce: &str) -> Vec<u8> {
+    reply(
+        "401 Unauthorized",
+        &format!(
+            "WWW-Authenticate: Digest realm=\"{realm}\", nonce=\"{nonce}\", qop=\"auth\", algorithm=MD5\r\n"
+        ),
+        "",
+    )
+}
+
+fn signed_in_for(realm: &str, authorization: Option<&str>) -> bool {
+    authorization.is_some_and(|value| {
+        value.starts_with("Digest username=\"demo\"")
+            && value.contains(&format!("realm=\"{realm}\""))
+    })
+}
+
+async fn mixed_server(password: String) -> Mock {
+    let basic = format!(
+        "Basic {}",
+        crate::proxy::base64(format!("demo:{password}").as_bytes())
+    );
+    mock(move |request| {
+        let authorization = request.header("authorization");
+        match request.target.as_str() {
+            "/basic/a.txt" if authorization == Some(basic.as_str()) && request.early => Vec::new(),
+            "/basic/a.txt" if authorization == Some(basic.as_str()) => reply("201 Created", "", ""),
+            "/basic/" if authorization == Some(basic.as_str()) => root("/basic/"),
+            "/basic/" | "/basic/a.txt" => reply(
+                "401 Unauthorized",
+                "WWW-Authenticate: Basic realm=\"b\"\r\n",
+                "",
+            ),
+            "/other/" if signed_in_for("other", authorization) => root("/other/"),
+            "/other/" => digest_challenge("other", "n2"),
+            _ if signed_in_for("main", authorization) => root("/"),
+            _ => digest_challenge("main", "n1"),
+        }
+    })
+    .await
+}
+
+fn targets(server: &Mock) -> Vec<String> {
+    server
+        .requests()
+        .into_iter()
+        .map(|request| request.target)
+        .collect()
+}
+
+#[tokio::test]
+async fn folders_with_basic_below_a_digest_root_sign_in_again() {
+    let password = test_password();
+    let server = mixed_server(password.clone()).await;
+    let file_system = connect_with(&server, "/", password)
+        .await
+        .expect("connected");
+    assert_eq!(
+        file_system
+            .list("/basic")
+            .await
+            .map(|entries| entries.len()),
+        Ok(0)
+    );
+    let requests = server.requests();
+    assert_eq!(targets(&server), ["/", "/", "/basic/", "/basic/"]);
+    assert!(
+        requests[3]
+            .header("authorization")
+            .is_some_and(|value| value.starts_with("Basic "))
+    );
+    assert_eq!(
+        file_system.list("/").await.map(|entries| entries.len()),
+        Ok(0)
+    );
+    assert_eq!(server.requests().len(), 6);
+}
+
+#[tokio::test]
+async fn uploads_below_a_digest_root_switch_to_basic() {
+    let password = test_password();
+    let server = mixed_server(password.clone()).await;
+    let file_system = connect_with(&server, "/", password)
+        .await
+        .expect("connected");
+    let mut writer = file_system
+        .open_write("/basic/a.txt", 0)
+        .await
+        .expect("opened");
+    writer.write_all(b"hello").await.expect("written");
+    writer.shutdown().await.expect("finished");
+    let puts: Vec<Recorded> = server
+        .requests()
+        .into_iter()
+        .filter(|request| request.method == "PUT")
+        .collect();
+    assert_eq!(puts.len(), 1);
+    assert!(
+        puts[0]
+            .header("authorization")
+            .is_some_and(|value| value.starts_with("Basic "))
+    );
+    assert_eq!(puts[0].body, b"hello");
+}
+
+#[tokio::test]
+async fn folders_with_another_digest_realm_sign_in_again() {
+    let password = test_password();
+    let server = mixed_server(password.clone()).await;
+    let file_system = connect_with(&server, "/", password)
+        .await
+        .expect("connected");
+    assert_eq!(
+        file_system
+            .list("/other")
+            .await
+            .map(|entries| entries.len()),
+        Ok(0)
+    );
+    assert_eq!(targets(&server), ["/", "/", "/other/", "/other/"]);
+    assert!(signed_in_for(
+        "other",
+        server.requests()[3].header("authorization")
+    ));
+}
+
+#[tokio::test]
+async fn wrong_passwords_in_the_same_realm_fail_without_extra_rounds() {
+    let server = mock(|request| match request.target.as_str() {
+        "/" if request.header("authorization").is_some() => root("/"),
+        _ => digest_challenge("main", "n2"),
+    })
+    .await;
+    let file_system = connect_to(&server, "/").await.expect("connected");
+    let error = file_system.list("/locked").await.expect_err("listed");
+    assert_eq!(error.kind(), ErrorKind::AuthenticationFailed);
+    assert_eq!(targets(&server), ["/", "/", "/locked/"]);
+
+    let wrong = format!("{}-wrong", test_password());
+    let server = mixed_server(test_password()).await;
+    let file_system = connect_with(&server, "/", wrong).await.expect("connected");
+    let error = file_system.list("/basic").await.expect_err("listed");
+    assert_eq!(error.kind(), ErrorKind::AuthenticationFailed);
+    assert_eq!(targets(&server), ["/", "/", "/basic/", "/basic/"]);
+}
+
 #[tokio::test]
 async fn files_are_not_folders_and_missing_paths_are_reported() {
     let server = mock(|request| match request.target.as_str() {
