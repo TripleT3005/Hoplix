@@ -12,6 +12,10 @@ Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep 
 
 - When an SSH server asks the same sign-in questions again, for example after a wrong one-time code or a wrong saved password, the dialog and `hoplix-cli` say that the server did not accept the answer.
 
+#### Fixed
+
+- The Linux packages (`.deb`, `.rpm`, `.tar.gz`) work again on older distributions such as Debian 12/13 and Ubuntu 22.04/24.04; 0.6.0 required glibc 2.43. They now need glibc 2.35 or newer.
+
 #### Security
 
 - `hoplix-cli` hides the input before it shows a secret sign-in question, so answers typed or sent early are no longer shown in clear text.
@@ -21,6 +25,10 @@ Alle wichtigen Änderungen an Hoplix, gegliedert nach Version im Stil von [Keep 
 #### Geändert
 
 - Stellt ein SSH-Server dieselben Anmeldefragen erneut, etwa nach einem falschen Einmalcode oder einem falschen gespeicherten Passwort, weisen der Dialog und `hoplix-cli` darauf hin, dass der Server die Antwort nicht angenommen hat.
+
+#### Behoben
+
+- Die Linux-Pakete (`.deb`, `.rpm`, `.tar.gz`) laufen wieder auf älteren Distributionen wie Debian 12/13 und Ubuntu 22.04/24.04; 0.6.0 brauchte glibc 2.43. Sie benötigen jetzt glibc 2.35 oder neuer.
 
 #### Sicherheit
 
